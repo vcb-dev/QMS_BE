@@ -21,7 +21,7 @@ export class CreateQuoteRequestDto {
 
   @IsOptional()
   @IsString()
-  requestNote?: string;
+  desiredLeadTime?: string; // 7. Thời gian khách muốn nhận
 
   @IsOptional()
   @IsString()

@@ -134,7 +134,7 @@ model QuoteRequest {
   desiredDate  DateTime? // 7. Thời gian muốn nhận
 
   productName  String    // 8. Tên sản phẩm + Yêu cầu
-  requestNote  String?   @db.Text
+  desiredLeadTime String?   @map("desired_lead_time") @db.Text
 
   // 9. Chất liệu chế tác (Hỗ trợ chọn 1 hoặc nhiều chất liệu)
   materials   Material[]

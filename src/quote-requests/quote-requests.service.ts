@@ -74,13 +74,8 @@ export class QuoteRequestsService {
   async findAll(filterDto: FilterQuoteRequestDto, _user: User) {
     const { status, search, requesterId, pricerId, page = 1, limit = 100 } = filterDto;
     const skip = (page - 1) * limit;
-
     const cacheKey = JSON.stringify({ status, search, requesterId, pricerId, page, limit });
-    const cached = this.listCache.get(cacheKey);
-
-    if (cached && Date.now() - cached.at < this.cacheTtlMs) {
-      return cached.data;
-    }
+    this.listCache.clear();
 
     const where: any = {};
 

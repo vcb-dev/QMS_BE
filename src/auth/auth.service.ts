@@ -9,7 +9,7 @@ export class AuthService {
   constructor(
     private prisma: PrismaService,
     private jwtService: JwtService,
-  ) { }
+  ) {}
 
   async login(loginDto: LoginDto) {
     const { email, password } = loginDto;
@@ -28,11 +28,13 @@ export class AuthService {
     }
 
     const payload = { sub: user.id, email: user.email, role: user.role };
-    const accessToken = this.jwtService.sign(payload);
+    const accessToken = this.jwtService.sign(payload, { expiresIn: '7d' });
+    const refreshToken = this.jwtService.sign(payload, { expiresIn: '30d' });
 
     const { passwordHash, ...userWithoutPassword } = user;
     return {
       accessToken,
+      refreshToken,
       user: userWithoutPassword,
     };
   }
