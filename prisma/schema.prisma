@@ -1,0 +1,188 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ==========================
+// ENUMS
+// ==========================
+
+enum Role {
+  SALE
+  PRICING
+  ADMIN
+}
+
+enum QuoteStatus {
+  YC_MOI
+  DANG_XLY
+  XONG
+  TU_CHOI
+}
+
+// ==========================
+// 1. USERS
+// ==========================
+
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  role         Role
+  department   Department? @relation(fields: [departmentId], references: [id])
+  departmentId String?
+
+  // Quan hệ ngược - 1 user có thể đóng nhiều vai trong quote_requests
+  requestedQuotes QuoteRequest[] @relation("Requester")
+  createdQuotes   QuoteRequest[] @relation("CreatedBy")
+  pricedQuotes    QuoteRequest[] @relation("Pricer")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("users")
+}
+
+// ==========================
+// 2. DEPARTMENTS (lookup)
+// ==========================
+
+model Department {
+  id    String @id @default(cuid())
+  name  String @unique
+  users User[]
+
+  @@map("departments")
+}
+
+// ==========================
+// 3. MATERIALS (lookup)
+// ==========================
+
+model Material {
+  id                   String         @id @default(cuid())
+  name                 String         @unique
+  primaryQuoteRequests QuoteRequest[] @relation("PrimaryMaterial")
+  quoteRequests        QuoteRequest[]
+
+  @@map("materials")
+}
+
+// ==========================
+// 4. PRODUCT CATEGORIES (lookup)
+// ==========================
+
+model ProductCategory {
+  id    String @id @default(cuid())
+  name  String @unique
+  quoteRequests QuoteRequest[]
+
+  @@map("product_categories")
+}
+
+// ==========================
+// 5. CUSTOMERS
+// ==========================
+
+model Customer {
+  id      String  @id @default(cuid())
+  name    String
+  phone   String?
+  address String? @db.Text
+  note    String? @db.Text
+
+  quoteRequests QuoteRequest[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("customers")
+}
+
+// ==========================
+// 6. QUOTE_REQUESTS (bảng chính)
+// ==========================
+
+model QuoteRequest {
+  id     String @id @default(cuid())
+  code   String @unique // 1. Mã hỏi Giá - vd QG-2026-0001
+
+  status QuoteStatus @default(YC_MOI) // 3. Trạng thái
+
+  // 4. Người hỏi giá — nếu luôn trùng với "Tài khoản tạo" thì xóa field này
+  // và dùng chung createdBy cho cả 2 mục đích.
+  requester   User   @relation("Requester", fields: [requesterId], references: [id])
+  requesterId String
+
+  // Khách hàng của yêu cầu báo giá này
+  customer   Customer @relation(fields: [customerId], references: [id])
+  customerId String
+
+  // 5. Bộ phận làm việc — KHÔNG lưu trực tiếp ở đây, lấy qua requester.department
+  // (User đã có departmentId sẵn, tránh dữ liệu trùng/lệch nhau).
+  // Chỉ un-comment 2 dòng dưới nếu có case yêu cầu được ghi nhận cho
+  // một bộ phận KHÁC với bộ phận của người tạo:
+  // department   Department @relation(fields: [departmentId], references: [id])
+  // departmentId String
+
+  desiredDate  DateTime? // 7. Thời gian muốn nhận
+
+  productName  String    // 8. Tên sản phẩm + Yêu cầu
+  requestNote  String?   @db.Text
+
+  // 9. Chất liệu chế tác (Hỗ trợ chọn 1 hoặc nhiều chất liệu)
+  materials   Material[]
+  material    Material?   @relation("PrimaryMaterial", fields: [materialId], references: [id])
+  materialId  String?
+
+  // 10. Danh mục sản phẩm
+  category   ProductCategory @relation(fields: [categoryId], references: [id])
+  categoryId String
+
+  customerMeasurements String?  @db.Text // 11. Số đo của khách
+  closeRatePct         Decimal? @db.Decimal(5, 2) // 12. Khách tỷ lệ chốt
+
+  // --- Vùng do Pricing điền ---
+  vat          Decimal? @db.Decimal(5, 2) // 13. VAT
+  quotedPrice  Decimal? @db.Decimal(14, 2) // 14. BÁO GIÁ
+  quotedDate   DateTime? // 15. Ngày báo giá
+
+  pricer   User?   @relation("Pricer", fields: [pricerId], references: [id]) // 16. Người Báo giá
+  pricerId String?
+
+  rejectReason String? @db.Text // bắt buộc khi status = TU_CHOI
+
+  // 17. Tài khoản tạo
+  createdBy   User   @relation("CreatedBy", fields: [createdById], references: [id])
+  createdById String
+
+  images        QuoteRequestImage[] // 6. Ảnh sản phẩm (nếu nhiều ảnh)
+
+  version   Int      @default(1) // optimistic locking - chống 2 Pricing tiếp nhận trùng
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("quote_requests")
+}
+
+// ==========================
+// 7. QUOTE_REQUEST_IMAGES
+// Xóa model này và thêm field `imageUrl String?` thẳng vào
+// QuoteRequest nếu 1 yêu cầu chỉ có đúng 1 ảnh.
+// ==========================
+
+model QuoteRequestImage {
+  id             String       @id @default(cuid())
+  quoteRequest   QuoteRequest @relation(fields: [quoteRequestId], references: [id], onDelete: Cascade)
+  quoteRequestId String
+  imageUrl       String
+  uploadedAt     DateTime     @default(now())
+
+  @@map("quote_request_images")
+}
