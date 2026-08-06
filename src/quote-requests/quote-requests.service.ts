@@ -11,6 +11,8 @@ import { UpdateQuoteRequestDto } from './dto/update-quote-request.dto';
 import { AcceptQuoteRequestDto } from './dto/accept-quote-request.dto';
 import { CompleteQuoteDto } from './dto/quote-complete.dto';
 import { RejectQuoteRequestDto } from './dto/reject-quote-request.dto';
+import { ReturnQuoteRequestDto } from './dto/return-quote-request.dto';
+import { SelectQuoteOptionDto } from './dto/select-quote-option.dto';
 import { FilterQuoteRequestDto } from './dto/filter-quote-request.dto';
 import { QuoteStatus, User } from '@prisma/client';
 
@@ -67,6 +69,7 @@ export class QuoteRequestsService {
         pricer: { select: { id: true, name: true, email: true } },
         createdBy: { select: { id: true, name: true, email: true } },
         images: true,
+        options: { orderBy: { createdAt: 'asc' } },
       },
     });
   }
@@ -113,6 +116,7 @@ export class QuoteRequestsService {
         pricer: { select: { id: true, name: true, email: true } },
         createdBy: { select: { id: true, name: true, email: true } },
         images: true,
+        options: { orderBy: { createdAt: 'asc' } },
       },
     });
 
@@ -142,6 +146,7 @@ export class QuoteRequestsService {
         pricer: { select: { id: true, name: true, email: true } },
         createdBy: { select: { id: true, name: true, email: true } },
         images: true,
+        options: { orderBy: { createdAt: 'asc' } },
       },
     });
 
@@ -181,6 +186,7 @@ export class QuoteRequestsService {
         pricer: { select: { id: true, name: true, email: true } },
         createdBy: { select: { id: true, name: true, email: true } },
         images: true,
+        options: { orderBy: { createdAt: 'asc' } },
       },
     });
   }
@@ -211,6 +217,7 @@ export class QuoteRequestsService {
           pricer: { select: { id: true, name: true, email: true } },
           createdBy: { select: { id: true, name: true, email: true } },
           images: true,
+        options: { orderBy: { createdAt: 'asc' } },
         },
       });
     } catch {
@@ -218,9 +225,31 @@ export class QuoteRequestsService {
     }
   }
 
-  // Atomic 1-query Complete Quote
+  // Complete Quote with Multi-Options support
   async completeQuote(id: string, userId: string, dto: CompleteQuoteDto) {
     this.clearCache();
+
+    if (dto.options && dto.options.length > 0) {
+      await this.prisma.quoteOption.deleteMany({ where: { quoteRequestId: id } });
+    }
+
+    const optionsCreate = dto.options && dto.options.length > 0
+      ? {
+          create: dto.options.map((opt, idx) => ({
+            optionName: opt.optionName || `Phương án ${idx + 1}`,
+            materialName: opt.materialName,
+            weightChi: opt.weightChi,
+            laborCost: opt.laborCost,
+            stoneCost: opt.stoneCost,
+            stoneDescription: opt.stoneDescription,
+            vat: opt.vat,
+            quotedPrice: opt.quotedPrice,
+            isSelected: opt.isSelected ?? (idx === 0),
+            note: opt.note,
+          })),
+        }
+      : undefined;
+
     return this.prisma.quoteRequest.update({
       where: { id },
       data: {
@@ -229,6 +258,7 @@ export class QuoteRequestsService {
         quotedDate: new Date(),
         pricerId: userId,
         status: QuoteStatus.XONG,
+        options: optionsCreate,
       },
       include: {
         customer: true,
@@ -239,6 +269,51 @@ export class QuoteRequestsService {
         pricer: { select: { id: true, name: true, email: true } },
         createdBy: { select: { id: true, name: true, email: true } },
         images: true,
+        options: { orderBy: { createdAt: 'asc' } },
+      },
+    });
+  }
+
+  // Sale selects a specific pricing option
+  async selectOption(id: string, userId: string, dto: SelectQuoteOptionDto) {
+    this.clearCache();
+    const option = await this.prisma.quoteOption.findUnique({
+      where: { id: dto.optionId },
+    });
+
+    if (!option || option.quoteRequestId !== id) {
+      throw new NotFoundException('Không tìm thấy phương án báo giá tương ứng');
+    }
+
+    // Reset all options to unselected
+    await this.prisma.quoteOption.updateMany({
+      where: { quoteRequestId: id },
+      data: { isSelected: false },
+    });
+
+    // Mark target option as selected
+    await this.prisma.quoteOption.update({
+      where: { id: dto.optionId },
+      data: { isSelected: true },
+    });
+
+    // Update QuoteRequest main price to selected option's price
+    return this.prisma.quoteRequest.update({
+      where: { id },
+      data: {
+        quotedPrice: option.quotedPrice,
+        selectedOptionId: option.id,
+      },
+      include: {
+        customer: true,
+        material: true,
+        materials: true,
+        category: true,
+        requester: { select: { id: true, name: true, email: true, department: true } },
+        pricer: { select: { id: true, name: true, email: true } },
+        createdBy: { select: { id: true, name: true, email: true } },
+        images: true,
+        options: { orderBy: { createdAt: 'asc' } },
       },
     });
   }
@@ -262,7 +337,56 @@ export class QuoteRequestsService {
         pricer: { select: { id: true, name: true, email: true } },
         createdBy: { select: { id: true, name: true, email: true } },
         images: true,
+        options: { orderBy: { createdAt: 'asc' } },
+      },
+    });
+  }
+
+  // Return to Sale for more info (NEED_MORE_INFO)
+  async returnQuote(id: string, userId: string, dto: ReturnQuoteRequestDto) {
+    this.clearCache();
+    return this.prisma.quoteRequest.update({
+      where: { id },
+      data: {
+        returnReason: dto.returnReason,
+        pricerId: userId,
+        status: QuoteStatus.NEED_MORE_INFO,
+      },
+      include: {
+        customer: true,
+        material: true,
+        materials: true,
+        category: true,
+        requester: { select: { id: true, name: true, email: true, department: true } },
+        pricer: { select: { id: true, name: true, email: true } },
+        createdBy: { select: { id: true, name: true, email: true } },
+        images: true,
+        options: { orderBy: { createdAt: 'asc' } },
+      },
+    });
+  }
+
+  // Sale resubmits modified request back to Pricing queue
+  async resubmitQuote(id: string, userId: string) {
+    this.clearCache();
+    return this.prisma.quoteRequest.update({
+      where: { id },
+      data: {
+        status: QuoteStatus.YC_MOI,
+        version: { increment: 1 },
+      },
+      include: {
+        customer: true,
+        material: true,
+        materials: true,
+        category: true,
+        requester: { select: { id: true, name: true, email: true, department: true } },
+        pricer: { select: { id: true, name: true, email: true } },
+        createdBy: { select: { id: true, name: true, email: true } },
+        images: true,
+        options: { orderBy: { createdAt: 'asc' } },
       },
     });
   }
 }
+

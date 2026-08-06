@@ -1,13 +1,61 @@
-import { IsNotEmpty, IsNumber, IsOptional, Min } from 'class-validator';
+import { IsNumber, IsOptional, IsArray, ValidateNested, IsString, IsBoolean } from 'class-validator';
+import { Type } from 'class-transformer';
 
-export class CompleteQuoteDto {
-  @IsNumber({}, { message: 'Giá báo phải là dạng số' })
-  @Min(0, { message: 'Giá báo phải lớn hơn hoặc bằng 0' })
-  @IsNotEmpty({ message: 'Báo giá không được để trống' })
+export class QuoteOptionItemDto {
+  @IsOptional()
+  @IsString()
+  id?: string;
+
+  @IsString()
+  optionName: string;
+
+  @IsOptional()
+  @IsString()
+  materialName?: string;
+
+  @IsOptional()
+  @IsNumber()
+  weightChi?: number;
+
+  @IsOptional()
+  @IsNumber()
+  laborCost?: number;
+
+  @IsOptional()
+  @IsNumber()
+  stoneCost?: number;
+
+  @IsOptional()
+  @IsString()
+  stoneDescription?: string;
+
+  @IsOptional()
+  @IsNumber()
+  vat?: number;
+
+  @IsNumber()
   quotedPrice: number;
 
   @IsOptional()
-  @IsNumber({}, { message: 'VAT phải là dạng số' })
-  @Min(0)
+  @IsBoolean()
+  isSelected?: boolean;
+
+  @IsOptional()
+  @IsString()
+  note?: string;
+}
+
+export class CompleteQuoteDto {
+  @IsNumber()
+  quotedPrice: number;
+
+  @IsOptional()
+  @IsNumber()
   vat?: number;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => QuoteOptionItemDto)
+  options?: QuoteOptionItemDto[];
 }

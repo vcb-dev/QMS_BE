@@ -15,6 +15,8 @@ import { UpdateQuoteRequestDto } from './dto/update-quote-request.dto';
 import { AcceptQuoteRequestDto } from './dto/accept-quote-request.dto';
 import { CompleteQuoteDto } from './dto/quote-complete.dto';
 import { RejectQuoteRequestDto } from './dto/reject-quote-request.dto';
+import { ReturnQuoteRequestDto } from './dto/return-quote-request.dto';
+import { SelectQuoteOptionDto } from './dto/select-quote-option.dto';
 import { FilterQuoteRequestDto } from './dto/filter-quote-request.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -93,5 +95,34 @@ export class QuoteRequestsController {
     @Body() dto: RejectQuoteRequestDto,
   ) {
     return this.quoteRequestsService.rejectQuote(id, userId, dto);
+  }
+
+  @Roles(Role.PRICING, Role.ADMIN)
+  @Patch(':id/return')
+  async returnQuote(
+    @Param('id') id: string,
+    @CurrentUser('id') userId: string,
+    @Body() dto: ReturnQuoteRequestDto,
+  ) {
+    return this.quoteRequestsService.returnQuote(id, userId, dto);
+  }
+
+  @Roles(Role.SALE, Role.ADMIN)
+  @Patch(':id/resubmit')
+  async resubmitQuote(
+    @Param('id') id: string,
+    @CurrentUser('id') userId: string,
+  ) {
+    return this.quoteRequestsService.resubmitQuote(id, userId);
+  }
+
+  @Roles(Role.SALE, Role.PRICING, Role.ADMIN)
+  @Patch(':id/select-option')
+  async selectOption(
+    @Param('id') id: string,
+    @CurrentUser('id') userId: string,
+    @Body() dto: SelectQuoteOptionDto,
+  ) {
+    return this.quoteRequestsService.selectOption(id, userId, dto);
   }
 }

@@ -23,6 +23,7 @@ enum QuoteStatus {
   DANG_XLY
   XONG
   TU_CHOI
+  NEED_MORE_INFO
 }
 
 // ==========================
@@ -157,6 +158,10 @@ model QuoteRequest {
   pricerId String?
 
   rejectReason String? @db.Text // bắt buộc khi status = TU_CHOI
+  returnReason String? @map("return_reason") @db.Text // bắt buộc khi status = NEED_MORE_INFO
+
+  options      QuoteOption[] // Multi-options báo giá song song
+  selectedOptionId String?  @map("selected_option_id")
 
   // 17. Tài khoản tạo
   createdBy   User   @relation("CreatedBy", fields: [createdById], references: [id])
@@ -186,3 +191,60 @@ model QuoteRequestImage {
 
   @@map("quote_request_images")
 }
+
+// ==========================
+// 8. METAL PRICES (Lưu giá vàng/bạc/bạch kim vào DB)
+// ==========================
+
+model MetalPrice {
+  id           String   @id @default("singleton")
+  gold24kVnd   Decimal  @map("gold_24k_vnd") @db.Decimal(14, 2)
+  silverVnd    Decimal  @map("silver_vnd") @db.Decimal(14, 2)
+  platinumVnd  Decimal  @map("platinum_vnd") @db.Decimal(14, 2)
+  source       String?
+  updatedAt    DateTime @updatedAt
+
+  @@map("metal_prices")
+}
+
+// ==========================
+// 9. PRICING CONFIG (Cấu hình tham số lõi tính giá 5 bước)
+// ==========================
+
+model PricingConfig {
+  id               String   @id @default("singleton")
+  goldRatios       Json     @map("gold_ratios")
+  profitMargins    Json     @map("profit_margins")
+  silverMultiplier Decimal  @default(3) @map("silver_multiplier") @db.Decimal(5, 2)
+  updatedAt        DateTime @updatedAt
+
+  @@map("pricing_config")
+}
+
+// ==========================
+// 10. QUOTE OPTIONS (Báo giá nhiều phương án song song)
+// ==========================
+
+model QuoteOption {
+  id             String       @id @default(cuid())
+  quoteRequestId String       @map("quote_request_id")
+  quoteRequest   QuoteRequest @relation(fields: [quoteRequestId], references: [id], onDelete: Cascade)
+
+  optionName     String       @map("option_name")
+  materialName   String?      @map("material_name")
+  weightChi      Decimal?     @map("weight_chi") @db.Decimal(8, 3)
+  laborCost      Decimal?     @map("labor_cost") @db.Decimal(14, 2)
+  stoneCost      Decimal?     @map("stone_cost") @db.Decimal(14, 2)
+  stoneDescription String?    @map("stone_description") @db.Text
+  vat            Decimal?     @db.Decimal(5, 2)
+  quotedPrice    Decimal      @map("quoted_price") @db.Decimal(14, 2)
+  isSelected     Boolean      @default(false) @map("is_selected")
+  note           String?      @db.Text
+
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@map("quote_options")
+}
+
+
