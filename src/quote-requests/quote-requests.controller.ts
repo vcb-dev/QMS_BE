@@ -12,12 +12,8 @@ import {
 import { QuoteRequestsService } from './quote-requests.service';
 import { CreateQuoteRequestDto } from './dto/create-quote-request.dto';
 import { UpdateQuoteRequestDto } from './dto/update-quote-request.dto';
-import { AcceptQuoteRequestDto } from './dto/accept-quote-request.dto';
-import { CompleteQuoteDto } from './dto/quote-complete.dto';
-import { RejectQuoteRequestDto } from './dto/reject-quote-request.dto';
-import { ReturnQuoteRequestDto } from './dto/return-quote-request.dto';
-import { SelectQuoteOptionDto } from './dto/select-quote-option.dto';
 import { FilterQuoteRequestDto } from './dto/filter-quote-request.dto';
+import { UpdateQuoteStatusDto } from './dto/update-quote-status.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -67,62 +63,14 @@ export class QuoteRequestsController {
     return this.quoteRequestsService.remove(id, userId);
   }
 
-  @Roles(Role.PRICING, Role.ADMIN)
-  @Patch(':id/accept')
-  async accept(
-    @Param('id') id: string,
-    @CurrentUser('id') userId: string,
-    @Body() dto: AcceptQuoteRequestDto,
-  ) {
-    return this.quoteRequestsService.accept(id, userId, dto);
-  }
-
-  @Roles(Role.PRICING, Role.ADMIN)
-  @Patch(':id/quote')
-  async completeQuote(
-    @Param('id') id: string,
-    @CurrentUser('id') userId: string,
-    @Body() dto: CompleteQuoteDto,
-  ) {
-    return this.quoteRequestsService.completeQuote(id, userId, dto);
-  }
-
-  @Roles(Role.PRICING, Role.ADMIN)
-  @Patch(':id/reject')
-  async rejectQuote(
-    @Param('id') id: string,
-    @CurrentUser('id') userId: string,
-    @Body() dto: RejectQuoteRequestDto,
-  ) {
-    return this.quoteRequestsService.rejectQuote(id, userId, dto);
-  }
-
-  @Roles(Role.PRICING, Role.ADMIN)
-  @Patch(':id/return')
-  async returnQuote(
-    @Param('id') id: string,
-    @CurrentUser('id') userId: string,
-    @Body() dto: ReturnQuoteRequestDto,
-  ) {
-    return this.quoteRequestsService.returnQuote(id, userId, dto);
-  }
-
-  @Roles(Role.SALE, Role.ADMIN)
-  @Patch(':id/resubmit')
-  async resubmitQuote(
-    @Param('id') id: string,
-    @CurrentUser('id') userId: string,
-  ) {
-    return this.quoteRequestsService.resubmitQuote(id, userId);
-  }
-
   @Roles(Role.SALE, Role.PRICING, Role.ADMIN)
-  @Patch(':id/select-option')
-  async selectOption(
+  @Patch(':id/status')
+  async updateStatus(
     @Param('id') id: string,
     @CurrentUser('id') userId: string,
-    @Body() dto: SelectQuoteOptionDto,
+    @CurrentUser('role') role: Role,
+    @Body() dto: UpdateQuoteStatusDto,
   ) {
-    return this.quoteRequestsService.selectOption(id, userId, dto);
+    return this.quoteRequestsService.updateStatus(id, userId, role, dto);
   }
 }

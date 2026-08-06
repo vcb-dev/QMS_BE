@@ -1,5 +1,4 @@
-import { IsNumber, IsOptional, IsArray, ValidateNested, IsString, IsBoolean } from 'class-validator';
-import { Type } from 'class-transformer';
+import { IsNumber, IsOptional, IsString, IsBoolean } from 'class-validator';
 
 export class QuoteOptionItemDto {
   @IsOptional()
@@ -45,17 +44,3 @@ export class QuoteOptionItemDto {
   note?: string;
 }
 
-export class CompleteQuoteDto {
-  @IsNumber()
-  quotedPrice: number;
-
-  @IsOptional()
-  @IsNumber()
-  vat?: number;
-
-  @IsOptional()
-  @IsArray()
-  @ValidateNested({ each: true })
-  @Type(() => QuoteOptionItemDto)
-  options?: QuoteOptionItemDto[];
-}
