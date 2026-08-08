@@ -15,9 +15,9 @@ export class CreateQuoteRequestDto {
   @IsNotEmpty({ message: 'Vui lòng chọn khách hàng' })
   customerId: string;
 
+  @IsOptional()
   @IsString()
-  @IsNotEmpty({ message: 'Tên sản phẩm không được để trống' })
-  productName: string;
+  productName?: string;
 
   @IsOptional()
   @IsString()
@@ -35,6 +35,10 @@ export class CreateQuoteRequestDto {
   @IsString()
   @IsNotEmpty({ message: 'Vui lòng chọn danh mục sản phẩm' })
   categoryId: string;
+
+  @IsOptional()
+  @IsString()
+  newCategoryName?: string; // Tên danh mục mới nếu chọn "Khác"
 
   @IsOptional()
   @Type(() => Date)

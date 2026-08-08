@@ -8,23 +8,22 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateQuoteRequestDto } from './dto/create-quote-request.dto';
 import { UpdateQuoteRequestDto } from './dto/update-quote-request.dto';
-import { QuoteOptionItemDto } from './dto/quote-complete.dto';
+import { QuoteOptionItemDto, CompleteQuoteInput } from './dto/quote-complete.dto';
 import { FilterQuoteRequestDto } from './dto/filter-quote-request.dto';
 import { UpdateQuoteStatusDto, QuoteAction } from './dto/update-quote-status.dto';
+import { QuickQuoteSubmitDto } from './dto/quick-quote.dto';
 import { QuoteStatus, User, Role } from '@prisma/client';
-
-type CompleteQuoteInput = {
-  quotedPrice: number;
-  vat?: number;
-  options?: QuoteOptionItemDto[];
-};
+import { CloudinaryService } from '../cloudinary/cloudinary.service';
 
 @Injectable()
 export class QuoteRequestsService {
   private readonly listCache = new Map<string, { at: number; data: any }>();
   private readonly cacheTtlMs = 30_000;
 
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private cloudinaryService: CloudinaryService,
+  ) {}
 
   private clearCache() {
     this.listCache.clear();
@@ -36,41 +35,165 @@ export class QuoteRequestsService {
     return `QG-${year}-${randomSeq}`;
   }
 
-  async create(userId: string, dto: CreateQuoteRequestDto) {
+  async create(userId: string, dto: CreateQuoteRequestDto, files?: Express.Multer.File[]) {
     this.clearCache();
-    const { imageUrls, materialIds, materialId, ...data } = dto;
+    const { imageUrls, materialIds, materialId, newCategoryName, productName, ...data } = dto;
     const code = this.generateCode();
 
+    let finalCategoryId = data.categoryId;
+    if (newCategoryName && newCategoryName.trim()) {
+      const existing = await this.prisma.productCategory.findFirst({
+        where: { name: { equals: newCategoryName.trim(), mode: 'insensitive' } },
+      });
+      if (existing) {
+        finalCategoryId = existing.id;
+      } else {
+        const createdCat = await this.prisma.productCategory.create({
+          data: { name: newCategoryName.trim() },
+        });
+        finalCategoryId = createdCat.id;
+      }
+    }
+
+    let finalCloudinaryUrls: string[] = [];
+    if (files && files.length > 0) {
+      const uploadedResults = await this.cloudinaryService.uploadMultipleImages(files);
+      finalCloudinaryUrls.push(...uploadedResults.map((r) => r.url));
+    }
+
+    if (imageUrls && imageUrls.length > 0) {
+      const uploadedFromDto = await Promise.all(
+        imageUrls.map((url) => this.cloudinaryService.uploadBase64OrUrl(url)),
+      );
+      finalCloudinaryUrls.push(...uploadedFromDto.filter(Boolean));
+    }
+
     const connectMaterials = materialIds && materialIds.length > 0
-      ? { connect: materialIds.map((id) => ({ id })) }
+      ? { create: materialIds.map((id) => ({ materialId: id })) }
       : materialId
-      ? { connect: [{ id: materialId }] }
+      ? { create: [{ materialId: materialId }] }
       : undefined;
 
     return this.prisma.quoteRequest.create({
       data: {
         ...data,
+        categoryId: finalCategoryId,
         code,
         status: QuoteStatus.YC_MOI,
         version: 1,
         requesterId: userId,
-        createdById: userId,
         materialId: materialId || (materialIds && materialIds[0]) || undefined,
         materials: connectMaterials,
-        images: imageUrls && imageUrls.length > 0
+        images: finalCloudinaryUrls.length > 0
           ? {
-              create: imageUrls.map((url) => ({ imageUrl: url })),
+              create: finalCloudinaryUrls.map((url) => ({ imageUrl: url })),
             }
           : undefined,
       },
       include: {
         customer: true,
         material: true,
-        materials: true,
+        materials: { include: { material: true } },
         category: true,
         requester: { select: { id: true, name: true, email: true, department: true } },
         pricer: { select: { id: true, name: true, email: true } },
-        createdBy: { select: { id: true, name: true, email: true } },
+        images: true,
+        options: { orderBy: { createdAt: 'asc' } },
+      },
+    });
+  }
+
+  async submitQuickQuote(userId: string, dto: QuickQuoteSubmitDto) {
+    this.clearCache();
+    const { quoteRequestId, productName, categoryId, materialId, customerId, newCustomer, pricerId, options, quotedPrice, vat } = dto;
+
+    let finalCustomerId = customerId;
+    if (!finalCustomerId && newCustomer) {
+      const createdCust = await this.prisma.customer.create({
+        data: {
+          name: newCustomer.name,
+          phone: newCustomer.phone || null,
+          address: newCustomer.address || null,
+          province: newCustomer.province || '',
+          ward: newCustomer.ward || '',
+          note: newCustomer.note || null,
+        },
+      });
+      finalCustomerId = createdCust.id;
+    }
+
+    if (!finalCustomerId) {
+      throw new BadRequestException('Vui lòng chọn khách hàng có sẵn hoặc nhập thông tin khách hàng mới');
+    }
+
+    const optionsCreate = options && options.length > 0
+      ? {
+          create: options.map((opt, idx) => ({
+            optionName: opt.optionName || `Phương án ${idx + 1}`,
+            materialName: opt.materialName,
+            weightChi: opt.weightChi,
+            laborCost: opt.laborCost,
+            stoneCost: opt.stoneCost,
+            stoneDescription: opt.stoneDescription,
+            vat: opt.vat,
+            quotedPrice: opt.quotedPrice,
+            isSelected: opt.isSelected ?? (idx === 0),
+            note: opt.note,
+          })),
+        }
+      : undefined;
+
+    if (quoteRequestId) {
+      if (options && options.length > 0) {
+        await this.prisma.quoteOption.deleteMany({ where: { quoteRequestId } });
+      }
+      return this.prisma.quoteRequest.update({
+        where: { id: quoteRequestId },
+        data: {
+          categoryId,
+          customerId: finalCustomerId,
+          materialId: materialId || undefined,
+          pricerId: pricerId || undefined,
+          status: QuoteStatus.DANG_XLY,
+          quotedPrice: quotedPrice || (options && options[0] ? options[0].quotedPrice : undefined),
+          vat: vat ?? 0,
+          options: optionsCreate,
+        },
+        include: {
+          customer: true,
+          material: true,
+          materials: { include: { material: true } },
+          category: true,
+          requester: { select: { id: true, name: true, email: true, department: true } },
+          pricer: { select: { id: true, name: true, email: true } },
+          images: true,
+          options: { orderBy: { createdAt: 'asc' } },
+        },
+      });
+    }
+
+    const code = this.generateCode();
+    return this.prisma.quoteRequest.create({
+      data: {
+        code,
+        status: QuoteStatus.DANG_XLY,
+        requesterId: userId,
+        customerId: finalCustomerId,
+        categoryId,
+        materialId: materialId || undefined,
+        pricerId: pricerId || undefined,
+        vat: vat ?? 0,
+        quotedPrice: quotedPrice || (options && options[0] ? options[0].quotedPrice : undefined),
+        materials: materialId ? { create: [{ materialId }] } : undefined,
+        options: optionsCreate,
+      },
+      include: {
+        customer: true,
+        material: true,
+        materials: { include: { material: true } },
+        category: true,
+        requester: { select: { id: true, name: true, email: true, department: true } },
+        pricer: { select: { id: true, name: true, email: true } },
         images: true,
         options: { orderBy: { createdAt: 'asc' } },
       },
@@ -78,58 +201,268 @@ export class QuoteRequestsService {
   }
 
   async findAll(filterDto: FilterQuoteRequestDto, _user: User) {
-    const { status, search, requesterId, pricerId, page = 1, limit = 100 } = filterDto;
-    const skip = (page - 1) * limit;
-    const cacheKey = JSON.stringify({ status, search, requesterId, pricerId, page, limit });
-    this.listCache.clear();
-
-    const where: any = {};
-
-    if (requesterId) {
-      where.requesterId = requesterId;
+    const cacheKey = JSON.stringify({ filterDto, userId: _user?.id, role: _user?.role });
+    const cached = this.listCache.get(cacheKey);
+    if (cached && Date.now() - cached.at < this.cacheTtlMs) {
+      return cached.data;
     }
 
-    if (status) {
-      where.status = status;
+    const {
+      status,
+      search,
+      requesterId,
+      pricerId,
+      categoryId,
+      materialId,
+      ownerId,
+      page = 1,
+      limit = 10,
+    } = filterDto;
+
+    const pageNum = Math.max(1, Number(page) || 1);
+    const limitNum = Math.max(1, Math.min(100, Number(limit) || 10));
+    const skip = (pageNum - 1) * limitNum;
+
+    const andConditions: any[] = [];
+
+    const targetOwner = ownerId || requesterId;
+    if (targetOwner) {
+      if (_user?.role === Role.PRICING) {
+        andConditions.push({ pricerId: targetOwner });
+      } else {
+        andConditions.push({ requesterId: targetOwner });
+      }
+    }
+
+    if (status && Object.values(QuoteStatus).includes(status as any)) {
+      andConditions.push({ status: status as QuoteStatus });
     }
 
     if (pricerId) {
-      where.pricerId = pricerId;
+      andConditions.push({ pricerId });
     }
 
-    if (search) {
-      where.OR = [
-        { code: { contains: search, mode: 'insensitive' } },
-        { productName: { contains: search, mode: 'insensitive' } },
-        { customer: { name: { contains: search, mode: 'insensitive' } } },
-      ];
+    if (categoryId && categoryId !== 'ALL') {
+      andConditions.push({ categoryId });
     }
 
-    const items = await this.prisma.quoteRequest.findMany({
-      where,
-      skip,
-      take: limit,
-      orderBy: { createdAt: 'desc' },
-      include: {
-        customer: true,
-        material: true,
-        materials: true,
-        category: true,
-        requester: { select: { id: true, name: true, email: true, department: true } },
-        pricer: { select: { id: true, name: true, email: true } },
-        createdBy: { select: { id: true, name: true, email: true } },
-        images: true,
-        options: { orderBy: { createdAt: 'asc' } },
-      },
+    if (materialId && materialId !== 'ALL') {
+      andConditions.push({
+        OR: [
+          { materialId: materialId },
+          { materials: { some: { materialId: materialId } } },
+        ],
+      });
+    }
+
+    if (search && search.trim() !== '') {
+      const trimmed = search.trim();
+      andConditions.push({
+        OR: [
+          { code: { contains: trimmed, mode: 'insensitive' } },
+          { category: { name: { contains: trimmed, mode: 'insensitive' } } },
+          { customer: { name: { contains: trimmed, mode: 'insensitive' } } },
+          { customer: { phone: { contains: trimmed, mode: 'insensitive' } } },
+        ],
+      });
+    }
+
+    const where = andConditions.length > 0 ? { AND: andConditions } : {};
+
+    const myReqCountPromise = _user?.id
+      ? this.prisma.quoteRequest.count({
+          where: _user.role === Role.PRICING
+            ? { pricerId: _user.id }
+            : { requesterId: _user.id },
+        })
+      : Promise.resolve(0);
+
+    const countsPromise = Promise.all([
+      this.prisma.quoteRequest.groupBy({
+        by: ['status'],
+        _count: { _all: true },
+      }),
+      myReqCountPromise,
+    ]).then(([res, myReqCnt]) => {
+      const map: Record<string, number> = {
+        total: 0,
+        myReq: myReqCnt,
+        ycMoi: 0,
+        dangXly: 0,
+        needMoreInfo: 0,
+        xong: 0,
+        tuChoi: 0,
+      };
+      for (const item of res) {
+        const cnt = item._count._all;
+        map.total += cnt;
+        if (item.status === QuoteStatus.YC_MOI) map.ycMoi = cnt;
+        else if (item.status === QuoteStatus.DANG_XLY) map.dangXly = cnt;
+        else if (item.status === QuoteStatus.NEED_MORE_INFO) map.needMoreInfo = cnt;
+        else if (item.status === QuoteStatus.XONG) map.xong = cnt;
+        else if (item.status === QuoteStatus.TU_CHOI) map.tuChoi = cnt;
+      }
+      return map;
     });
 
+    const [items, total, counts] = await Promise.all([
+      this.prisma.quoteRequest.findMany({
+        where,
+        skip,
+        take: limitNum,
+        orderBy: { createdAt: 'desc' },
+        select: {
+          id: true,
+          code: true,
+          desiredLeadTime: true,
+          customerMeasurements: true,
+          closeRatePct: true,
+          vat: true,
+          quotedPrice: true,
+          quotedDate: true,
+          status: true,
+          rejectReason: true,
+          returnReason: true,
+          selectedOptionId: true,
+          version: true,
+          createdAt: true,
+          updatedAt: true,
+          customerId: true,
+          materialId: true,
+          categoryId: true,
+          requesterId: true,
+          pricerId: true,
+        },
+      }),
+      this.prisma.quoteRequest.count({ where }),
+      countsPromise,
+    ]);
+
+    if (items.length === 0) {
+      return {
+        data: [],
+        meta: { total, page: pageNum, limit: limitNum, totalPages: Math.ceil(total / limitNum) || 1, counts },
+      };
+    }
+
+    const customerIds = [...new Set(items.map((i) => i.customerId))];
+    const materialIds = [...new Set(items.map((i) => i.materialId).filter(Boolean))] as string[];
+    const categoryIds = [...new Set(items.map((i) => i.categoryId))];
+    const requesterIds = [...new Set(items.map((i) => i.requesterId))];
+    const pricerIds = [...new Set(items.map((i) => i.pricerId).filter(Boolean))] as string[];
+    const quoteRequestIds = items.map((i) => i.id);
+
+    const [
+      customers,
+      materials,
+      categories,
+      requesters,
+      pricers,
+      quoteMaterials,
+      images,
+    ] = await Promise.all([
+      this.prisma.customer.findMany({
+        where: { id: { in: customerIds } },
+        select: { id: true, name: true, phone: true, address: true },
+      }),
+      materialIds.length
+        ? this.prisma.material.findMany({
+            where: { id: { in: materialIds } },
+            select: { id: true, name: true },
+          })
+        : Promise.resolve([]),
+      this.prisma.productCategory.findMany({
+        where: { id: { in: categoryIds } },
+        select: { id: true, name: true },
+      }),
+      this.prisma.user.findMany({
+        where: { id: { in: requesterIds } },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          department: { select: { id: true, name: true } },
+        },
+      }),
+      pricerIds.length
+        ? this.prisma.user.findMany({
+            where: { id: { in: pricerIds } },
+            select: { id: true, name: true, email: true },
+          })
+        : Promise.resolve([]),
+      this.prisma.quoteRequestMaterial.findMany({
+        where: { quoteRequestId: { in: quoteRequestIds } },
+        select: {
+          quoteRequestId: true,
+          material: { select: { id: true, name: true } },
+        },
+      }),
+      this.prisma.quoteRequestImage.findMany({
+        where: { quoteRequestId: { in: quoteRequestIds } },
+        select: { id: true, imageUrl: true, quoteRequestId: true },
+        orderBy: { id: 'asc' },
+      }),
+    ]);
+
+    const customerMap = new Map(customers.map((c): [string, typeof c] => [c.id, c]));
+    const materialMap = new Map(materials.map((m): [string, typeof m] => [m.id, m]));
+    const categoryMap = new Map(categories.map((c): [string, typeof c] => [c.id, c]));
+    const requesterMap = new Map(requesters.map((r): [string, typeof r] => [r.id, r]));
+    const pricerMap = new Map(pricers.map((p): [string, typeof p] => [p.id, p]));
+
+    const materialsByQuoteId = new Map<string, { id: string; name: string }[]>();
+    for (const qm of quoteMaterials) {
+      if (!materialsByQuoteId.has(qm.quoteRequestId)) {
+        materialsByQuoteId.set(qm.quoteRequestId, []);
+      }
+      materialsByQuoteId.get(qm.quoteRequestId)!.push(qm.material);
+    }
+
+    const imagesByQuoteId = new Map<string, { id: string; imageUrl: string }[]>();
+    for (const img of images) {
+      if (!imagesByQuoteId.has(img.quoteRequestId)) {
+        imagesByQuoteId.set(img.quoteRequestId, []);
+      }
+      const arr = imagesByQuoteId.get(img.quoteRequestId)!;
+      if (arr.length === 0) arr.push({ id: img.id, imageUrl: img.imageUrl });
+    }
+
+    const sanitizedItems = items.map((item) => {
+      const catName = categoryMap.get(item.categoryId)?.name || '';
+      const matArr = materialsByQuoteId.get(item.id) || [];
+      const matName = matArr.length > 0
+        ? matArr.map((m) => m.name).join(', ')
+        : (item.materialId ? materialMap.get(item.materialId)?.name : '') || '';
+      const dynamicProductName = `${catName} ${matName}`.trim() || 'Sản phẩm chế tác';
+
+      return {
+        ...item,
+        productName: dynamicProductName,
+        customer: customerMap.get(item.customerId) || null,
+        material: item.materialId ? materialMap.get(item.materialId) || null : null,
+        category: categoryMap.get(item.categoryId) || null,
+        requester: requesterMap.get(item.requesterId) || null,
+        pricer: item.pricerId ? pricerMap.get(item.pricerId) || null : null,
+        materials: matArr,
+        images: (imagesByQuoteId.get(item.id) || []).map((img) => ({
+          ...img,
+          imageUrl: img.imageUrl.startsWith('data:image')
+            ? 'https://images.unsplash.com/photo-1605100804763-247f67b3557e?w=500&auto=format&fit=crop&q=60'
+            : img.imageUrl,
+        })),
+      };
+    });
+
+    const totalPages = Math.ceil(total / limitNum) || 1;
+
     const result = {
-      data: items,
+      data: sanitizedItems,
       meta: {
-        total: items.length,
-        page,
-        limit,
-        totalPages: 1,
+        total,
+        page: pageNum,
+        limit: limitNum,
+        totalPages,
+        counts,
       },
     };
 
@@ -143,28 +476,57 @@ export class QuoteRequestsService {
       include: {
         customer: true,
         material: true,
-        materials: true,
+        materials: { include: { material: true } },
         category: true,
         requester: { select: { id: true, name: true, email: true, department: true } },
         pricer: { select: { id: true, name: true, email: true } },
-        createdBy: { select: { id: true, name: true, email: true } },
         images: true,
-        options: { orderBy: { createdAt: 'asc' } },
+        options: true,
       },
     });
 
     if (!quote) {
       throw new NotFoundException('Không tìm thấy yêu cầu báo giá');
     }
-    return quote;
+
+    if (quote.options && Array.isArray(quote.options)) {
+      quote.options.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+    }
+
+    const catName = quote.category?.name || '';
+    const matNames = quote.materials && quote.materials.length > 0
+      ? quote.materials.map((m) => m.material.name).join(', ')
+      : quote.material?.name || '';
+    const dynamicProductName = `${catName} ${matNames}`.trim() || 'Sản phẩm chế tác';
+
+    return {
+      ...quote,
+      productName: dynamicProductName,
+    };
   }
 
-  async update(id: string, userId: string, dto: UpdateQuoteRequestDto) {
+  async update(id: string, userId: string, dto: UpdateQuoteRequestDto, files?: Express.Multer.File[]) {
     this.clearCache();
     const { imageUrls, materialIds, materialId, ...data } = dto;
 
+    let finalCloudinaryUrls: string[] = [];
+    if (files && files.length > 0) {
+      const uploadedResults = await this.cloudinaryService.uploadMultipleImages(files);
+      finalCloudinaryUrls.push(...uploadedResults.map((r) => r.url));
+    }
+
+    if (imageUrls && imageUrls.length > 0) {
+      const uploadedFromDto = await Promise.all(
+        imageUrls.map((url) => this.cloudinaryService.uploadBase64OrUrl(url)),
+      );
+      finalCloudinaryUrls.push(...uploadedFromDto.filter(Boolean));
+    }
+
     const setMaterials = materialIds
-      ? { set: materialIds.map((matId) => ({ id: matId })) }
+      ? {
+          deleteMany: {},
+          create: materialIds.map((matId) => ({ materialId: matId })),
+        }
       : undefined;
 
     return this.prisma.quoteRequest.update({
@@ -173,21 +535,20 @@ export class QuoteRequestsService {
         ...data,
         materialId: materialId || (materialIds && materialIds[0]) || undefined,
         materials: setMaterials,
-        images: imageUrls
+        images: finalCloudinaryUrls.length > 0
           ? {
               deleteMany: {},
-              create: imageUrls.map((url) => ({ imageUrl: url })),
+              create: finalCloudinaryUrls.map((url) => ({ imageUrl: url })),
             }
           : undefined,
       },
       include: {
         customer: true,
         material: true,
-        materials: true,
+        materials: { include: { material: true } },
         category: true,
         requester: { select: { id: true, name: true, email: true, department: true } },
         pricer: { select: { id: true, name: true, email: true } },
-        createdBy: { select: { id: true, name: true, email: true } },
         images: true,
         options: { orderBy: { createdAt: 'asc' } },
       },
@@ -278,11 +639,10 @@ export class QuoteRequestsService {
       include: {
         customer: true,
         material: true,
-        materials: true,
+        materials: { include: { material: true } },
         category: true,
         requester: { select: { id: true, name: true, email: true, department: true } },
         pricer: { select: { id: true, name: true, email: true } },
-        createdBy: { select: { id: true, name: true, email: true } },
         images: true,
         options: { orderBy: { createdAt: 'asc' } },
       },
@@ -299,19 +659,16 @@ export class QuoteRequestsService {
       throw new NotFoundException('Không tìm thấy phương án báo giá tương ứng');
     }
 
-    // Reset all options to unselected
     await this.prisma.quoteOption.updateMany({
       where: { quoteRequestId: id },
       data: { isSelected: false },
     });
 
-    // Mark target option as selected
     await this.prisma.quoteOption.update({
       where: { id: optionId },
       data: { isSelected: true },
     });
 
-    // Update QuoteRequest main price to selected option's price
     return this.prisma.quoteRequest.update({
       where: { id },
       data: {
@@ -321,11 +678,10 @@ export class QuoteRequestsService {
       include: {
         customer: true,
         material: true,
-        materials: true,
+        materials: { include: { material: true } },
         category: true,
         requester: { select: { id: true, name: true, email: true, department: true } },
         pricer: { select: { id: true, name: true, email: true } },
-        createdBy: { select: { id: true, name: true, email: true } },
         images: true,
         options: { orderBy: { createdAt: 'asc' } },
       },
@@ -344,11 +700,10 @@ export class QuoteRequestsService {
       include: {
         customer: true,
         material: true,
-        materials: true,
+        materials: { include: { material: true } },
         category: true,
         requester: { select: { id: true, name: true, email: true, department: true } },
         pricer: { select: { id: true, name: true, email: true } },
-        createdBy: { select: { id: true, name: true, email: true } },
         images: true,
         options: { orderBy: { createdAt: 'asc' } },
       },
@@ -367,11 +722,10 @@ export class QuoteRequestsService {
       include: {
         customer: true,
         material: true,
-        materials: true,
+        materials: { include: { material: true } },
         category: true,
         requester: { select: { id: true, name: true, email: true, department: true } },
         pricer: { select: { id: true, name: true, email: true } },
-        createdBy: { select: { id: true, name: true, email: true } },
         images: true,
         options: { orderBy: { createdAt: 'asc' } },
       },
@@ -390,18 +744,16 @@ export class QuoteRequestsService {
       include: {
         customer: true,
         material: true,
-        materials: true,
+        materials: { include: { material: true } },
         category: true,
         requester: { select: { id: true, name: true, email: true, department: true } },
         pricer: { select: { id: true, name: true, email: true } },
-        createdBy: { select: { id: true, name: true, email: true } },
         images: true,
         options: { orderBy: { createdAt: 'asc' } },
       },
     });
   }
 
-  // Unified Status Update (1 single PATCH /status endpoint)
   async updateStatus(id: string, userId: string, role: Role, dto: UpdateQuoteStatusDto) {
     switch (dto.action) {
       case QuoteAction.ACCEPT:
@@ -423,6 +775,58 @@ export class QuoteRequestsService {
           vat: dto.vat,
           options: dto.options,
         });
+
+      case QuoteAction.QUICK_QUOTE:
+        this.clearCache();
+        return this.prisma.quoteRequest.update({
+          where: { id },
+          data: {
+            status: QuoteStatus.DANG_XLY,
+            ...(dto.quotedPrice ? { quotedPrice: dto.quotedPrice } : {}),
+          },
+          include: {
+            customer: true,
+            material: true,
+            materials: { include: { material: true } },
+            category: true,
+            requester: { select: { id: true, name: true, email: true, department: true } },
+            pricer: { select: { id: true, name: true, email: true } },
+            images: true,
+            options: { orderBy: { createdAt: 'asc' } },
+          },
+        });
+
+      case QuoteAction.QUICK_APPROVE:
+        if (role !== Role.PRICING && role !== Role.ADMIN) {
+          throw new ForbiddenException('Chỉ có vai trò PRICING hoặc ADMIN mới được phép duyệt báo giá nhanh');
+        }
+        this.clearCache();
+        return this.prisma.quoteRequest.update({
+          where: { id },
+          data: {
+            status: QuoteStatus.XONG,
+            pricerId: userId,
+            quotedDate: new Date(),
+            ...(dto.quotedPrice ? { quotedPrice: dto.quotedPrice } : {}),
+          },
+          include: {
+            customer: true,
+            material: true,
+            materials: { include: { material: true } },
+            category: true,
+            requester: { select: { id: true, name: true, email: true, department: true } },
+            pricer: { select: { id: true, name: true, email: true } },
+            images: true,
+            options: { orderBy: { createdAt: 'asc' } },
+          },
+        });
+
+      case QuoteAction.QUICK_REJECT:
+        if (role !== Role.PRICING && role !== Role.ADMIN) {
+          throw new ForbiddenException('Chỉ có vai trò PRICING hoặc ADMIN mới được phép từ chối báo giá nhanh');
+        }
+        this.clearCache();
+        return this.rejectQuote(id, userId, dto.rejectReason || 'Không đồng ý với báo giá nhanh này');
 
       case QuoteAction.REJECT:
         if (role !== Role.PRICING && role !== Role.ADMIN) {
@@ -464,4 +868,3 @@ export class QuoteRequestsService {
     }
   }
 }
-

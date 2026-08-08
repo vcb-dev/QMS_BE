@@ -20,6 +20,22 @@ export class FilterQuoteRequestDto {
   pricerId?: string;
 
   @IsOptional()
+  @IsString()
+  categoryId?: string;
+
+  @IsOptional()
+  @IsString()
+  materialId?: string;
+
+  @IsOptional()
+  @IsString()
+  ownerId?: string;
+
+  @IsOptional()
+  @IsString()
+  includeCounts?: string;
+
+  @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)

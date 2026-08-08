@@ -1,7 +1,9 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
-import { PrismaService } from '../../prisma/prisma.service';
+import { Request } from 'express';
+import { COOKIE_ACCESS } from '../cookie.constants';
 
 export interface JwtPayload {
   sub: string;
@@ -11,23 +13,41 @@ export interface JwtPayload {
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
-  constructor(private prisma: PrismaService) {
+  constructor(config: ConfigService) {
+    const jwtSecret = config.get<string>('JWT_SECRET');
+    if (!jwtSecret) {
+      throw new Error('Cấu hình thiếu biến môi trường JWT_SECRET trong .env');
+    }
+
     super({
-      jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
+      jwtFromRequest: ExtractJwt.fromExtractors([
+        (request: Request) => {
+          let token: string | null = null;
+          if (request && request.cookies && request.cookies[COOKIE_ACCESS]) {
+            token = request.cookies[COOKIE_ACCESS];
+          }
+          if (!token) {
+            const headerToken = ExtractJwt.fromAuthHeaderAsBearerToken()(request);
+            if (headerToken && headerToken !== 'undefined' && headerToken !== 'null') {
+              token = headerToken;
+            }
+          }
+          return token;
+        },
+      ]),
       ignoreExpiration: false,
-      secretOrKey: process.env.JWT_SECRET || 'qms_jwt_secret_key_2026',
+      secretOrKey: jwtSecret,
     });
   }
 
   async validate(payload: JwtPayload) {
-    const user = await this.prisma.user.findUnique({
-      where: { id: payload.sub },
-      include: { department: true },
-    });
-    if (!user) {
-      throw new UnauthorizedException('Tài khoản không tồn tại hoặc đã bị khóa');
+    if (!payload || !payload.sub) {
+      throw new UnauthorizedException('Token không hợp lệ');
     }
-    const { passwordHash, ...result } = user;
-    return result;
+    return {
+      id: payload.sub,
+      email: payload.email,
+      role: payload.role,
+    };
   }
 }

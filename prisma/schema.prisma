@@ -1,5 +1,6 @@
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  previewFeatures = ["relationJoins"]
 }
 
 datasource db {
@@ -35,18 +36,19 @@ model User {
   name         String
   email        String   @unique
   passwordHash String
+  refreshTokenHash String? @map("refresh_token_hash")
   role         Role
   department   Department? @relation(fields: [departmentId], references: [id])
   departmentId String?
 
   // Quan hệ ngược - 1 user có thể đóng nhiều vai trong quote_requests
   requestedQuotes QuoteRequest[] @relation("Requester")
-  createdQuotes   QuoteRequest[] @relation("CreatedBy")
   pricedQuotes    QuoteRequest[] @relation("Pricer")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@index([departmentId])
   @@map("users")
 }
 
@@ -67,10 +69,10 @@ model Department {
 // ==========================
 
 model Material {
-  id                   String         @id @default(cuid())
-  name                 String         @unique
-  primaryQuoteRequests QuoteRequest[] @relation("PrimaryMaterial")
-  quoteRequests        QuoteRequest[]
+  id                   String                @id @default(cuid())
+  name                 String                @unique
+  primaryQuoteRequests QuoteRequest[]        @relation("PrimaryMaterial")
+  quoteRequests        QuoteRequestMaterial[]
 
   @@map("materials")
 }
@@ -96,6 +98,8 @@ model Customer {
   name    String
   phone   String?
   address String? @db.Text
+  province String 
+  ward String 
   note    String? @db.Text
 
   quoteRequests QuoteRequest[]
@@ -115,65 +119,61 @@ model QuoteRequest {
   code   String @unique // 1. Mã hỏi Giá - vd QG-2026-0001
 
   status QuoteStatus @default(YC_MOI) // 3. Trạng thái
-
-  // 4. Người hỏi giá — nếu luôn trùng với "Tài khoản tạo" thì xóa field này
-  // và dùng chung createdBy cho cả 2 mục đích.
   requester   User   @relation("Requester", fields: [requesterId], references: [id])
   requesterId String
-
-  // Khách hàng của yêu cầu báo giá này
   customer   Customer @relation(fields: [customerId], references: [id])
   customerId String
-
-  // 5. Bộ phận làm việc — KHÔNG lưu trực tiếp ở đây, lấy qua requester.department
-  // (User đã có departmentId sẵn, tránh dữ liệu trùng/lệch nhau).
-  // Chỉ un-comment 2 dòng dưới nếu có case yêu cầu được ghi nhận cho
-  // một bộ phận KHÁC với bộ phận của người tạo:
-  // department   Department @relation(fields: [departmentId], references: [id])
-  // departmentId String
-
   desiredDate  DateTime? // 7. Thời gian muốn nhận
-
-  productName  String    // 8. Tên sản phẩm + Yêu cầu
   desiredLeadTime String?   @map("desired_lead_time") @db.Text
-
-  // 9. Chất liệu chế tác (Hỗ trợ chọn 1 hoặc nhiều chất liệu)
-  materials   Material[]
+  materials   QuoteRequestMaterial[]
   material    Material?   @relation("PrimaryMaterial", fields: [materialId], references: [id])
   materialId  String?
-
-  // 10. Danh mục sản phẩm
   category   ProductCategory @relation(fields: [categoryId], references: [id])
   categoryId String
-
   customerMeasurements String?  @db.Text // 11. Số đo của khách
   closeRatePct         Decimal? @db.Decimal(5, 2) // 12. Khách tỷ lệ chốt
-
-  // --- Vùng do Pricing điền ---
   vat          Decimal? @db.Decimal(5, 2) // 13. VAT
   quotedPrice  Decimal? @db.Decimal(14, 2) // 14. BÁO GIÁ
   quotedDate   DateTime? // 15. Ngày báo giá
-
   pricer   User?   @relation("Pricer", fields: [pricerId], references: [id]) // 16. Người Báo giá
   pricerId String?
-
   rejectReason String? @db.Text // bắt buộc khi status = TU_CHOI
   returnReason String? @map("return_reason") @db.Text // bắt buộc khi status = NEED_MORE_INFO
-
   options      QuoteOption[] // Multi-options báo giá song song
   selectedOptionId String?  @map("selected_option_id")
-
-  // 17. Tài khoản tạo
-  createdBy   User   @relation("CreatedBy", fields: [createdById], references: [id])
-  createdById String
-
   images        QuoteRequestImage[] // 6. Ảnh sản phẩm (nếu nhiều ảnh)
-
   version   Int      @default(1) // optimistic locking - chống 2 Pricing tiếp nhận trùng
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@index([status, createdAt(sort: Desc)])
+  @@index([requesterId])
+  @@index([requesterId, status])
+  @@index([pricerId])
+  @@index([pricerId, status])
+  @@index([customerId])
+  @@index([categoryId])
+  @@index([materialId])
+  @@index([selectedOptionId])
   @@map("quote_requests")
+}
+
+// ==========================
+// 6b. QUOTE_REQUEST_MATERIALS (bảng nối tường minh thay cho m2m ẩn)
+// ==========================
+
+model QuoteRequestMaterial {
+  id             String       @id @default(cuid())
+  quoteRequest   QuoteRequest @relation(fields: [quoteRequestId], references: [id], onDelete: Cascade)
+  quoteRequestId String       @map("quote_request_id")
+  material       Material     @relation(fields: [materialId], references: [id])
+  materialId     String       @map("material_id")
+
+  createdAt DateTime @default(now())
+
+  @@unique([quoteRequestId, materialId])
+  @@index([materialId])
+  @@map("quote_request_materials")
 }
 
 // ==========================
@@ -189,6 +189,7 @@ model QuoteRequestImage {
   imageUrl       String
   uploadedAt     DateTime     @default(now())
 
+  @@index([quoteRequestId])
   @@map("quote_request_images")
 }
 
@@ -244,7 +245,6 @@ model QuoteOption {
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 
+  @@index([quoteRequestId])
   @@map("quote_options")
 }
-
-

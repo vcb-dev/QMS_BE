@@ -1,5 +1,6 @@
 import { Controller, Get, Post, Body } from '@nestjs/common';
-import { MetalPricesService, MetalPrices } from './metal-prices.service';
+import { MetalPricesService } from './metal-prices.service';
+import { MetalPrices } from './dto/metal-prices.dto';
 
 @Controller('metal-prices')
 export class MetalPricesController {
@@ -16,4 +17,3 @@ export class MetalPricesController {
     return this.metalPricesService.updatePrices(prices);
   }
 }
-

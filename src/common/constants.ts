@@ -25,8 +25,18 @@ export const APP_CONSTANTS = {
 
   CHI_GRAMS: 3.75,
   TROY_OZ_GRAMS: 31.1034768,
+  DEFAULT_EXCHANGE_RATE: 26150,
 
-  FALLBACK_USD_VND_RATE: requiredNumberEnv('FALLBACK_USD_VND_RATE'),
-  DEFAULT_GOLD_24K_VND: requiredNumberEnv('DEFAULT_GOLD_24K_VND'),
-  DEFAULT_SILVER_VND: requiredNumberEnv('DEFAULT_SILVER_VND'),
+  MAX_FILE_SIZE: 10 * 1024 * 1024, // 10MB
+  ALLOWED_MIME_TYPES: [
+      'image/jpeg',
+      'image/png',
+      'image/webp',
+      'image/gif',
+      'image/heic',
+      'image/heif',
+      'image/svg+xml',
+    ],
+    MATERIAL_TTL:60_000,
+
 };

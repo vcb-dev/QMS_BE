@@ -1,17 +1,8 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import * as https from 'https';
 import { PrismaService } from '../prisma/prisma.service';
-
-export interface MetalPrices {
-  gold24kVnd: number;    // VNĐ / chỉ (3.75g)
-  silverVnd: number;     // VNĐ / chỉ
-  platinumVnd?: number;  // optional
-  updatedAt: string;     // ISO timestamp
-  source: string;
-}
-
-const CHI_GRAMS = 3.75;
-const TROY_OZ_GRAMS = 31.1034768;
+import { MetalPrices } from './dto/metal-prices.dto';
+import { APP_CONSTANTS } from 'src/common/constants';
 
 @Injectable()
 export class MetalPricesService implements OnModuleInit {
@@ -51,7 +42,7 @@ export class MetalPricesService implements OnModuleInit {
         this.getGoldApiPrice('XAG'),
       ]);
 
-      const multiplier = CHI_GRAMS / TROY_OZ_GRAMS;
+      const multiplier = APP_CONSTANTS.CHI_GRAMS / APP_CONSTANTS.TROY_OZ_GRAMS;
       
       // Calculate converted VND per chỉ
       let gold24kVnd = Math.round(goldSpotUsd * usdVnd * multiplier);
@@ -140,20 +131,20 @@ export class MetalPricesService implements OnModuleInit {
         headers: { 'User-Agent': 'Mozilla/5.0' },
         timeout: 5000,
       };
-      const req = https.get('https://open.er-api.com/v6/latest/USD', options, (res) => {
+      const req = https.get(APP_CONSTANTS.EXCHANGE_RATE_API_URL, options, (res) => {
         let body = '';
         res.on('data', (c) => body += c);
         res.on('end', () => {
           try {
             const data = JSON.parse(body);
-            resolve(data?.rates?.VND || 26150);
+            resolve(data?.rates?.VND || APP_CONSTANTS.DEFAULT_EXCHANGE_RATE);
           } catch {
-            resolve(26150);
+            resolve(APP_CONSTANTS.DEFAULT_EXCHANGE_RATE);
           }
         });
       });
-      req.on('error', () => resolve(26150));
-      req.on('timeout', () => { req.destroy(); resolve(26150); });
+      req.on('error', () => resolve(APP_CONSTANTS.DEFAULT_EXCHANGE_RATE));
+      req.on('timeout', () => { req.destroy(); resolve(APP_CONSTANTS.DEFAULT_EXCHANGE_RATE); });
     });
   }
 
@@ -163,7 +154,8 @@ export class MetalPricesService implements OnModuleInit {
         headers: { 'User-Agent': 'Mozilla/5.0' },
         timeout: 5000,
       };
-      const req = https.get(`https://api.gold-api.com/price/${symbol}`, options, (res) => {
+      const apiUrl = `${APP_CONSTANTS.GOLD_API_URL}/${symbol}`;
+      const req = https.get(apiUrl, options, (res) => {
         let body = '';
         res.on('data', (c) => body += c);
         res.on('end', () => {

@@ -44,3 +44,8 @@ export class QuoteOptionItemDto {
   note?: string;
 }
 
+export class CompleteQuoteInput {
+  quotedPrice: number;
+  vat?: number;
+  options?: QuoteOptionItemDto[];
+}

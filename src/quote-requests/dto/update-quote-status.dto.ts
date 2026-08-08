@@ -9,6 +9,9 @@ export enum QuoteAction {
   RETURN = 'RETURN',
   RESUBMIT = 'RESUBMIT',
   SELECT_OPTION = 'SELECT_OPTION',
+  QUICK_QUOTE = 'QUICK_QUOTE',
+  QUICK_APPROVE = 'QUICK_APPROVE',
+  QUICK_REJECT = 'QUICK_REJECT',
 }
 
 export class UpdateQuoteStatusDto {
