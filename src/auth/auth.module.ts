@@ -7,9 +7,12 @@ import { AuthController } from './auth.controller';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { CookieAuthService } from './cookie-auth.service';
 
+import { MailModule } from '../mail/mail.module';
+
 @Module({
   imports: [
     ConfigModule,
+    MailModule,
     PassportModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],

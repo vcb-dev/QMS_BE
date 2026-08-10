@@ -13,8 +13,11 @@ import { QuoteRequestsModule } from './quote-requests/quote-requests.module';
 import { MetalPricesModule } from './metal-prices/metal-prices.module';
 import { PricingConfigModule } from './pricing-config/pricing-config.module';
 import { CloudinaryModule } from './cloudinary/cloudinary.module';
+import { MailModule } from './mail/mail.module';
 import { LoggerMiddleware } from './common/logger.middleware';
-
+import { APP_GUARD } from '@nestjs/core'; 
+import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
+import { CsrfGuard } from './auth/guards/csrf.guard';
 @Module({
   imports: [
     ScheduleModule.forRoot(),
@@ -29,9 +32,22 @@ import { LoggerMiddleware } from './common/logger.middleware';
     MetalPricesModule,
     PricingConfigModule,
     CloudinaryModule,
+    MailModule,
+    ThrottlerModule.forRoot([         
+          {                               
+            ttl: 60000, // 60,000ms = 1 minute                                   
+            limit: 60,                    
+          },                              
+        ]),   
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [AppService, {                                 
+          provide: APP_GUARD,             
+          useClass: ThrottlerGuard,       
+        }, {                             
+          provide: APP_GUARD,             
+          useClass: CsrfGuard,            
+        },],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {

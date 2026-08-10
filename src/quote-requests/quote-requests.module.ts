@@ -1,12 +1,23 @@
 import { Module } from '@nestjs/common';
 import { QuoteRequestsService } from './quote-requests.service';
+import { QuoteQueryService } from './quote-query.service';
+import { QuoteWorkflowService } from './quote-workflow.service';
 import { QuoteRequestsController } from './quote-requests.controller';
 import { CloudinaryModule } from '../cloudinary/cloudinary.module';
+import { MailModule } from '../mail/mail.module';
 
 @Module({
-  imports: [CloudinaryModule],
+  imports: [CloudinaryModule, MailModule],
   controllers: [QuoteRequestsController],
-  providers: [QuoteRequestsService],
-  exports: [QuoteRequestsService],
+  providers: [
+    QuoteRequestsService,
+    QuoteQueryService,
+    QuoteWorkflowService,
+  ],
+  exports: [
+    QuoteRequestsService,
+    QuoteQueryService,
+    QuoteWorkflowService,
+  ],
 })
 export class QuoteRequestsModule {}

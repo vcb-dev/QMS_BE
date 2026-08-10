@@ -18,8 +18,10 @@ export const APP_CONSTANTS = {
   CORS_ORIGINS: requiredEnv('FRONTEND_URL')
     .split(',')
     .map((origin) => origin.trim())
-    .filter(Boolean),
-
+    .filter(Boolean),  
+  COOKIE_SECURE: process.env['COOKIE_SECURE'] === 'true',
+  THROTTLE_TTL: requiredNumberEnv('LOGIN_THROTTLE_TTL'),
+  THROTTLE_LIMIT: requiredNumberEnv('LOGIN_THROTTLE_LIMIT'),  
   EXCHANGE_RATE_API_URL: requiredEnv('EXCHANGE_RATE_API_URL'),
   GOLD_API_URL: requiredEnv('GOLD_API_URL'),
 

@@ -37,6 +37,9 @@ model User {
   email        String   @unique
   passwordHash String
   refreshTokenHash String? @map("refresh_token_hash")
+  resetTokenHash   String? @map("reset_token_hash")
+  resetTokenExpires DateTime? @map("reset_token_expires")
+  isApproved       Boolean   @default(false) @map("is_approved")
   role         Role
   department   Department? @relation(fields: [departmentId], references: [id])
   departmentId String?
