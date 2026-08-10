@@ -36,6 +36,18 @@ export class FilterQuoteRequestDto {
   includeCounts?: string;
 
   @IsOptional()
+  @IsString()
+  startDate?: string;
+
+  @IsOptional()
+  @IsString()
+  endDate?: string;
+
+  @IsOptional()
+  @IsString()
+  timeRange?: string;
+
+  @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)

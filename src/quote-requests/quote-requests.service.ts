@@ -37,7 +37,7 @@ export class QuoteRequestsService {
 
   async create(userId: string, dto: CreateQuoteRequestDto, files?: Express.Multer.File[]) {
     this.clearCache();
-    const { imageUrls, materialIds, materialId, newCategoryName, productName, ...data } = dto;
+    const { imageUrls, materialIds, materialId, newCategoryName, productName, quotedPrice, ...data } = dto;
     const code = this.generateCode();
 
     let finalCategoryId = data.categoryId;
@@ -79,6 +79,7 @@ export class QuoteRequestsService {
         ...data,
         categoryId: finalCategoryId,
         code,
+        quotedPrice: quotedPrice || undefined,
         status: QuoteStatus.YC_MOI,
         version: 1,
         requesterId: userId,
@@ -215,6 +216,9 @@ export class QuoteRequestsService {
       categoryId,
       materialId,
       ownerId,
+      startDate,
+      endDate,
+      timeRange,
       page = 1,
       limit = 10,
     } = filterDto;
@@ -267,6 +271,53 @@ export class QuoteRequestsService {
       });
     }
 
+    if (timeRange || startDate || endDate) {
+      let start: Date | undefined;
+      let end: Date | undefined;
+
+      if (startDate) {
+        start = new Date(startDate);
+      }
+      if (endDate) {
+        end = new Date(endDate);
+      }
+
+      if (timeRange && !start) {
+        const now = new Date();
+        switch (timeRange) {
+          case 'TODAY':
+            start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+            end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
+            break;
+          case 'THIS_WEEK': {
+            const day = now.getDay() || 7;
+            start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - day + 1, 0, 0, 0);
+            break;
+          }
+          case 'THIS_MONTH':
+            start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0);
+            break;
+          case 'LAST_MONTH':
+            start = new Date(now.getFullYear(), now.getMonth() - 1, 1, 0, 0, 0);
+            end = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59);
+            break;
+          case 'THIS_YEAR':
+            start = new Date(now.getFullYear(), 0, 1, 0, 0, 0);
+            break;
+          case 'ALL':
+          default:
+            break;
+        }
+      }
+
+      const createdAtFilter: any = {};
+      if (start) createdAtFilter.gte = start;
+      if (end) createdAtFilter.lte = end;
+      if (Object.keys(createdAtFilter).length > 0) {
+        andConditions.push({ createdAt: createdAtFilter });
+      }
+    }
+
     const where = andConditions.length > 0 ? { AND: andConditions } : {};
 
     const myReqCountPromise = _user?.id
@@ -280,6 +331,7 @@ export class QuoteRequestsService {
     const countsPromise = Promise.all([
       this.prisma.quoteRequest.groupBy({
         by: ['status'],
+        where,
         _count: { _all: true },
       }),
       myReqCountPromise,

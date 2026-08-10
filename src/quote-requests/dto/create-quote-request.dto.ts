@@ -59,4 +59,8 @@ export class CreateQuoteRequestDto {
   @IsArray()
   @IsString({ each: true })
   imageUrls?: string[];
+
+  @IsOptional()
+  @IsNumber({}, { message: 'Giá báo chốt phải là dạng số' })
+  quotedPrice?: number;
 }

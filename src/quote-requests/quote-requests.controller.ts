@@ -30,7 +30,7 @@ import { Role, User } from '@prisma/client';
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('quote-requests')
 export class QuoteRequestsController {
-  constructor(private readonly quoteRequestsService: QuoteRequestsService) {}
+  constructor(private readonly quoteRequestsService: QuoteRequestsService) { }
 
   @ApiOperation({ summary: 'Tạo mới yêu cầu báo giá (SALE / ADMIN)', description: 'Tự động validate & upload 100% ảnh lên Cloudinary' })
   @ApiConsumes('multipart/form-data', 'application/json')
