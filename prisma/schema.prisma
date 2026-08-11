@@ -93,17 +93,46 @@ model ProductCategory {
 }
 
 // ==========================
+// 2b. PROVINCES & WARDS (Lookup địa giới hành chính Việt Nam)
+// ==========================
+
+model Province {
+  id        String     @id @default(cuid())
+  name      String     @unique
+  code      String?    @unique
+  wards     Ward[]
+  customers Customer[]
+  createdAt DateTime   @default(now())
+
+  @@map("provinces")
+}
+
+model Ward {
+  id           String   @id @default(cuid())
+  name         String
+  code         String?
+  districtName String?  @map("district_name")
+  provinceId   String   @map("province_id")
+  province     Province @relation(fields: [provinceId], references: [id], onDelete: Cascade)
+  createdAt    DateTime @default(now())
+
+  @@index([provinceId])
+  @@map("wards")
+}
+
+// ==========================
 // 5. CUSTOMERS
 // ==========================
 
 model Customer {
-  id      String  @id @default(cuid())
-  name    String
-  phone   String?
-  address String? @db.Text
-  province String 
-  ward String 
-  note    String? @db.Text
+  id          String    @id @default(cuid())
+  name        String
+  phone       String?
+  address     String?   @db.Text
+  province    String?
+  provinceRel Province? @relation(fields: [province], references: [name], onDelete: SetNull)
+  ward        String?
+  note        String?   @db.Text
 
   quoteRequests QuoteRequest[]
 

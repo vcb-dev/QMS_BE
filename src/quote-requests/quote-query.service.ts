@@ -228,7 +228,7 @@ export class QuoteQueryService {
     ] = await Promise.all([
       this.prisma.customer.findMany({
         where: { id: { in: customerIds } },
-        select: { id: true, name: true, phone: true, address: true },
+        select: { id: true, name: true, phone: true, address: true, province: true, ward: true },
       }),
       materialIds.length
         ? this.prisma.material.findMany({
