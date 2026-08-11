@@ -20,4 +20,9 @@ export class PricingConfigController {
   calculatePrice(@Body() dto: CalculatePriceInput) {
     return this.pricingConfigService.calculate5StepPrice(dto);
   }
+
+  @Post('generate-options')
+  generateOptions(@Body() dto: any) {
+    return this.pricingConfigService.generateOptions(dto);
+  }
 }
