@@ -15,6 +15,8 @@ function requiredNumberEnv(name: string): number {
 export const APP_CONSTANTS = {
   PORT: requiredNumberEnv('PORT'),
   JWT_SECRET: requiredEnv('JWT_SECRET'),
+  JWT_ACCESS_EXPIRES: requiredEnv('JWT_ACCESS_EXPIRES'),
+  JWT_REFRESH_EXPIRES: requiredEnv('JWT_REFRESH_EXPIRES'),
   CORS_ORIGINS: requiredEnv('FRONTEND_URL')
     .split(',')
     .map((origin) => origin.trim())

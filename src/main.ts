@@ -5,8 +5,14 @@ import { AppModule } from './app.module';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
 
+import { json, urlencoded } from 'express';
+
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+
+  // Cấu hình tăng giới hạn Dung lượng Body Request hỗ trợ tải ảnh Base64 & File lớn (50MB)
+  app.use(json({ limit: '50mb' }));
+  app.use(urlencoded({ limit: '50mb', extended: true }));
 
   // Bảo mật HTTP Headers nâng cao bằng Helmet
   app.use(

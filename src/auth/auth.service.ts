@@ -9,6 +9,7 @@ import { Role } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { createHash } from 'crypto';
 import { MailService } from '../mail/mail.service';
+import { APP_CONSTANTS } from 'src/common/constants';
 
 @Injectable()
 export class AuthService {
@@ -40,8 +41,8 @@ export class AuthService {
    * Tạo bộ cặp AccessToken + RefreshToken + RefreshTokenHash chuẩn chỉ
    */
   async generateTokens(user: { id: string; email: string; role: string }) {
-    const accessExpires = this.config.get<string>('JWT_ACCESS_EXPIRES', '7d');
-    const refreshExpires = this.config.get<string>('JWT_REFRESH_EXPIRES', '30d');
+    const accessExpires = this.config.get<string>('JWT_ACCESS_EXPIRES',  APP_CONSTANTS.JWT_ACCESS_EXPIRES);
+    const refreshExpires = this.config.get<string>('JWT_REFRESH_EXPIRES', APP_CONSTANTS.JWT_REFRESH_EXPIRES);
 
     const payload = { sub: user.id, email: user.email, role: user.role };
 
@@ -217,7 +218,7 @@ export class AuthService {
       },
     });
 
-    console.log(`[SECURITY LOG] Mã OTP Quên Mật Khẩu của ${email} là: ${otp}`);
+    // console.log(`[SECURITY LOG] Mã OTP Quên Mật Khẩu của ${email} là: ${otp}`);
 
     // Gửi OTP qua email (fire-and-forget)
     this.mailService.sendForgotPasswordOtp(user.email, user.name, otp).catch(() => {});

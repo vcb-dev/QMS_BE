@@ -66,14 +66,15 @@ export class PricingConfigService {
     const config = await this.getConfig();
     const metalPrices = await this.metalPricesService.getLatestAsync();
 
-    const { materialNameOrKey, weightChi = 0, laborCost = 0, stoneCost = 0, vatRate = 0 } = input;
+    const { materialNameOrKey, weightChi = 0, laborCost = 0, stoneCost = 0, vatRate = 0, goldPriceOverride, silverPriceOverride } = input;
 
     const normalizedMat = (materialNameOrKey || '').trim().toUpperCase();
     let metalPricePerChi = 0;
 
-    // Bước 1: Tính giá kim loại theo quy tắc Vàng / Bạc
+    // Bước 1: Tính giá kim loại theo quy tắc Vàng / Bạc (ưu tiên giá ghi đè thủ công nếu có)
     if (normalizedMat.includes('BẠC') || normalizedMat.includes('SILVER') || normalizedMat.includes('925')) {
-      metalPricePerChi = metalPrices.silverVnd * config.silverMultiplier;
+      const silverRate = silverPriceOverride ?? metalPrices.silverVnd;
+      metalPricePerChi = silverRate * config.silverMultiplier;
     } else {
       const matchedRatio = (config.goldRatios || []).find((r) => {
         const key = (r.key || '').toUpperCase();
@@ -92,7 +93,8 @@ export class PricingConfigService {
         );
       }
 
-      metalPricePerChi = metalPrices.gold24kVnd * matchedRatio.applied;
+      const goldRate = goldPriceOverride ?? metalPrices.gold24kVnd;
+      metalPricePerChi = goldRate * matchedRatio.applied;
     }
 
     const totalMetalCost = weightChi * metalPricePerChi;

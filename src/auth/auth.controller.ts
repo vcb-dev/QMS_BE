@@ -19,12 +19,12 @@ export class AuthController {
     private readonly cookieAuthService: CookieAuthService,
   ) {}
   
-  @Throttle({
-    default: {
-      ttl: APP_CONSTANTS.THROTTLE_TTL, 
-      limit: APP_CONSTANTS.THROTTLE_LIMIT, 
-    },
-  })
+  // @Throttle({
+  //   default: {
+  //     ttl: APP_CONSTANTS.THROTTLE_TTL, 
+  //     limit: APP_CONSTANTS.THROTTLE_LIMIT, 
+  //   },
+  // })
 
   @SkipCsrf()
   @Post('login')
