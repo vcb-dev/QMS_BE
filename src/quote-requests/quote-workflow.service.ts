@@ -27,6 +27,7 @@ export class QuoteWorkflowService {
       data: {
         status: QuoteStatus.DANG_XLY,
         pricerId: userId,
+        acceptedAt: new Date(),
         version: { increment: 1 },
       },
     });
@@ -104,26 +105,35 @@ export class QuoteWorkflowService {
   private async completeQuote(id: string, userId: string, dto: CompleteQuoteInput) {
     this.queryService.clearCache();
 
+    // Nếu FE gửi kèm options (form nhiều phương án) thì mới xoá & ghi đè.
+    // Nếu không gửi (báo giá nhanh 1 giá) mà request đã có sẵn options (vd tạo từ máy tính giá) thì GIỮ NGUYÊN,
+    // không xoá mất data thật — chỉ tạo option fallback khi request chưa từng có option nào.
+    let optionsCreate: { create: any[] } | undefined;
+
     if (dto.options && dto.options.length > 0) {
       await this.prisma.quoteOption.deleteMany({ where: { quoteRequestId: id } });
+      optionsCreate = {
+        create: dto.options.map((opt, idx) => ({
+          optionName: opt.optionName || `Phương án ${idx + 1}`,
+          materialName: opt.materialName,
+          weightChi: opt.weightChi,
+          laborCost: opt.laborCost,
+          stoneCost: opt.stoneCost,
+          stoneDescription: opt.stoneDescription,
+          vat: opt.vat,
+          quotedPrice: opt.quotedPrice,
+          isSelected: opt.isSelected ?? (idx === 0),
+          note: opt.note,
+        })),
+      };
+    } else {
+      const existingCount = await this.prisma.quoteOption.count({ where: { quoteRequestId: id } });
+      if (existingCount === 0) {
+        optionsCreate = {
+          create: [{ optionName: 'Phương án báo giá', quotedPrice: dto.quotedPrice, vat: dto.vat, isSelected: true }],
+        };
+      }
     }
-
-    const optionsCreate = dto.options && dto.options.length > 0
-      ? {
-          create: dto.options.map((opt, idx) => ({
-            optionName: opt.optionName || `Phương án ${idx + 1}`,
-            materialName: opt.materialName,
-            weightChi: opt.weightChi,
-            laborCost: opt.laborCost,
-            stoneCost: opt.stoneCost,
-            stoneDescription: opt.stoneDescription,
-            vat: opt.vat,
-            quotedPrice: opt.quotedPrice,
-            isSelected: opt.isSelected ?? (idx === 0),
-            note: opt.note,
-          })),
-        }
-      : undefined;
 
     const updated = await this.prisma.quoteRequest.update({
       where: { id },
@@ -223,6 +233,7 @@ export class QuoteWorkflowService {
         returnReason,
         pricerId: userId,
         status: QuoteStatus.NEED_MORE_INFO,
+        returnedAt: new Date(),
       },
       include: {
         customer: true,
@@ -238,6 +249,52 @@ export class QuoteWorkflowService {
 
     this.notifySaleNeedMoreInfo(updated, returnReason);
     return updated;
+  }
+
+  private async markClosed(id: string, optionId?: string) {
+    this.queryService.clearCache();
+    const quote = await this.prisma.quoteRequest.findUnique({
+      where: { id },
+      select: { status: true },
+    });
+
+    if (!quote) {
+      throw new NotFoundException('Không tìm thấy yêu cầu báo giá');
+    }
+
+    if (quote.status !== QuoteStatus.XONG) {
+      throw new ConflictException('Chỉ đánh dấu Đã chốt được khi yêu cầu đã có báo giá (XONG)');
+    }
+
+    // Sale chỉ chọn phương án cuối cùng trên UI (không gọi API riêng khi bấm từng thẻ) —
+    // phương án được chọn chỉ ghi xuống DB cùng lúc với hành động "Đánh Dấu Đã Chốt".
+    let selectedOption: { id: string; quotedPrice: any } | null = null;
+    if (optionId) {
+      selectedOption = await this.prisma.quoteOption.findUnique({ where: { id: optionId } });
+      if (!selectedOption || (selectedOption as any).quoteRequestId !== id) {
+        throw new NotFoundException('Không tìm thấy phương án báo giá tương ứng');
+      }
+      await this.prisma.quoteOption.updateMany({ where: { quoteRequestId: id }, data: { isSelected: false } });
+      await this.prisma.quoteOption.update({ where: { id: optionId }, data: { isSelected: true } });
+    }
+
+    return this.prisma.quoteRequest.update({
+      where: { id },
+      data: {
+        status: QuoteStatus.DA_CHOT,
+        ...(selectedOption ? { selectedOptionId: selectedOption.id, quotedPrice: selectedOption.quotedPrice } : {}),
+      },
+      include: {
+        customer: true,
+        material: true,
+        materials: { include: { material: true } },
+        category: true,
+        requester: { select: { id: true, name: true, email: true, department: true } },
+        pricer: { select: { id: true, name: true, email: true } },
+        images: true,
+        options: { orderBy: { createdAt: 'asc' } },
+      },
+    });
   }
 
   private async resubmitQuote(id: string) {
@@ -304,11 +361,28 @@ export class QuoteWorkflowService {
           },
         });
 
-      case QuoteAction.QUICK_APPROVE:
+      case QuoteAction.QUICK_APPROVE: {
         if (role !== Role.PRICING && role !== Role.ADMIN) {
           throw new ForbiddenException('Chỉ có vai trò PRICING hoặc ADMIN mới được phép duyệt báo giá nhanh');
         }
         this.queryService.clearCache();
+
+        const existing = await this.prisma.quoteRequest.findUnique({ where: { id }, select: { quotedPrice: true, vat: true } });
+        const finalPrice = dto.quotedPrice ?? Number(existing?.quotedPrice ?? 0);
+
+        // Giữ nguyên options có sẵn (vd tạo từ máy tính giá) — chỉ tạo fallback khi request chưa từng có option nào
+        const existingOptCount = await this.prisma.quoteOption.count({ where: { quoteRequestId: id } });
+        const approveOptionsCreate = existingOptCount === 0
+          ? {
+              create: [{
+                optionName: 'Phương án báo giá',
+                quotedPrice: finalPrice,
+                vat: dto.vat ?? existing?.vat ?? undefined,
+                isSelected: true,
+              }],
+            }
+          : undefined;
+
         const approved = await this.prisma.quoteRequest.update({
           where: { id },
           data: {
@@ -316,6 +390,7 @@ export class QuoteWorkflowService {
             pricerId: userId,
             quotedDate: new Date(),
             ...(dto.quotedPrice ? { quotedPrice: dto.quotedPrice } : {}),
+            options: approveOptionsCreate,
           },
           include: {
             customer: true,
@@ -330,6 +405,7 @@ export class QuoteWorkflowService {
         });
         this.notifySaleQuoteCompleted(approved);
         return approved;
+      }
 
       case QuoteAction.QUICK_REJECT:
         if (role !== Role.PRICING && role !== Role.ADMIN) {
@@ -363,6 +439,12 @@ export class QuoteWorkflowService {
           throw new ForbiddenException('Chỉ có vai trò SALE hoặc ADMIN mới được phép gửi lại yêu cầu');
         }
         return this.resubmitQuote(id);
+
+      case QuoteAction.MARK_CLOSED:
+        if (role !== Role.SALE && role !== Role.ADMIN) {
+          throw new ForbiddenException('Chỉ có vai trò SALE hoặc ADMIN mới được phép đánh dấu Đã chốt');
+        }
+        return this.markClosed(id, dto.optionId);
 
       case QuoteAction.SELECT_OPTION:
         if (role !== Role.SALE && role !== Role.ADMIN) {

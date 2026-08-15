@@ -24,12 +24,10 @@ export const APP_CONSTANTS = {
   COOKIE_SECURE: process.env['COOKIE_SECURE'] === 'true',
   THROTTLE_TTL: requiredNumberEnv('LOGIN_THROTTLE_TTL'),
   THROTTLE_LIMIT: requiredNumberEnv('LOGIN_THROTTLE_LIMIT'),  
-  EXCHANGE_RATE_API_URL: requiredEnv('EXCHANGE_RATE_API_URL'),
-  GOLD_API_URL: requiredEnv('GOLD_API_URL'),
-
-  CHI_GRAMS: 3.75,
-  TROY_OZ_GRAMS: 31.1034768,
-  DEFAULT_EXCHANGE_RATE: 26150,
+  VNAPPMONEY_TOKEN_URL: requiredEnv('VNAPPMONEY_API_KEY'),
+  VNAPPMONEY_GOLD_URL: requiredEnv('VNAPPMONEY_GOLD_URL'),
+  REFRESH_INTERVAL_MS: 24 * 60 * 60 * 1000, // Tự động gọi lại API ngoài 1 ngày/lần
+  TOKEN_TTL_MS: 13 * 24 * 60 * 60 * 1000, // Token vnappmob sống 15 ngày, an toàn refresh sớm hơn
 
   MAX_FILE_SIZE: 10 * 1024 * 1024, // 10MB
   ALLOWED_MIME_TYPES: [

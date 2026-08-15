@@ -8,7 +8,9 @@ import {
   IsNotEmpty,
   Max,
   Min,
+  ValidateNested,
 } from 'class-validator';
+import { QuoteOptionItemDto } from './quote-complete.dto';
 
 export class CreateQuoteRequestDto {
   @IsString()
@@ -63,4 +65,10 @@ export class CreateQuoteRequestDto {
   @IsOptional()
   @IsNumber({}, { message: 'Giá báo chốt phải là dạng số' })
   quotedPrice?: number;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => QuoteOptionItemDto)
+  options?: QuoteOptionItemDto[];
 }

@@ -40,15 +40,6 @@ export class CalculatePriceInput {
   @IsNumber()
   vatRate?: number;
 
-  /** Giá vàng 24K/chỉ do người dùng tự nhập để ghi đè giá thị trường (đ/chỉ) */
-  @IsOptional()
-  @IsNumber()
-  goldPriceOverride?: number;
-
-  /** Giá bạc/chỉ do người dùng tự nhập để ghi đè giá thị trường (đ/chỉ) */
-  @IsOptional()
-  @IsNumber()
-  silverPriceOverride?: number;
 }
 
 export class PricingCalculationResult {

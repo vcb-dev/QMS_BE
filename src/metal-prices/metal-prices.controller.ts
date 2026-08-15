@@ -1,6 +1,10 @@
-import { Controller, Get, Post, Body } from '@nestjs/common';
+import { Controller, Get, Post, Body, UseGuards } from '@nestjs/common';
 import { MetalPricesService } from './metal-prices.service';
 import { MetalPrices } from './dto/metal-prices.dto';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { Role } from '@prisma/client';
 
 @Controller('metal-prices')
 export class MetalPricesController {
@@ -11,7 +15,9 @@ export class MetalPricesController {
     return this.metalPricesService.getLatest();
   }
 
-  /** Manual refresh endpoint (admin use) */
+  /** Cập nhật giá vàng/bạc thủ công, lưu vào DB — chỉ PRICING / ADMIN */
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.PRICING, Role.ADMIN)
   @Post()
   updatePrices(@Body() prices: Partial<MetalPrices>) {
     return this.metalPricesService.updatePrices(prices);

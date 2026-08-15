@@ -107,6 +107,13 @@ export class QuoteQueryService {
             start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - day + 1, 0, 0, 0);
             break;
           }
+          case 'LAST_WEEK': {
+            const day = now.getDay() || 7;
+            const thisMonday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - day + 1, 0, 0, 0);
+            start = new Date(thisMonday.getFullYear(), thisMonday.getMonth(), thisMonday.getDate() - 7, 0, 0, 0);
+            end = new Date(thisMonday.getFullYear(), thisMonday.getMonth(), thisMonday.getDate() - 1, 23, 59, 59);
+            break;
+          }
           case 'THIS_MONTH':
             start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0);
             break;
@@ -188,6 +195,8 @@ export class QuoteQueryService {
           status: true,
           rejectReason: true,
           returnReason: true,
+          acceptedAt: true,
+          returnedAt: true,
           selectedOptionId: true,
           version: true,
           createdAt: true,
@@ -197,6 +206,7 @@ export class QuoteQueryService {
           categoryId: true,
           requesterId: true,
           pricerId: true,
+          options: { orderBy: { createdAt: 'asc' } },
         },
       }),
       this.prisma.quoteRequest.count({ where }),

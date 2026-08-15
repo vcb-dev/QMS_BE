@@ -25,6 +25,7 @@ enum QuoteStatus {
   XONG
   TU_CHOI
   NEED_MORE_INFO
+  DA_CHOT
 }
 
 // ==========================
@@ -171,6 +172,8 @@ model QuoteRequest {
   pricerId String?
   rejectReason String? @db.Text // bắt buộc khi status = TU_CHOI
   returnReason String? @map("return_reason") @db.Text // bắt buộc khi status = NEED_MORE_INFO
+  acceptedAt DateTime? @map("accepted_at") // Mốc lúc PRICING tiếp nhận xử lý (status -> DANG_XLY)
+  returnedAt DateTime? @map("returned_at") // Mốc lúc bị trả lại Sale (status -> NEED_MORE_INFO)
   options      QuoteOption[] // Multi-options báo giá song song
   selectedOptionId String?  @map("selected_option_id")
   images        QuoteRequestImage[] // 6. Ảnh sản phẩm (nếu nhiều ảnh)

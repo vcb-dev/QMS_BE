@@ -12,6 +12,7 @@ export enum QuoteAction {
   QUICK_QUOTE = 'QUICK_QUOTE',
   QUICK_APPROVE = 'QUICK_APPROVE',
   QUICK_REJECT = 'QUICK_REJECT',
+  MARK_CLOSED = 'MARK_CLOSED',
 }
 
 export class UpdateQuoteStatusDto {

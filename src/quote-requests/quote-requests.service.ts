@@ -30,8 +30,25 @@ export class QuoteRequestsService {
 
   async create(userId: string, dto: CreateQuoteRequestDto, files?: Express.Multer.File[]) {
     this.queryService.clearCache();
-    const { imageUrls, materialIds, materialId, newCategoryName, productName, quotedPrice, ...data } = dto;
+    const { imageUrls, materialIds, materialId, newCategoryName, productName, quotedPrice, options, ...data } = dto;
     const code = this.generateCode();
+
+    const optionsCreate = options && options.length > 0
+      ? {
+          create: options.map((opt, idx) => ({
+            optionName: opt.optionName || `Phương án ${idx + 1}`,
+            materialName: opt.materialName,
+            weightChi: opt.weightChi,
+            laborCost: opt.laborCost,
+            stoneCost: opt.stoneCost,
+            stoneDescription: opt.stoneDescription,
+            vat: opt.vat,
+            quotedPrice: opt.quotedPrice,
+            isSelected: opt.isSelected ?? (idx === 0),
+            note: opt.note,
+          })),
+        }
+      : undefined;
 
     let finalCategoryId = data.categoryId;
     if (newCategoryName && newCategoryName.trim()) {
@@ -83,6 +100,7 @@ export class QuoteRequestsService {
               create: finalCloudinaryUrls.map((url) => ({ imageUrl: url })),
             }
           : undefined,
+        options: optionsCreate,
       },
       include: {
         customer: true,
@@ -204,7 +222,7 @@ export class QuoteRequestsService {
 
   async update(id: string, userId: string, dto: UpdateQuoteRequestDto, files?: Express.Multer.File[]) {
     this.queryService.clearCache();
-    const { imageUrls, materialIds, materialId, ...data } = dto;
+    const { imageUrls, materialIds, materialId, options, ...data } = dto;
 
     let finalCloudinaryUrls: string[] = [];
     if (files && files.length > 0) {
