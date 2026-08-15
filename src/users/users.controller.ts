@@ -4,6 +4,7 @@ import { UsersService } from './users.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Role } from '@prisma/client';
 
 @ApiTags('Users - Quản lý Người dùng')
@@ -37,15 +38,33 @@ export class UsersController {
   @Patch(':id/approve')
   async approveUser(
     @Param('id') id: string,
+    @CurrentUser('id') actorId: string,
+    @CurrentUser('role') actorRole: Role,
     @Body('role') role?: Role,
   ) {
-    return this.usersService.approveUser(id, role);
+    return this.usersService.approveUser(id, actorId, actorRole, role);
   }
 
   @ApiOperation({ summary: 'Từ chối & Xóa tài khoản chờ duyệt (ADMIN)' })
   @Roles(Role.ADMIN)
   @Delete(':id/reject')
-  async rejectUser(@Param('id') id: string) {
-    return this.usersService.rejectUser(id);
+  async rejectUser(
+    @Param('id') id: string,
+    @CurrentUser('id') actorId: string,
+    @CurrentUser('role') actorRole: Role,
+  ) {
+    return this.usersService.rejectUser(id, actorId, actorRole);
+  }
+
+  @ApiOperation({ summary: 'Khóa / mở khóa tài khoản (ADMIN)' })
+  @Roles(Role.ADMIN)
+  @Patch(':id/active')
+  async setActive(
+    @Param('id') id: string,
+    @CurrentUser('id') actorId: string,
+    @CurrentUser('role') actorRole: Role,
+    @Body('isActive') isActive: boolean,
+  ) {
+    return this.usersService.setActive(id, isActive, actorId, actorRole);
   }
 }

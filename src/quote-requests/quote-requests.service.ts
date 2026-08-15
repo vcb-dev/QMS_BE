@@ -12,6 +12,7 @@ import { QuoteStatus, User, Role } from '@prisma/client';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
 import { QuoteQueryService } from './quote-query.service';
 import { QuoteWorkflowService } from './quote-workflow.service';
+import { AuditLogService } from '../audit-log/audit-log.service';
 
 @Injectable()
 export class QuoteRequestsService {
@@ -20,7 +21,21 @@ export class QuoteRequestsService {
     private cloudinaryService: CloudinaryService,
     private queryService: QuoteQueryService,
     private workflowService: QuoteWorkflowService,
+    private auditLog: AuditLogService,
   ) {}
+
+  private async logAction(userId: string, action: string, entityId?: string, entityType: string = 'QuoteRequest') {
+    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { name: true, role: true } });
+    if (!user) return;
+    await this.auditLog.log({
+      actorId: userId,
+      actorName: user.name,
+      actorRole: user.role,
+      action,
+      entityType,
+      entityId,
+    });
+  }
 
   private generateCode(): string {
     const year = new Date().getFullYear();
@@ -84,7 +99,7 @@ export class QuoteRequestsService {
       ? { create: [{ materialId: materialId }] }
       : undefined;
 
-    return this.prisma.quoteRequest.create({
+    const created = await this.prisma.quoteRequest.create({
       data: {
         ...data,
         categoryId: finalCategoryId,
@@ -113,6 +128,9 @@ export class QuoteRequestsService {
         options: { orderBy: { createdAt: 'asc' } },
       },
     });
+
+    await this.logAction(userId, 'CREATE_QUOTE', created.id);
+    return created;
   }
 
   async submitQuickQuote(userId: string, dto: QuickQuoteSubmitDto) {
@@ -132,6 +150,7 @@ export class QuoteRequestsService {
         },
       });
       finalCustomerId = createdCust.id;
+      await this.logAction(userId, 'CREATE_CUSTOMER', createdCust.id, 'Customer');
     }
 
     if (!finalCustomerId) {
@@ -159,6 +178,7 @@ export class QuoteRequestsService {
       if (options && options.length > 0) {
         await this.prisma.quoteOption.deleteMany({ where: { quoteRequestId } });
       }
+      await this.logAction(userId, 'QUICK_SUBMIT_QUOTE', quoteRequestId);
       return this.prisma.quoteRequest.update({
         where: { id: quoteRequestId },
         data: {
@@ -185,7 +205,7 @@ export class QuoteRequestsService {
     }
 
     const code = this.generateCode();
-    return this.prisma.quoteRequest.create({
+    const created = await this.prisma.quoteRequest.create({
       data: {
         code,
         status: QuoteStatus.DANG_XLY,
@@ -210,6 +230,9 @@ export class QuoteRequestsService {
         options: { orderBy: { createdAt: 'asc' } },
       },
     });
+
+    await this.logAction(userId, 'QUICK_SUBMIT_QUOTE', created.id);
+    return created;
   }
 
   async findAll(filterDto: FilterQuoteRequestDto, user: User) {
@@ -244,7 +267,7 @@ export class QuoteRequestsService {
         }
       : undefined;
 
-    return this.prisma.quoteRequest.update({
+    const updated = await this.prisma.quoteRequest.update({
       where: { id },
       data: {
         ...data,
@@ -268,10 +291,14 @@ export class QuoteRequestsService {
         options: { orderBy: { createdAt: 'asc' } },
       },
     });
+
+    await this.logAction(userId, 'UPDATE_QUOTE', id);
+    return updated;
   }
 
   async remove(id: string, userId: string) {
     this.queryService.clearCache();
+    await this.logAction(userId, 'DELETE_QUOTE', id);
     await this.prisma.quoteRequest.delete({ where: { id } });
     return { message: 'Đã hủy yêu cầu báo giá thành công' };
   }

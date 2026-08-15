@@ -4,6 +4,8 @@ import { CustomersService } from './customers.service';
 import { CreateCustomerDto } from './dto/create-customer.dto';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { Role } from '@prisma/client';
 
 @ApiTags('Customers - Quản lý Khách hàng')
 @ApiBearerAuth('JWT-auth')
@@ -26,19 +28,32 @@ export class CustomersController {
 
   @ApiOperation({ summary: 'Tạo mới khách hàng (Tách biệt tỉnh/thành và phường/xã/quận/huyện)' })
   @Post()
-  async create(@Body() dto: CreateCustomerDto) {
-    return this.customersService.create(dto);
+  async create(
+    @Body() dto: CreateCustomerDto,
+    @CurrentUser('id') actorId: string,
+    @CurrentUser('role') actorRole: Role,
+  ) {
+    return this.customersService.create(dto, actorId, actorRole);
   }
 
   @ApiOperation({ summary: 'Cập nhật thông tin khách hàng' })
   @Patch(':id')
-  async update(@Param('id') id: string, @Body() dto: UpdateCustomerDto) {
-    return this.customersService.update(id, dto);
+  async update(
+    @Param('id') id: string,
+    @Body() dto: UpdateCustomerDto,
+    @CurrentUser('id') actorId: string,
+    @CurrentUser('role') actorRole: Role,
+  ) {
+    return this.customersService.update(id, dto, actorId, actorRole);
   }
 
   @ApiOperation({ summary: 'Xóa khách hàng' })
   @Delete(':id')
-  async remove(@Param('id') id: string) {
-    return this.customersService.remove(id);
+  async remove(
+    @Param('id') id: string,
+    @CurrentUser('id') actorId: string,
+    @CurrentUser('role') actorRole: Role,
+  ) {
+    return this.customersService.remove(id, actorId, actorRole);
   }
 }

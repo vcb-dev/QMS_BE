@@ -2,10 +2,27 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateCustomerDto } from './dto/create-customer.dto';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
+import { AuditLogService } from '../audit-log/audit-log.service';
+import { Role } from '@prisma/client';
 
 @Injectable()
 export class CustomersService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private auditLog: AuditLogService,
+  ) {}
+
+  private async logAction(actorId: string, actorRole: Role, action: string, entityId?: string) {
+    const actor = await this.prisma.user.findUnique({ where: { id: actorId }, select: { name: true } });
+    await this.auditLog.log({
+      actorId,
+      actorName: actor?.name || 'Không rõ',
+      actorRole,
+      action,
+      entityType: 'Customer',
+      entityId,
+    });
+  }
 
   async findAll(search?: string) {
     const where = search
@@ -36,7 +53,7 @@ export class CustomersService {
     return customer;
   }
 
-  async create(dto: CreateCustomerDto) {
+  async create(dto: CreateCustomerDto, actorId: string, actorRole: Role) {
     const cleanName = dto.name.trim();
     const cleanPhone = dto.phone ? dto.phone.trim() : '';
 
@@ -46,7 +63,7 @@ export class CustomersService {
         include: { provinceRel: true },
       });
       if (existingByPhone) {
-        return this.prisma.customer.update({
+        const updated = await this.prisma.customer.update({
           where: { id: existingByPhone.id },
           data: {
             name: cleanName || existingByPhone.name,
@@ -57,6 +74,8 @@ export class CustomersService {
           },
           include: { provinceRel: true },
         });
+        await this.logAction(actorId, actorRole, 'UPDATE_CUSTOMER', updated.id);
+        return updated;
       }
     }
 
@@ -65,7 +84,7 @@ export class CustomersService {
       include: { provinceRel: true },
     });
     if (existingByName) {
-      return this.prisma.customer.update({
+      const updated = await this.prisma.customer.update({
         where: { id: existingByName.id },
         data: {
           phone: cleanPhone || existingByName.phone,
@@ -76,9 +95,11 @@ export class CustomersService {
         },
         include: { provinceRel: true },
       });
+      await this.logAction(actorId, actorRole, 'UPDATE_CUSTOMER', updated.id);
+      return updated;
     }
 
-    return this.prisma.customer.create({
+    const created = await this.prisma.customer.create({
       data: {
         name: cleanName,
         phone: cleanPhone || null,
@@ -89,19 +110,24 @@ export class CustomersService {
       },
       include: { provinceRel: true },
     });
+    await this.logAction(actorId, actorRole, 'CREATE_CUSTOMER', created.id);
+    return created;
   }
 
-  async update(id: string, dto: UpdateCustomerDto) {
+  async update(id: string, dto: UpdateCustomerDto, actorId: string, actorRole: Role) {
     await this.findOne(id);
-    return this.prisma.customer.update({
+    const updated = await this.prisma.customer.update({
       where: { id },
       data: dto,
       include: { provinceRel: true },
     });
+    await this.logAction(actorId, actorRole, 'UPDATE_CUSTOMER', id);
+    return updated;
   }
 
-  async remove(id: string) {
+  async remove(id: string, actorId: string, actorRole: Role) {
     await this.findOne(id);
+    await this.logAction(actorId, actorRole, 'DELETE_CUSTOMER', id);
     await this.prisma.customer.delete({ where: { id } });
     return { message: 'Đã xóa thông tin khách hàng thành công' };
   }

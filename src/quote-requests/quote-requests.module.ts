@@ -5,9 +5,10 @@ import { QuoteWorkflowService } from './quote-workflow.service';
 import { QuoteRequestsController } from './quote-requests.controller';
 import { CloudinaryModule } from '../cloudinary/cloudinary.module';
 import { MailModule } from '../mail/mail.module';
+import { AuditLogModule } from '../audit-log/audit-log.module';
 
 @Module({
-  imports: [CloudinaryModule, MailModule],
+  imports: [CloudinaryModule, MailModule, AuditLogModule],
   controllers: [QuoteRequestsController],
   providers: [
     QuoteRequestsService,

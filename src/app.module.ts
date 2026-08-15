@@ -16,6 +16,7 @@ import { VnGoldPriceModule } from './vn-gold-price/vn-gold-price.module';
 import { CloudinaryModule } from './cloudinary/cloudinary.module';
 import { MailModule } from './mail/mail.module';
 import { LocationsModule } from './locations/locations.module';
+import { AuditLogModule } from './audit-log/audit-log.module';
 import { LoggerMiddleware } from './common/logger.middleware';
 import { APP_GUARD } from '@nestjs/core'; 
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
@@ -37,7 +38,8 @@ import { CsrfGuard } from './auth/guards/csrf.guard';
     CloudinaryModule,
     MailModule,
     LocationsModule,
-    ThrottlerModule.forRoot([         
+    AuditLogModule,
+    ThrottlerModule.forRoot([
           {                               
             ttl: 60000, // 60,000ms = 1 minute                                   
             limit: 60,                    

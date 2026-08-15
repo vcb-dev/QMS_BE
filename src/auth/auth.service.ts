@@ -99,6 +99,10 @@ export class AuthService {
       throw new UnauthorizedException('Tài khoản của bạn đang CHỜ ADMIN PHÊ DUYỆT. Vui lòng liên hệ quản trị viên để được kích hoạt.');
     }
 
+    if (!user.isActive) {
+      throw new UnauthorizedException('Tài khoản của bạn đã bị khóa. Vui lòng liên hệ quản trị viên.');
+    }
+
     const tokens = await this.generateTokens(user);
 
     // Lưu SHA-256 hash của refresh token xuống DB
@@ -122,8 +126,8 @@ export class AuthService {
       where: { id: payload.sub },
     });
 
-    if (!user || !user.isApproved) {
-      throw new UnauthorizedException('Tài khoản không tồn tại hoặc chưa được phê duyệt');
+    if (!user || !user.isApproved || !user.isActive) {
+      throw new UnauthorizedException('Tài khoản không tồn tại, chưa được phê duyệt hoặc đã bị khóa');
     }
 
     // So sánh SHA-256 hash của refreshToken với giá trị lưu trong DB

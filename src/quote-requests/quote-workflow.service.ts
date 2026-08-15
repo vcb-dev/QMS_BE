@@ -11,6 +11,7 @@ import { CompleteQuoteInput } from './dto/quote-complete.dto';
 import { QuoteStatus, Role } from '@prisma/client';
 import { QuoteQueryService } from './quote-query.service';
 import { MailService } from '../mail/mail.service';
+import { AuditLogService } from '../audit-log/audit-log.service';
 
 @Injectable()
 export class QuoteWorkflowService {
@@ -18,7 +19,20 @@ export class QuoteWorkflowService {
     private prisma: PrismaService,
     private queryService: QuoteQueryService,
     private mailService: MailService,
+    private auditLog: AuditLogService,
   ) {}
+
+  private async logAction(userId: string, role: Role, action: string, entityId?: string) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { name: true } });
+    await this.auditLog.log({
+      actorId: userId,
+      actorName: user?.name || 'Không rõ',
+      actorRole: role,
+      action,
+      entityType: 'QuoteRequest',
+      entityId,
+    });
+  }
 
   private async accept(id: string, userId: string) {
     this.queryService.clearCache();
@@ -325,6 +339,7 @@ export class QuoteWorkflowService {
         if (role !== Role.PRICING && role !== Role.ADMIN) {
           throw new ForbiddenException('Chỉ có vai trò PRICING hoặc ADMIN mới được phép tiếp nhận yêu cầu');
         }
+        await this.logAction(userId, role, 'ACCEPT_QUOTE', id);
         return this.accept(id, userId);
 
       case QuoteAction.QUOTE:
@@ -335,6 +350,7 @@ export class QuoteWorkflowService {
           throw new BadRequestException('Vui lòng nhập giá sản phẩm (quotedPrice)');
         }
         await this.assertPricingCanProcess(id, userId, role);
+        await this.logAction(userId, role, 'QUOTE_PRICE', id);
         return this.completeQuote(id, userId, {
           quotedPrice: dto.quotedPrice,
           vat: dto.vat,
@@ -343,6 +359,7 @@ export class QuoteWorkflowService {
 
       case QuoteAction.QUICK_QUOTE:
         this.queryService.clearCache();
+        await this.logAction(userId, role, 'QUICK_QUOTE', id);
         return this.prisma.quoteRequest.update({
           where: { id },
           data: {
@@ -366,6 +383,7 @@ export class QuoteWorkflowService {
           throw new ForbiddenException('Chỉ có vai trò PRICING hoặc ADMIN mới được phép duyệt báo giá nhanh');
         }
         this.queryService.clearCache();
+        await this.logAction(userId, role, 'QUICK_APPROVE', id);
 
         const existing = await this.prisma.quoteRequest.findUnique({ where: { id }, select: { quotedPrice: true, vat: true } });
         const finalPrice = dto.quotedPrice ?? Number(existing?.quotedPrice ?? 0);
@@ -412,6 +430,7 @@ export class QuoteWorkflowService {
           throw new ForbiddenException('Chỉ có vai trò PRICING hoặc ADMIN mới được phép từ chối báo giá nhanh');
         }
         this.queryService.clearCache();
+        await this.logAction(userId, role, 'QUICK_REJECT', id);
         return this.rejectQuote(id, userId, dto.rejectReason || 'Không đồng ý với báo giá nhanh này');
 
       case QuoteAction.REJECT:
@@ -422,6 +441,7 @@ export class QuoteWorkflowService {
           throw new BadRequestException('Vui lòng nhập lý do từ chối (rejectReason)');
         }
         await this.assertPricingCanProcess(id, userId, role);
+        await this.logAction(userId, role, 'REJECT_QUOTE', id);
         return this.rejectQuote(id, userId, dto.rejectReason);
 
       case QuoteAction.RETURN:
@@ -432,18 +452,21 @@ export class QuoteWorkflowService {
           throw new BadRequestException('Vui lòng nhập lý do cần bổ sung (returnReason)');
         }
         await this.assertPricingCanProcess(id, userId, role);
+        await this.logAction(userId, role, 'RETURN_QUOTE', id);
         return this.returnQuote(id, userId, dto.returnReason);
 
       case QuoteAction.RESUBMIT:
         if (role !== Role.SALE && role !== Role.ADMIN) {
           throw new ForbiddenException('Chỉ có vai trò SALE hoặc ADMIN mới được phép gửi lại yêu cầu');
         }
+        await this.logAction(userId, role, 'RESUBMIT_QUOTE', id);
         return this.resubmitQuote(id);
 
       case QuoteAction.MARK_CLOSED:
         if (role !== Role.SALE && role !== Role.ADMIN) {
           throw new ForbiddenException('Chỉ có vai trò SALE hoặc ADMIN mới được phép đánh dấu Đã chốt');
         }
+        await this.logAction(userId, role, 'MARK_CLOSED', id);
         return this.markClosed(id, dto.optionId);
 
       case QuoteAction.SELECT_OPTION:
@@ -453,6 +476,7 @@ export class QuoteWorkflowService {
         if (!dto.optionId) {
           throw new BadRequestException('Vui lòng chọn ID phương án (optionId)');
         }
+        await this.logAction(userId, role, 'SELECT_OPTION', id);
         return this.selectOption(id, dto.optionId);
 
       default:

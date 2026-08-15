@@ -164,6 +164,7 @@ export class QuoteQueryService {
         needMoreInfo: 0,
         xong: 0,
         tuChoi: 0,
+        daChot: 0,
       };
       for (const item of res) {
         const cnt = item._count._all;
@@ -173,6 +174,7 @@ export class QuoteQueryService {
         else if (item.status === QuoteStatus.NEED_MORE_INFO) map.needMoreInfo = cnt;
         else if (item.status === QuoteStatus.XONG) map.xong = cnt;
         else if (item.status === QuoteStatus.TU_CHOI) map.tuChoi = cnt;
+        else if (item.status === QuoteStatus.DA_CHOT) map.daChot = cnt;
       }
       return map;
     });

@@ -41,6 +41,7 @@ model User {
   resetTokenHash   String? @map("reset_token_hash")
   resetTokenExpires DateTime? @map("reset_token_expires")
   isApproved       Boolean   @default(false) @map("is_approved")
+  isActive         Boolean   @default(true) @map("is_active") // false = bị Admin khóa (block), không đăng nhập được
   role         Role
   department   Department? @relation(fields: [departmentId], references: [id])
   departmentId String?
@@ -282,4 +283,23 @@ model QuoteOption {
 
   @@index([quoteRequestId])
   @@map("quote_options")
+}
+
+// ==========================
+// 9. AUDIT LOG — đếm hành động theo role (2.3 + 2.4 gộp)
+// Không FK tới User: lưu snapshot actorName/actorRole để log không mất khi tài khoản bị xóa
+// ==========================
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String?  @map("actor_id")
+  actorName  String   @map("actor_name")
+  actorRole  Role     @map("actor_role")
+  action     String   // vd: ACCEPT_QUOTE, CREATE_QUOTE, LOGIN, APPROVE_USER...
+  entityType String?  @map("entity_type") // vd: QuoteRequest, User, Customer
+  entityId   String?  @map("entity_id")
+  createdAt  DateTime @default(now())
+
+  @@index([actorRole, action])
+  @@index([createdAt])
+  @@map("audit_logs")
 }
