@@ -2,6 +2,8 @@ import { Controller, Get, Put, Post, Body, UseGuards } from '@nestjs/common';
 import { PricingConfigService } from './pricing-config.service';
 import { PricingConfigDto, CalculatePriceInput } from './dto/pricing-config.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -21,11 +23,17 @@ export class PricingConfigController {
     await this.auditLog.log({ actorId, actorName: actor?.name || 'Không rõ', actorRole, action, entityType: 'PricingConfig' });
   }
 
+  /** Bảng tỉ lệ vàng & bảng margin gốc — Sale tuyệt đối không xem theo spec, chỉ PRICING/ADMIN */
+  @UseGuards(RolesGuard)
+  @Roles(Role.PRICING, Role.ADMIN)
   @Get()
   getConfig() {
     return this.pricingConfigService.getConfig();
   }
 
+  /** Sửa tỉ lệ/hệ số ảnh hưởng toàn hệ thống — chỉ PRICING/ADMIN */
+  @UseGuards(RolesGuard)
+  @Roles(Role.PRICING, Role.ADMIN)
   @Put()
   updateConfig(@Body() dto: Partial<PricingConfigDto>) {
     return this.pricingConfigService.updateConfig(dto);
@@ -38,7 +46,17 @@ export class PricingConfigController {
     @CurrentUser('role') actorRole: Role,
   ) {
     await this.logAction(actorId, actorRole, 'CALCULATE_PRICE');
-    return this.pricingConfigService.calculate5StepPrice(dto);
+    const result = await this.pricingConfigService.calculate5StepPrice(dto);
+
+    // Sale chỉ được xem Giá bán — ẩn toàn bộ cấu thành giá (giá vốn/tiền công/giá vàng/VAT) theo spec
+    if (actorRole === Role.SALE) {
+      return {
+        materialNameOrKey: result.materialNameOrKey,
+        quotedPrice: result.quotedPrice,
+      };
+    }
+
+    return result;
   }
 
   @Post('generate-options')

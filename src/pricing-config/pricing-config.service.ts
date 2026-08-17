@@ -70,25 +70,27 @@ export class PricingConfigService {
 
     const normalizedMat = (materialNameOrKey || '').trim().toUpperCase();
 
-    // Bạc: quy tắc riêng theo spec — giá bán = giá vốn (giá bạc/chỉ DB × trọng lượng) × silverMultiplier.
-    // Không cộng tiền công/đá, không qua bảng margin, không VAT.
+    // Bạc: quy tắc riêng — giá bán = (giá kim loại + công + đá) × (1 + VAT%) × silverMultiplier. Không qua bảng margin.
     if (normalizedMat.includes('BẠC') || normalizedMat.includes('SILVER') || normalizedMat.includes('925')) {
       const metalPricePerChi = metalPrices.silverVnd;
       const totalMetalCost = weightChi * metalPricePerChi;
-      const quotedPrice = Math.round(totalMetalCost * config.silverMultiplier);
+      const totalProductionCost = totalMetalCost + laborCost + stoneCost;
+      const costWithVat = totalProductionCost * (1 + vatRate / 100);
+      const vatAmount = costWithVat - totalProductionCost;
+      const quotedPrice = Math.round(costWithVat * config.silverMultiplier);
 
       return {
         materialNameOrKey,
         metalPricePerChi: Math.round(metalPricePerChi),
         totalMetalCost: Math.round(totalMetalCost),
-        laborCost: 0,
-        stoneCost: 0,
-        totalProductionCost: Math.round(totalMetalCost),
+        laborCost,
+        stoneCost,
+        totalProductionCost: Math.round(totalProductionCost),
         profitMarginDivisor: config.silverMultiplier,
-        profitMarginLabel: `Bạc: giá vốn × ${config.silverMultiplier}`,
-        subtotalPrice: quotedPrice,
-        vatRate: 0,
-        vatAmount: 0,
+        profitMarginLabel: `Bạc: (giá vốn + công + đá) có VAT × ${config.silverMultiplier}`,
+        subtotalPrice: Math.round(totalProductionCost),
+        vatRate,
+        vatAmount: Math.round(vatAmount),
         quotedPrice,
       };
     }
@@ -213,23 +215,24 @@ export class PricingConfigService {
     }
 
     if (isSilverReq) {
-      // Bạc: quy tắc riêng theo spec — giá bán = giá vốn (giá bạc × trọng lượng) × hệ số nhân bạc.
-      // Không cộng tiền công/đá, không VAT, chỉ 1 phương án.
+      // Bạc: quy tắc riêng — giá bán = (giá kim loại + công + đá) × (1 + VAT%) × hệ số nhân bạc. Chỉ 1 phương án.
       const totalMetalCost = metalPrices.silverVnd * w;
-      const suggestedPrice = Math.round(totalMetalCost * config.silverMultiplier);
+      const totalProductionCost = totalMetalCost + l + s;
+      const costWithVat = totalProductionCost * (1 + vatVal / 100);
+      const suggestedPrice = Math.round(costWithVat * config.silverMultiplier);
 
       return [
         {
           optionName: `Phương án 1 (Bạc 925 - SALE YÊU CẦU)`,
           materialName: 'Bạc 925',
           weightChi: w,
-          laborCost: 0,
-          stoneCost: 0,
-          stoneDescription: '',
-          vat: 0,
+          laborCost: l,
+          stoneCost: s,
+          stoneDescription: stoneDesc,
+          vat: vatVal,
           quotedPrice: suggestedPrice,
           isSelected: true,
-          note: `Giá vốn × ${config.silverMultiplier} (không cộng công/đá/VAT theo quy tắc riêng của Bạc)`,
+          note: `(Giá vốn + công + đá) có VAT × ${config.silverMultiplier}`,
         },
       ];
     }
