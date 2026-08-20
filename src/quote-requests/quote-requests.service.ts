@@ -5,11 +5,15 @@ import { UpdateQuoteRequestDto } from './dto/update-quote-request.dto';
 import { FilterQuoteRequestDto } from './dto/filter-quote-request.dto';
 import { UpdateQuoteStatusDto } from './dto/update-quote-status.dto';
 import { QuickQuoteSubmitDto } from './dto/quick-quote.dto';
+import { ExportQuoteRequestDto } from './dto/export-quote-request.dto';
 import { QuoteStatus, User, Role } from '@prisma/client';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
 import { QuoteQueryService } from './quote-query.service';
 import { QuoteWorkflowService } from './quote-workflow.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
+import { ExcelService } from '../excel/excel.service';
+import { RealtimeGateway } from '../realtime/realtime.gateway';
+import { EXPORT_FIELD_DEFS } from './dto/export-field-defs';
 import {
   REQUEST_DETAIL_INCLUDE,
   buildOptionCreateInput,
@@ -24,6 +28,8 @@ export class QuoteRequestsService {
     private queryService: QuoteQueryService,
     private workflowService: QuoteWorkflowService,
     private auditLog: AuditLogService,
+    private excelService: ExcelService,
+    private realtimeGateway: RealtimeGateway,
   ) {}
 
   private generateCode(): string {
@@ -319,10 +325,58 @@ export class QuoteRequestsService {
     role: Role,
     dto: UpdateQuoteStatusDto,
   ) {
-    return this.workflowService.updateStatus(id, userId, role, dto);
+    const result = await this.workflowService.updateStatus(
+      id,
+      userId,
+      role,
+      dto,
+    );
+    this.realtimeGateway.broadcastStatusChanged(result.id, result.status);
+    return result;
   }
 
   async deleteOption(id: string, optionId: string, userId: string, role: Role) {
     return this.workflowService.deleteOption(id, optionId, userId, role);
+  }
+
+  /**
+   * Export danh sách yêu cầu báo giá ra Excel (.xlsx) theo bộ lọc hiện có + chọn cột tùy ý.
+   * dto.fields rỗng/không truyền = export toàn bộ cột trong EXPORT_FIELD_DEFS.
+   */
+  async exportToExcel(dto: ExportQuoteRequestDto, user: User): Promise<Buffer> {
+    const requestedKeys = dto.fields
+      ?.split(',')
+      .map((k) => k.trim())
+      .filter(Boolean);
+
+    const fieldDefs = requestedKeys?.length
+      ? EXPORT_FIELD_DEFS.filter((f) => requestedKeys.includes(f.key))
+      : EXPORT_FIELD_DEFS;
+
+    if (requestedKeys?.length) {
+      const validKeys = new Set(EXPORT_FIELD_DEFS.map((f) => f.key));
+      const invalidKeys = requestedKeys.filter((k) => !validKeys.has(k));
+      if (invalidKeys.length > 0) {
+        throw new BadRequestException(
+          `Cột export không hợp lệ: ${invalidKeys.join(', ')}`,
+        );
+      }
+    }
+
+    const items = await this.queryService.findAllForExport(dto, user);
+
+    const rows = items.map((item) => {
+      const row: Record<string, unknown> = {};
+      for (const field of fieldDefs) {
+        row[field.key] = field.value(item);
+      }
+      return row;
+    });
+
+    return this.excelService.exportToBuffer(
+      'Yêu cầu báo giá',
+      fieldDefs.map((f) => ({ key: f.key, header: f.header })),
+      rows,
+    );
   }
 }

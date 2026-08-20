@@ -46,6 +46,7 @@ export const APP_CONSTANTS = {
   // để giảm truy vấn DB lặp lại (mỗi lần tính giá gọi getConfig()/getLatestAsync() nhiều lần).
   REFERENCE_DATA_TTL: 60_000,
   MAX_IMPORT_ROWS: 1000,
+  MAX_EXPORT_ROWS: 5000,
   QUOTE_STATUS_LABELS: {
     PENDING: 'Yêu cầu mới',
     PROCESSING: 'Đang xử lý',

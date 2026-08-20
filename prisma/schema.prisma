@@ -50,7 +50,7 @@ model User {
   id                String      @id @default(cuid())
   name              String
   email             String      @unique
-  passwordHash      String
+  passwordHash      String      @map("password_hash")
   refreshTokenHash  String?     @map("refresh_token_hash")
   resetTokenHash    String?     @map("reset_token_hash")
   resetTokenExpires DateTime?   @map("reset_token_expires")
@@ -58,14 +58,16 @@ model User {
   isActive          Boolean     @default(true) @map("is_active") // false = bị Admin khóa (block), không đăng nhập được
   role              Role
   department        Department? @relation(fields: [departmentId], references: [id])
-  departmentId      String?
+  departmentId      String?     @map("department_id")
 
   // Quan hệ ngược - 1 user có thể đóng nhiều vai trong quote_requests
   requestedQuotes QuoteRequest[] @relation("Requester")
   assignedQuotes  QuoteRequest[] @relation("Assignee")
+  chatMessages    QuoteChatMessage[]
+  chatReads       QuoteChatRead[]
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   @@index([departmentId])
   @@map("users")
@@ -118,7 +120,7 @@ model Province {
   code      String?    @unique
   wards     Ward[]
   customers Customer[]
-  createdAt DateTime   @default(now())
+  createdAt DateTime   @default(now()) @map("created_at")
 
   @@map("provinces")
 }
@@ -130,7 +132,7 @@ model Ward {
   districtName String?  @map("district_name")
   provinceId   String   @map("province_id")
   province     Province @relation(fields: [provinceId], references: [id], onDelete: Cascade)
-  createdAt    DateTime @default(now())
+  createdAt    DateTime @default(now()) @map("created_at")
 
   @@index([provinceId])
   @@map("wards")
@@ -152,8 +154,8 @@ model Customer {
 
   quoteRequests QuoteRequest[]
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   @@map("customers")
 }
@@ -168,28 +170,30 @@ model QuoteRequest {
 
   status               QuoteStatus         @default(PENDING) // 3. Trạng thái
   requester            User                @relation("Requester", fields: [requesterId], references: [id])
-  requesterId          String
+  requesterId          String              @map("requester_id")
   customer             Customer            @relation(fields: [customerId], references: [id])
-  customerId           String
-  desiredDate          DateTime? // 7. Thời gian muốn nhận
+  customerId           String              @map("customer_id")
+  desiredDate          DateTime?           @map("desired_date") // 7. Thời gian muốn nhận
   desiredLeadTime      String?             @map("desired_lead_time") @db.Text
   category             ProductCategory     @relation(fields: [categoryId], references: [id])
-  categoryId           String
-  customerMeasurements String?             @db.Text // 11. Số đo của khách
-  closeRatePct         Decimal?            @db.Decimal(5, 2) // 12. Khách tỷ lệ chốt
+  categoryId           String              @map("category_id")
+  customerMeasurements String?             @map("customer_measurements") @db.Text // 11. Số đo của khách
+  closeRatePct         Decimal?            @map("close_rate_pct") @db.Decimal(5, 2) // 12. Khách tỷ lệ chốt
   // Cụm dữ liệu báo giá (vat/quotedPrice/quotedDate/pricer/materials/stones) nằm hết ở QuoteOption —
   // 1 request có thể có nhiều option do nhiều pricer tạo để so sánh, không thể gắn 1 giá trị chung ở đây.
   assignee             User?               @relation("Assignee", fields: [assigneeId], references: [id]) // Người đang tiếp nhận/xử lý case (khác pricer của từng option)
-  assigneeId           String?
-  rejectReason         String?             @db.Text // bắt buộc khi status = TU_CHOI
+  assigneeId           String?             @map("assignee_id")
+  rejectReason         String?             @map("reject_reason") @db.Text // bắt buộc khi status = TU_CHOI
   returnReason         String?             @map("return_reason") @db.Text // bắt buộc khi status = NEED_MORE_INFO
   acceptedAt           DateTime?           @map("accepted_at") // Mốc lúc PRICING tiếp nhận xử lý (status -> DANG_XLY)
   returnedAt           DateTime?           @map("returned_at") // Mốc lúc bị trả lại Sale (status -> NEED_MORE_INFO)
   options              QuoteOption[]       @relation("RequestOptions") // Multi-options báo giá song song
   images               QuoteRequestImage[] // 6. Ảnh sản phẩm (nếu nhiều ảnh)
+  chatMessages         QuoteChatMessage[]
+  chatReads            QuoteChatRead[]
   version              Int                 @default(1) // optimistic locking - chống 2 Pricing tiếp nhận trùng
-  createdAt            DateTime            @default(now())
-  updatedAt            DateTime            @updatedAt
+  createdAt            DateTime            @default(now()) @map("created_at")
+  updatedAt            DateTime            @updatedAt @map("updated_at")
 
   @@index([status, createdAt(sort: Desc)])
   @@index([requesterId])
@@ -214,8 +218,8 @@ model Stone {
   price        Decimal            @db.Decimal(14, 2) // Giá / viên
   quoteOptions QuoteOptionStone[]
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   @@map("stones")
 }
@@ -229,9 +233,9 @@ model Stone {
 model QuoteRequestImage {
   id             String       @id @default(cuid())
   quoteRequest   QuoteRequest @relation(fields: [quoteRequestId], references: [id], onDelete: Cascade)
-  quoteRequestId String
-  imageUrl       String
-  uploadedAt     DateTime     @default(now())
+  quoteRequestId String       @map("quote_request_id")
+  imageUrl       String       @map("image_url")
+  uploadedAt     DateTime     @default(now()) @map("uploaded_at")
 
   @@index([quoteRequestId])
   @@map("quote_request_images")
@@ -247,7 +251,7 @@ model MetalPrice {
   silverVnd   Decimal  @map("silver_vnd") @db.Decimal(14, 2)
   platinumVnd Decimal  @map("platinum_vnd") @db.Decimal(14, 2)
   source      String?
-  updatedAt   DateTime @updatedAt
+  updatedAt   DateTime @updatedAt @map("updated_at")
 
   @@map("metal_prices")
 }
@@ -266,7 +270,7 @@ model PricingConfig {
   // Tiền công không còn nằm ở đây — Sale dùng tiền công theo danh mục sản phẩm (ProductCategory.laborCost),
   // Order vẫn nhập tay tự do mỗi lần báo giá.
   defaultVatRate    Decimal  @default(10) @map("default_vat_rate") @db.Decimal(5, 2)
-  updatedAt         DateTime @updatedAt
+  updatedAt         DateTime @updatedAt @map("updated_at")
 
   @@map("pricing_config")
 }
@@ -301,8 +305,8 @@ model QuoteOption {
   materials QuoteOptionMaterial[]
   stones    QuoteOptionStone[]
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   @@index([quoteRequestId])
   @@map("quote_options")
@@ -320,7 +324,7 @@ model QuoteOptionMaterial {
   materialId String      @map("material_id")
   weightChi  Decimal?    @map("weight_chi") @db.Decimal(8, 3)
 
-  createdAt DateTime @default(now())
+  createdAt DateTime @default(now()) @map("created_at")
 
   @@unique([optionId, materialId])
   @@index([materialId])
@@ -339,7 +343,7 @@ model QuoteOptionStone {
   stoneId  String      @map("stone_id")
   quantity Int         @default(1)
 
-  createdAt DateTime @default(now())
+  createdAt DateTime @default(now()) @map("created_at")
 
   @@unique([optionId, stoneId])
   @@index([stoneId])
@@ -358,9 +362,41 @@ model AuditLog {
   action     String // vd: ACCEPT_QUOTE, CREATE_QUOTE, LOGIN, APPROVE_USER...
   entityType String?  @map("entity_type") // vd: QuoteRequest, User, Customer
   entityId   String?  @map("entity_id")
-  createdAt  DateTime @default(now())
+  createdAt  DateTime @default(now()) @map("created_at")
 
   @@index([actorRole, action])
   @@index([createdAt])
   @@map("audit_logs")
+}
+
+// ==========================
+// QUOTE CHAT — trao đổi Sale <-> Order theo từng yêu cầu báo giá
+// Không có bảng Conversation riêng: participants lấy thẳng từ
+// QuoteRequest.requesterId/assigneeId, quoteRequestId trên message tự nó
+// là khóa xác định luồng chat (1 request = đúng 1 luồng chat cố định).
+// ==========================
+
+model QuoteChatMessage {
+  id             String       @id @default(cuid())
+  quoteRequestId String       @map("quote_request_id")
+  quoteRequest   QuoteRequest @relation(fields: [quoteRequestId], references: [id], onDelete: Cascade)
+  senderId       String       @map("sender_id")
+  sender         User         @relation(fields: [senderId], references: [id])
+  content        String?      @db.Text // null nếu tin chỉ có ảnh
+  imageUrl       String?      @map("image_url")
+  createdAt      DateTime     @default(now()) @map("created_at")
+
+  @@index([quoteRequestId, createdAt])
+  @@map("quote_chat_messages")
+}
+
+model QuoteChatRead {
+  quoteRequestId String       @map("quote_request_id")
+  quoteRequest   QuoteRequest @relation(fields: [quoteRequestId], references: [id], onDelete: Cascade)
+  userId         String       @map("user_id")
+  user           User         @relation(fields: [userId], references: [id])
+  lastReadAt     DateTime     @map("last_read_at")
+
+  @@id([quoteRequestId, userId])
+  @@map("quote_chat_reads")
 }

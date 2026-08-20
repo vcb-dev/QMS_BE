@@ -57,4 +57,26 @@ export class ExcelService {
 
     return rawRows;
   }
+
+  /**
+   * Dựng file Excel (.xlsx) từ danh sách cột + dữ liệu — dùng chung cho mọi module cần export.
+   * columns quyết định thứ tự & tiêu đề cột; rows là object phẳng, đọc theo columns[].key.
+   */
+  exportToBuffer(
+    sheetName: string,
+    columns: { key: string; header: string }[],
+    rows: Record<string, unknown>[],
+  ): Buffer {
+    const aoa: unknown[][] = [
+      columns.map((c) => c.header),
+      ...rows.map((row) => columns.map((c) => row[c.key] ?? '')),
+    ];
+
+    const sheet = XLSX.utils.aoa_to_sheet(aoa);
+    const workbook = XLSX.utils.book_new();
+    // Tên sheet Excel giới hạn 31 ký tự, quá là lỗi khi mở file.
+    XLSX.utils.book_append_sheet(workbook, sheet, sheetName.slice(0, 31));
+
+    return XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
+  }
 }

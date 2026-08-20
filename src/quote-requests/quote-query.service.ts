@@ -461,34 +461,7 @@ export class QuoteQueryService {
       };
     }
 
-    const sanitizedItems = items.map((item: any) => {
-      const catName = item.category?.name || '';
-      const primaryOption = pickPrimaryOption(item);
-      const matArr = (primaryOption?.materials || []).map(
-        (m: any) => m.material,
-      );
-      const matName = matArr
-        .map((m: any) => stripMaterialPercent(m.name))
-        .join(', ');
-      const dynamicProductName =
-        `${catName} ${matName}`.trim() || 'Sản phẩm chế tác';
-
-      return {
-        ...item,
-        productName: dynamicProductName,
-        material: matArr[0] || null,
-        materials: matArr,
-        quotedPrice: primaryOption?.quotedPrice ?? null,
-        vat: primaryOption?.vat ?? null,
-        quotedDate: primaryOption?.quotedDate ?? null,
-        images: item.images.map((img: any) => ({
-          ...img,
-          imageUrl: img.imageUrl.startsWith('data:image')
-            ? 'https://images.unsplash.com/photo-1605100804763-247f67b3557e?w=500&auto=format&fit=crop&q=60'
-            : img.imageUrl,
-        })),
-      };
-    });
+    const sanitizedItems = items.map((item: any) => this.sanitizeItem(item));
 
     const totalPages = Math.ceil(total / limitNum) || 1;
 
@@ -505,6 +478,96 @@ export class QuoteQueryService {
 
     this.listCache.set(cacheKey, { at: Date.now(), data: result });
     return result;
+  }
+
+  private sanitizeItem(item: any) {
+    const catName = item.category?.name || '';
+    const primaryOption = pickPrimaryOption(item);
+    const matArr = (primaryOption?.materials || []).map((m: any) => m.material);
+    const matName = matArr
+      .map((m: any) => stripMaterialPercent(m.name))
+      .join(', ');
+    const dynamicProductName =
+      `${catName} ${matName}`.trim() || 'Sản phẩm chế tác';
+
+    return {
+      ...item,
+      productName: dynamicProductName,
+      material: matArr[0] || null,
+      materials: matArr,
+      quotedPrice: primaryOption?.quotedPrice ?? null,
+      vat: primaryOption?.vat ?? null,
+      quotedDate: primaryOption?.quotedDate ?? null,
+      images: (item.images || []).map((img: any) => ({
+        ...img,
+        imageUrl: img.imageUrl.startsWith('data:image')
+          ? 'https://images.unsplash.com/photo-1605100804763-247f67b3557e?w=500&auto=format&fit=crop&q=60'
+          : img.imageUrl,
+      })),
+    };
+  }
+
+  /**
+   * Lấy toàn bộ danh sách theo bộ lọc (không phân trang, không cache) — dùng cho export Excel.
+   * Chặn trần MAX_EXPORT_ROWS để tránh kéo quá nhiều dòng cùng lúc.
+   */
+  async findAllForExport(filterDto: FilterQuoteRequestDto, user: User) {
+    const where = this.buildWhereClause(filterDto, user);
+
+    const items = await this.prisma.quoteRequest.findMany({
+      where,
+      take: APP_CONSTANTS.MAX_EXPORT_ROWS,
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        code: true,
+        desiredLeadTime: true,
+        customerMeasurements: true,
+        closeRatePct: true,
+        status: true,
+        rejectReason: true,
+        returnReason: true,
+        acceptedAt: true,
+        returnedAt: true,
+        createdAt: true,
+        updatedAt: true,
+        category: { select: { id: true, name: true } },
+        requester: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            department: { select: { id: true, name: true } },
+          },
+        },
+        customer: {
+          select: {
+            id: true,
+            name: true,
+            phone: true,
+            address: true,
+            province: true,
+            ward: true,
+          },
+        },
+        assignee: { select: { id: true, name: true, email: true } },
+        images: { select: { id: true, imageUrl: true }, take: 1 },
+        options: {
+          orderBy: { createdAt: 'asc' },
+          select: {
+            quotedPrice: true,
+            vat: true,
+            quotedDate: true,
+            selectionStatus: true,
+            materials: {
+              select: { material: { select: { id: true, name: true } } },
+            },
+          },
+        },
+      },
+    });
+
+    return items.map((item: any) => this.sanitizeItem(item));
   }
 
   async findOne(idOrCode: string) {

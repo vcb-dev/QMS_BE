@@ -22,7 +22,7 @@ import { MailModule } from '../mail/mail.module';
         return {
           secret,
           signOptions: {
-            expiresIn: (config.get<string>('JWT_ACCESS_EXPIRES')) as any,
+            expiresIn: config.get<string>('JWT_ACCESS_EXPIRES') as any,
           },
         };
       },
@@ -30,6 +30,6 @@ import { MailModule } from '../mail/mail.module';
   ],
   controllers: [AuthController],
   providers: [AuthService, JwtStrategy, CookieAuthService],
-  exports: [AuthService, CookieAuthService],
+  exports: [AuthService, CookieAuthService, JwtModule],
 })
 export class AuthModule {}

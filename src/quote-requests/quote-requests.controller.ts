@@ -7,11 +7,14 @@ import {
   Param,
   Delete,
   Query,
+  Res,
+  StreamableFile,
   UseGuards,
   UseInterceptors,
   UploadedFiles,
 } from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
+import type { Response } from 'express';
 import {
   ApiTags,
   ApiOperation,
@@ -25,6 +28,7 @@ import { UpdateQuoteRequestDto } from './dto/update-quote-request.dto';
 import { FilterQuoteRequestDto } from './dto/filter-quote-request.dto';
 import { UpdateQuoteStatusDto } from './dto/update-quote-status.dto';
 import { QuickQuoteSubmitDto } from './dto/quick-quote.dto';
+import { ExportQuoteRequestDto } from './dto/export-quote-request.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -87,6 +91,27 @@ export class QuoteRequestsController {
     @CurrentUser() user: any,
   ) {
     return this.quoteRequestsService.getStats(filterDto, user);
+  }
+
+  @ApiOperation({
+    summary: 'Export danh sách yêu cầu báo giá ra Excel (Có lọc & chọn cột)',
+  })
+  @Get('export')
+  async exportToExcel(
+    @Query() dto: ExportQuoteRequestDto,
+    @CurrentUser() user: any,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const buffer = await this.quoteRequestsService.exportToExcel(dto, user);
+    const filename = `bao-gia-${new Date().toISOString().slice(0, 10)}.xlsx`;
+
+    res.set({
+      'Content-Type':
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'Content-Disposition': `attachment; filename="${filename}"`,
+    });
+
+    return new StreamableFile(buffer);
   }
 
   @ApiOperation({ summary: 'Lấy chi tiết yêu cầu báo giá theo ID' })

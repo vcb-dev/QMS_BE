@@ -10,6 +10,9 @@ import { Role } from '@prisma/client';
 export class MetalPricesController {
   constructor(private readonly metalPricesService: MetalPricesService) {}
 
+  /** Giá gốc dùng để tính giá — Sale không được xem, chỉ ORDER / ADMIN */
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ORDER, Role.ADMIN)
   @Get()
   getLatest() {
     return this.metalPricesService.getLatest();

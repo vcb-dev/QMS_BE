@@ -23,6 +23,8 @@ import { APP_GUARD } from '@nestjs/core';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { CsrfGuard } from './auth/guards/csrf.guard';
 import { ExcelModule } from './excel/excel.module';
+import { QuoteChatModule } from './quote-chat/quote-chat.module';
+import { RealtimeModule } from './realtime/realtime.module';
 @Module({
   imports: [
     ScheduleModule.forRoot(),
@@ -49,6 +51,8 @@ import { ExcelModule } from './excel/excel.module';
       },
     ]),
     ExcelModule,
+    QuoteChatModule,
+    RealtimeModule,
   ],
   controllers: [AppController],
   providers: [

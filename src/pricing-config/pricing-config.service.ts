@@ -16,6 +16,12 @@ import {
   CalculateMultiResult,
 } from './dto/pricing-config.dto';
 
+// Chuẩn hóa tỷ lệ vàng áp dụng (VD: 40 hoặc 0.40 đều hiểu là 0.40) để tránh lỗi nhân vọt lên hàng tỷ
+function normalizeAppliedRatio(applied: number): number {
+  if (!applied || applied <= 0) return 0;
+  return applied > 1 ? applied / 100 : applied;
+}
+
 // Làm tròn giá bán cuối cùng đến bội số 1.000 VNĐ theo chuẩn tài chính (mục 8.2 tài liệu nghiệp vụ)
 function roundToThousand(n: number): number {
   return Math.round(n / 1000) * 1000;
@@ -270,7 +276,7 @@ export class PricingConfigService {
       }
 
       const goldRate = metalPrices.gold24kVnd;
-      metalPricePerChi = goldRate * matchedRatio.applied;
+      metalPricePerChi = goldRate * normalizeAppliedRatio(matchedRatio.applied);
     }
 
     const metalRawCost = weightChi * metalPricePerChi;
@@ -508,7 +514,7 @@ export class PricingConfigService {
           reqLower.includes(keyClean.toLowerCase()));
 
       const matName = r.label || r.key;
-      const matPricePerChi = gold24kRate * r.applied;
+      const matPricePerChi = gold24kRate * normalizeAppliedRatio(r.applied);
       const matCost = w * matPricePerChi;
       const totalCost = matCost + l;
       const totalCostWithVat = totalCost * (1 + vatVal / 100);
@@ -638,7 +644,7 @@ export class PricingConfigService {
             `Không tìm thấy cấu hình tỷ lệ áp dụng cho chất liệu "${item.materialName}" trong Database.`,
           );
         }
-        metalPricePerChi = gold24kRate * matchedRatio.applied;
+        metalPricePerChi = gold24kRate * normalizeAppliedRatio(matchedRatio.applied);
       }
 
       const cost = Math.max(0, item.weightChi) * metalPricePerChi;
