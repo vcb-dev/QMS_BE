@@ -12,7 +12,13 @@ import {
   UploadedFiles,
 } from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiConsumes } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiBearerAuth,
+  ApiConsumes,
+} from '@nestjs/swagger';
 import { QuoteRequestsService } from './quote-requests.service';
 import { CreateQuoteRequestDto } from './dto/create-quote-request.dto';
 import { UpdateQuoteRequestDto } from './dto/update-quote-request.dto';
@@ -30,9 +36,12 @@ import { Role, User } from '@prisma/client';
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('quote-requests')
 export class QuoteRequestsController {
-  constructor(private readonly quoteRequestsService: QuoteRequestsService) { }
+  constructor(private readonly quoteRequestsService: QuoteRequestsService) {}
 
-  @ApiOperation({ summary: 'Tạo mới yêu cầu báo giá (SALE / ADMIN)', description: 'Tự động validate & upload 100% ảnh lên Cloudinary' })
+  @ApiOperation({
+    summary: 'Tạo mới yêu cầu báo giá (SALE / ADMIN)',
+    description: 'Tự động validate & upload 100% ảnh lên Cloudinary',
+  })
   @ApiConsumes('multipart/form-data', 'application/json')
   @Roles(Role.SALE, Role.ADMIN)
   @Post()
@@ -45,7 +54,10 @@ export class QuoteRequestsController {
     return this.quoteRequestsService.create(userId, dto, files);
   }
 
-  @ApiOperation({ summary: 'Gửi yêu cầu Báo Giá Nhanh đến người báo giá / Pricer (SALE / PRICING / ADMIN)' })
+  @ApiOperation({
+    summary:
+      'Gửi yêu cầu Báo Giá Nhanh đến người báo giá / Pricer (SALE / ORDER / ADMIN)',
+  })
   @Post('quick-submit')
   async submitQuickQuote(
     @CurrentUser('id') userId: string,
@@ -54,13 +66,27 @@ export class QuoteRequestsController {
     return this.quoteRequestsService.submitQuickQuote(userId, dto);
   }
 
-  @ApiOperation({ summary: 'Lấy danh sách yêu cầu báo giá (Có lọc & phân trang)' })
+  @ApiOperation({
+    summary: 'Lấy danh sách yêu cầu báo giá (Có lọc & phân trang)',
+  })
   @Get()
   async findAll(
     @Query() filterDto: FilterQuoteRequestDto,
     @CurrentUser() user: any,
   ) {
     return this.quoteRequestsService.findAll(filterDto, user);
+  }
+
+  @ApiOperation({
+    summary:
+      'Lấy số liệu tổng hợp (đếm & doanh thu) theo bộ lọc — không kéo danh sách item',
+  })
+  @Get('stats')
+  async getStats(
+    @Query() filterDto: FilterQuoteRequestDto,
+    @CurrentUser() user: any,
+  ) {
+    return this.quoteRequestsService.getStats(filterDto, user);
   }
 
   @ApiOperation({ summary: 'Lấy chi tiết yêu cầu báo giá theo ID' })
@@ -90,7 +116,10 @@ export class QuoteRequestsController {
     return this.quoteRequestsService.remove(id, userId);
   }
 
-  @ApiOperation({ summary: 'Chuyển trạng thái yêu cầu báo giá tập trung (Bao gồm Duyệt nhanh QUICK_APPROVE & QUICK_REJECT)' })
+  @ApiOperation({
+    summary:
+      'Chuyển trạng thái yêu cầu báo giá tập trung (Bao gồm Duyệt nhanh QUICK_APPROVE & QUICK_REJECT)',
+  })
   @Patch(':id/status')
   async updateStatus(
     @Param('id') id: string,
@@ -99,5 +128,19 @@ export class QuoteRequestsController {
     @Body() dto: UpdateQuoteStatusDto,
   ) {
     return this.quoteRequestsService.updateStatus(id, userId, role, dto);
+  }
+
+  @ApiOperation({
+    summary: 'Xóa 1 phương án báo giá không muốn đề xuất (ORDER / ADMIN)',
+  })
+  @Roles(Role.ORDER, Role.ADMIN)
+  @Delete(':id/options/:optionId')
+  async deleteOption(
+    @Param('id') id: string,
+    @Param('optionId') optionId: string,
+    @CurrentUser('id') userId: string,
+    @CurrentUser('role') role: Role,
+  ) {
+    return this.quoteRequestsService.deleteOption(id, optionId, userId, role);
   }
 }

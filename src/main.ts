@@ -10,6 +10,11 @@ import { json, urlencoded } from 'express';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
+  // Bắt buộc để PrismaService.onModuleDestroy() ($disconnect) chạy khi app tắt/restart —
+  // thiếu dòng này thì watch-mode restart liên tục sẽ để lại connection treo trên DB pool
+  // (Supabase session-mode pooler giới hạn cứng số client, dễ bị full sau vài lần restart).
+  app.enableShutdownHooks();
+
   // Cấu hình tăng giới hạn Dung lượng Body Request hỗ trợ tải ảnh Base64 & File lớn (50MB)
   app.use(json({ limit: '50mb' }));
   app.use(urlencoded({ limit: '50mb', extended: true }));

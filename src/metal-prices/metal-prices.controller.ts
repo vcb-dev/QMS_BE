@@ -15,9 +15,9 @@ export class MetalPricesController {
     return this.metalPricesService.getLatest();
   }
 
-  /** Cập nhật giá vàng/bạc thủ công, lưu vào DB — chỉ PRICING / ADMIN */
+  /** Cập nhật giá vàng/bạc thủ công, lưu vào DB — chỉ ORDER / ADMIN */
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(Role.PRICING, Role.ADMIN)
+  @Roles(Role.ORDER, Role.ADMIN)
   @Post()
   updatePrices(@Body() prices: Partial<MetalPrices>) {
     return this.metalPricesService.updatePrices(prices);

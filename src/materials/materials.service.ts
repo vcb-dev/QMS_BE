@@ -1,27 +1,30 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { APP_CONSTANTS } from 'src/common/constants';
+import { CacheWithTtl } from '../common/cache-with-ttl.util';
+import { Material } from '@prisma/client';
+
 @Injectable()
 export class MaterialsService {
-  private cache: any[] | null = null;
-  private lastFetch = 0;
+  private readonly cache = new CacheWithTtl<Material[]>(
+    APP_CONSTANTS.MATERIAL_TTL,
+  );
 
-  constructor(private prisma: PrismaService) { }
+  constructor(private prisma: PrismaService) {}
 
   async findAll() {
-    if (this.cache && Date.now() - this.lastFetch < APP_CONSTANTS.MATERIAL_TTL) {
-      return this.cache;
-    }
+    const cached = this.cache.get();
+    if (cached) return cached;
+
     const data = await this.prisma.material.findMany({
       orderBy: { name: 'asc' },
     });
-    this.cache = data;
-    this.lastFetch = Date.now();
+    this.cache.set(data);
     return data;
   }
 
   async create(name: string) {
-    this.cache = null;
+    this.cache.clear();
     return this.prisma.material.create({
       data: { name },
     });

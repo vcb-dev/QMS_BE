@@ -15,17 +15,31 @@ datasource db {
 
 enum Role {
   SALE
-  PRICING
+  ORDER
   ADMIN
 }
 
 enum QuoteStatus {
-  YC_MOI
-  DANG_XLY
-  XONG
-  TU_CHOI
+  PENDING
+  PROCESSING
+  QUOTED
+  REJECTED
   NEED_MORE_INFO
-  DA_CHOT
+  CLOSED
+}
+
+enum StoneType {
+  MAIN // Đá chủ
+  SIDE // Đá tấm
+}
+
+// Trạng thái được chọn của 1 QuoteOption trong danh sách phương án của 1 request —
+// SELECTED = phương án đang dùng để báo giá/hiển thị chính, CLOSED = khách đã chốt đúng phương án này,
+// NONE = phương án phụ, không có ý nghĩa gì đặc biệt (mặc định).
+enum OptionSelectionStatus {
+  NONE
+  SELECTED
+  CLOSED
 }
 
 // ==========================
@@ -33,22 +47,22 @@ enum QuoteStatus {
 // ==========================
 
 model User {
-  id           String   @id @default(cuid())
-  name         String
-  email        String   @unique
-  passwordHash String
-  refreshTokenHash String? @map("refresh_token_hash")
-  resetTokenHash   String? @map("reset_token_hash")
-  resetTokenExpires DateTime? @map("reset_token_expires")
-  isApproved       Boolean   @default(false) @map("is_approved")
-  isActive         Boolean   @default(true) @map("is_active") // false = bị Admin khóa (block), không đăng nhập được
-  role         Role
-  department   Department? @relation(fields: [departmentId], references: [id])
-  departmentId String?
+  id                String      @id @default(cuid())
+  name              String
+  email             String      @unique
+  passwordHash      String
+  refreshTokenHash  String?     @map("refresh_token_hash")
+  resetTokenHash    String?     @map("reset_token_hash")
+  resetTokenExpires DateTime?   @map("reset_token_expires")
+  isApproved        Boolean     @default(false) @map("is_approved")
+  isActive          Boolean     @default(true) @map("is_active") // false = bị Admin khóa (block), không đăng nhập được
+  role              Role
+  department        Department? @relation(fields: [departmentId], references: [id])
+  departmentId      String?
 
   // Quan hệ ngược - 1 user có thể đóng nhiều vai trong quote_requests
   requestedQuotes QuoteRequest[] @relation("Requester")
-  pricedQuotes    QuoteRequest[] @relation("Pricer")
+  assignedQuotes  QuoteRequest[] @relation("Assignee")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -74,10 +88,9 @@ model Department {
 // ==========================
 
 model Material {
-  id                   String                @id @default(cuid())
-  name                 String                @unique
-  primaryQuoteRequests QuoteRequest[]        @relation("PrimaryMaterial")
-  quoteRequests        QuoteRequestMaterial[]
+  id           String                @id @default(cuid())
+  name         String                @unique
+  quoteOptions QuoteOptionMaterial[]
 
   @@map("materials")
 }
@@ -87,8 +100,9 @@ model Material {
 // ==========================
 
 model ProductCategory {
-  id    String @id @default(cuid())
-  name  String @unique
+  id            String         @id @default(cuid())
+  name          String         @unique
+  laborCost     Decimal?       @map("labor_cost") @db.Decimal(14, 2) // Tiền công chuẩn theo danh mục sản phẩm — Sale dùng giá này, Order vẫn nhập tay
   quoteRequests QuoteRequest[]
 
   @@map("product_categories")
@@ -149,67 +163,61 @@ model Customer {
 // ==========================
 
 model QuoteRequest {
-  id     String @id @default(cuid())
-  code   String @unique // 1. Mã hỏi Giá - vd QG-2026-0001
+  id   String @id @default(cuid())
+  code String @unique // 1. Mã hỏi Giá - vd QG-2026-0001
 
-  status QuoteStatus @default(YC_MOI) // 3. Trạng thái
-  requester   User   @relation("Requester", fields: [requesterId], references: [id])
-  requesterId String
-  customer   Customer @relation(fields: [customerId], references: [id])
-  customerId String
-  desiredDate  DateTime? // 7. Thời gian muốn nhận
-  desiredLeadTime String?   @map("desired_lead_time") @db.Text
-  materials   QuoteRequestMaterial[]
-  material    Material?   @relation("PrimaryMaterial", fields: [materialId], references: [id])
-  materialId  String?
-  category   ProductCategory @relation(fields: [categoryId], references: [id])
-  categoryId String
-  customerMeasurements String?  @db.Text // 11. Số đo của khách
-  closeRatePct         Decimal? @db.Decimal(5, 2) // 12. Khách tỷ lệ chốt
-  vat          Decimal? @db.Decimal(5, 2) // 13. VAT
-  quotedPrice  Decimal? @db.Decimal(14, 2) // 14. BÁO GIÁ
-  quotedDate   DateTime? // 15. Ngày báo giá
-  pricer   User?   @relation("Pricer", fields: [pricerId], references: [id]) // 16. Người Báo giá
-  pricerId String?
-  rejectReason String? @db.Text // bắt buộc khi status = TU_CHOI
-  returnReason String? @map("return_reason") @db.Text // bắt buộc khi status = NEED_MORE_INFO
-  acceptedAt DateTime? @map("accepted_at") // Mốc lúc PRICING tiếp nhận xử lý (status -> DANG_XLY)
-  returnedAt DateTime? @map("returned_at") // Mốc lúc bị trả lại Sale (status -> NEED_MORE_INFO)
-  options      QuoteOption[] // Multi-options báo giá song song
-  selectedOptionId String?  @map("selected_option_id")
-  images        QuoteRequestImage[] // 6. Ảnh sản phẩm (nếu nhiều ảnh)
-  version   Int      @default(1) // optimistic locking - chống 2 Pricing tiếp nhận trùng
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  status               QuoteStatus         @default(PENDING) // 3. Trạng thái
+  requester            User                @relation("Requester", fields: [requesterId], references: [id])
+  requesterId          String
+  customer             Customer            @relation(fields: [customerId], references: [id])
+  customerId           String
+  desiredDate          DateTime? // 7. Thời gian muốn nhận
+  desiredLeadTime      String?             @map("desired_lead_time") @db.Text
+  category             ProductCategory     @relation(fields: [categoryId], references: [id])
+  categoryId           String
+  customerMeasurements String?             @db.Text // 11. Số đo của khách
+  closeRatePct         Decimal?            @db.Decimal(5, 2) // 12. Khách tỷ lệ chốt
+  // Cụm dữ liệu báo giá (vat/quotedPrice/quotedDate/pricer/materials/stones) nằm hết ở QuoteOption —
+  // 1 request có thể có nhiều option do nhiều pricer tạo để so sánh, không thể gắn 1 giá trị chung ở đây.
+  assignee             User?               @relation("Assignee", fields: [assigneeId], references: [id]) // Người đang tiếp nhận/xử lý case (khác pricer của từng option)
+  assigneeId           String?
+  rejectReason         String?             @db.Text // bắt buộc khi status = TU_CHOI
+  returnReason         String?             @map("return_reason") @db.Text // bắt buộc khi status = NEED_MORE_INFO
+  acceptedAt           DateTime?           @map("accepted_at") // Mốc lúc PRICING tiếp nhận xử lý (status -> DANG_XLY)
+  returnedAt           DateTime?           @map("returned_at") // Mốc lúc bị trả lại Sale (status -> NEED_MORE_INFO)
+  options              QuoteOption[]       @relation("RequestOptions") // Multi-options báo giá song song
+  images               QuoteRequestImage[] // 6. Ảnh sản phẩm (nếu nhiều ảnh)
+  version              Int                 @default(1) // optimistic locking - chống 2 Pricing tiếp nhận trùng
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
 
   @@index([status, createdAt(sort: Desc)])
   @@index([requesterId])
   @@index([requesterId, status])
-  @@index([pricerId])
-  @@index([pricerId, status])
+  @@index([assigneeId])
+  @@index([assigneeId, status])
   @@index([customerId])
   @@index([categoryId])
-  @@index([materialId])
-  @@index([selectedOptionId])
   @@map("quote_requests")
 }
 
 // ==========================
-// 6b. QUOTE_REQUEST_MATERIALS (bảng nối tường minh thay cho m2m ẩn)
+// 6c. STONES (lookup — danh mục đá chủ / đá tấm)
 // ==========================
 
-model QuoteRequestMaterial {
-  id             String       @id @default(cuid())
-  quoteRequest   QuoteRequest @relation(fields: [quoteRequestId], references: [id], onDelete: Cascade)
-  quoteRequestId String       @map("quote_request_id")
-  material       Material     @relation(fields: [materialId], references: [id])
-  materialId     String       @map("material_id")
+model Stone {
+  id           String             @id @default(cuid())
+  stoneType    StoneType          @map("stone_type") // MAIN = đá chủ, SIDE = đá tấm
+  name         String // Tên đá
+  cut          String? // Giác cắt
+  size         String? // Size đá
+  price        Decimal            @db.Decimal(14, 2) // Giá / viên
+  quoteOptions QuoteOptionStone[]
 
   createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  @@unique([quoteRequestId, materialId])
-  @@index([materialId])
-  @@map("quote_request_materials")
+  @@map("stones")
 }
 
 // ==========================
@@ -234,12 +242,12 @@ model QuoteRequestImage {
 // ==========================
 
 model MetalPrice {
-  id           String   @id @default("singleton")
-  gold24kVnd   Decimal  @map("gold_24k_vnd") @db.Decimal(14, 2)
-  silverVnd    Decimal  @map("silver_vnd") @db.Decimal(14, 2)
-  platinumVnd  Decimal  @map("platinum_vnd") @db.Decimal(14, 2)
-  source       String?
-  updatedAt    DateTime @updatedAt
+  id          String   @id @default("singleton")
+  gold24kVnd  Decimal  @map("gold_24k_vnd") @db.Decimal(14, 2)
+  silverVnd   Decimal  @map("silver_vnd") @db.Decimal(14, 2)
+  platinumVnd Decimal  @map("platinum_vnd") @db.Decimal(14, 2)
+  source      String?
+  updatedAt   DateTime @updatedAt
 
   @@map("metal_prices")
 }
@@ -249,11 +257,16 @@ model MetalPrice {
 // ==========================
 
 model PricingConfig {
-  id               String   @id @default("singleton")
-  goldRatios       Json     @map("gold_ratios")
-  profitMargins    Json     @map("profit_margins")
-  silverMultiplier Decimal  @default(3) @map("silver_multiplier") @db.Decimal(5, 2)
-  updatedAt        DateTime @updatedAt
+  id                String   @id @default("singleton")
+  goldRatios        Json     @map("gold_ratios")
+  profitMargins     Json     @map("profit_margins")
+  // Danh sách hệ số nhân Bạc để chọn lúc tính giá (VD: [2.5, 3]) — không còn 1 giá trị cố định
+  silverMultipliers Json     @default("[2.5, 3]") @map("silver_multipliers")
+  // VAT chuẩn — chỉ ORDER/ADMIN cấu hình, Sale không nhập tay được nữa (chỉ chọn có/không cộng)
+  // Tiền công không còn nằm ở đây — Sale dùng tiền công theo danh mục sản phẩm (ProductCategory.laborCost),
+  // Order vẫn nhập tay tự do mỗi lần báo giá.
+  defaultVatRate    Decimal  @default(10) @map("default_vat_rate") @db.Decimal(5, 2)
+  updatedAt         DateTime @updatedAt
 
   @@map("pricing_config")
 }
@@ -265,24 +278,72 @@ model PricingConfig {
 model QuoteOption {
   id             String       @id @default(cuid())
   quoteRequestId String       @map("quote_request_id")
-  quoteRequest   QuoteRequest @relation(fields: [quoteRequestId], references: [id], onDelete: Cascade)
+  quoteRequest   QuoteRequest @relation("RequestOptions", fields: [quoteRequestId], references: [id], onDelete: Cascade)
 
-  optionName     String       @map("option_name")
-  materialName   String?      @map("material_name")
-  weightChi      Decimal?     @map("weight_chi") @db.Decimal(8, 3)
-  laborCost      Decimal?     @map("labor_cost") @db.Decimal(14, 2)
-  stoneCost      Decimal?     @map("stone_cost") @db.Decimal(14, 2)
-  stoneDescription String?    @map("stone_description") @db.Text
-  vat            Decimal?     @db.Decimal(5, 2)
-  quotedPrice    Decimal      @map("quoted_price") @db.Decimal(14, 2)
-  isSelected     Boolean      @default(false) @map("is_selected")
-  note           String?      @db.Text
+  optionName     String   @map("option_name")
+  weightChi      Decimal? @map("weight_chi") @db.Decimal(8, 3) // tổng số chi (giữ để đọc nhanh, không join)
+  laborCost      Decimal? @map("labor_cost") @db.Decimal(14, 2)
+  stoneCost      Decimal? @map("stone_cost") @db.Decimal(14, 2)
+  // Giá kim loại + giá đá đã bán (sau margin) — lưu riêng để cộng ra đúng TỔNG BÁO GIÁ CHỐT khi xem lại
+  totalMetalCost Decimal? @map("total_metal_cost") @db.Decimal(14, 2)
+  // Giá vốn kim loại THÔ (trọng lượng × đơn giá, trước công/VAT/margin) — tách riêng để xem lại
+  // được chi tiết giá gốc/VAT/lãi kim loại giống lúc tính, thay vì chỉ có totalMetalCost đã gộp sẵn
+  metalRawCost   Decimal? @map("metal_raw_cost") @db.Decimal(14, 2)
+  stonePrice     Decimal? @map("stone_price") @db.Decimal(14, 2)
+  vat            Decimal?  @db.Decimal(5, 2)
+  quotedPrice    Decimal?  @map("quoted_price") @db.Decimal(14, 2) // NULL = option nháp (vd Sale khai chất liệu mong muốn), chưa có giá
+  quotedDate     DateTime? @map("quoted_date") // Mốc thật sự gửi báo giá cho khách — khác createdAt (mốc tạo record nháp)
+  note           String?   @db.Text
+  // SELECTED = phương án chính đang dùng để báo giá, CLOSED = khách đã chốt đúng phương án này —
+  // nguồn sự thật duy nhất cho "phương án nào đang được chọn", thay cho QuoteRequest.selectedOptionId cũ.
+  selectionStatus OptionSelectionStatus @default(NONE) @map("selection_status")
 
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
+  materials QuoteOptionMaterial[]
+  stones    QuoteOptionStone[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([quoteRequestId])
   @@map("quote_options")
+}
+
+// ==========================
+// 10b. QUOTE_OPTION_MATERIALS (chi tiết chất liệu trong 1 phương án — truy vết, không chỉ text tóm tắt)
+// ==========================
+
+model QuoteOptionMaterial {
+  id         String      @id @default(cuid())
+  option     QuoteOption @relation(fields: [optionId], references: [id], onDelete: Cascade)
+  optionId   String      @map("option_id")
+  material   Material    @relation(fields: [materialId], references: [id])
+  materialId String      @map("material_id")
+  weightChi  Decimal?    @map("weight_chi") @db.Decimal(8, 3)
+
+  createdAt DateTime @default(now())
+
+  @@unique([optionId, materialId])
+  @@index([materialId])
+  @@map("quote_option_materials")
+}
+
+// ==========================
+// 10c. QUOTE_OPTION_STONES (chi tiết đá trong 1 phương án — truy vết, không chỉ text tóm tắt)
+// ==========================
+
+model QuoteOptionStone {
+  id       String      @id @default(cuid())
+  option   QuoteOption @relation(fields: [optionId], references: [id], onDelete: Cascade)
+  optionId String      @map("option_id")
+  stone    Stone       @relation(fields: [stoneId], references: [id])
+  stoneId  String      @map("stone_id")
+  quantity Int         @default(1)
+
+  createdAt DateTime @default(now())
+
+  @@unique([optionId, stoneId])
+  @@index([stoneId])
+  @@map("quote_option_stones")
 }
 
 // ==========================
@@ -294,7 +355,7 @@ model AuditLog {
   actorId    String?  @map("actor_id")
   actorName  String   @map("actor_name")
   actorRole  Role     @map("actor_role")
-  action     String   // vd: ACCEPT_QUOTE, CREATE_QUOTE, LOGIN, APPROVE_USER...
+  action     String // vd: ACCEPT_QUOTE, CREATE_QUOTE, LOGIN, APPROVE_USER...
   entityType String?  @map("entity_type") // vd: QuoteRequest, User, Customer
   entityId   String?  @map("entity_id")
   createdAt  DateTime @default(now())

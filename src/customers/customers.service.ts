@@ -5,24 +5,14 @@ import { UpdateCustomerDto } from './dto/update-customer.dto';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { Role } from '@prisma/client';
 
+const CUSTOMER_INCLUDE = { provinceRel: true } as const;
+
 @Injectable()
 export class CustomersService {
   constructor(
     private prisma: PrismaService,
     private auditLog: AuditLogService,
   ) {}
-
-  private async logAction(actorId: string, actorRole: Role, action: string, entityId?: string) {
-    const actor = await this.prisma.user.findUnique({ where: { id: actorId }, select: { name: true } });
-    await this.auditLog.log({
-      actorId,
-      actorName: actor?.name || 'Không rõ',
-      actorRole,
-      action,
-      entityType: 'Customer',
-      entityId,
-    });
-  }
 
   async findAll(search?: string) {
     const where = search
@@ -37,7 +27,7 @@ export class CustomersService {
       : {};
     return this.prisma.customer.findMany({
       where,
-      include: { provinceRel: true },
+      include: CUSTOMER_INCLUDE,
       orderBy: { createdAt: 'desc' },
     });
   }
@@ -45,7 +35,7 @@ export class CustomersService {
   async findOne(id: string) {
     const customer = await this.prisma.customer.findUnique({
       where: { id },
-      include: { provinceRel: true, quoteRequests: true },
+      include: { ...CUSTOMER_INCLUDE, quoteRequests: true },
     });
     if (!customer) {
       throw new NotFoundException('Không tìm thấy thông tin khách hàng');
@@ -60,7 +50,7 @@ export class CustomersService {
     if (cleanPhone) {
       const existingByPhone = await this.prisma.customer.findFirst({
         where: { phone: cleanPhone },
-        include: { provinceRel: true },
+        include: CUSTOMER_INCLUDE,
       });
       if (existingByPhone) {
         const updated = await this.prisma.customer.update({
@@ -72,16 +62,22 @@ export class CustomersService {
             ward: dto.ward || existingByPhone.ward,
             note: dto.note || existingByPhone.note,
           },
-          include: { provinceRel: true },
+          include: CUSTOMER_INCLUDE,
         });
-        await this.logAction(actorId, actorRole, 'UPDATE_CUSTOMER', updated.id);
+        await this.auditLog.logAction(
+          actorId,
+          actorRole,
+          'UPDATE_CUSTOMER',
+          'Customer',
+          updated.id,
+        );
         return updated;
       }
     }
 
     const existingByName = await this.prisma.customer.findFirst({
       where: { name: { equals: cleanName, mode: 'insensitive' } },
-      include: { provinceRel: true },
+      include: CUSTOMER_INCLUDE,
     });
     if (existingByName) {
       const updated = await this.prisma.customer.update({
@@ -93,9 +89,15 @@ export class CustomersService {
           ward: dto.ward || existingByName.ward,
           note: dto.note || existingByName.note,
         },
-        include: { provinceRel: true },
+        include: CUSTOMER_INCLUDE,
       });
-      await this.logAction(actorId, actorRole, 'UPDATE_CUSTOMER', updated.id);
+      await this.auditLog.logAction(
+        actorId,
+        actorRole,
+        'UPDATE_CUSTOMER',
+        'Customer',
+        updated.id,
+      );
       return updated;
     }
 
@@ -108,26 +110,49 @@ export class CustomersService {
         ward: dto.ward || null,
         note: dto.note || null,
       },
-      include: { provinceRel: true },
+      include: CUSTOMER_INCLUDE,
     });
-    await this.logAction(actorId, actorRole, 'CREATE_CUSTOMER', created.id);
+    await this.auditLog.logAction(
+      actorId,
+      actorRole,
+      'CREATE_CUSTOMER',
+      'Customer',
+      created.id,
+    );
     return created;
   }
 
-  async update(id: string, dto: UpdateCustomerDto, actorId: string, actorRole: Role) {
+  async update(
+    id: string,
+    dto: UpdateCustomerDto,
+    actorId: string,
+    actorRole: Role,
+  ) {
     await this.findOne(id);
     const updated = await this.prisma.customer.update({
       where: { id },
       data: dto,
-      include: { provinceRel: true },
+      include: CUSTOMER_INCLUDE,
     });
-    await this.logAction(actorId, actorRole, 'UPDATE_CUSTOMER', id);
+    await this.auditLog.logAction(
+      actorId,
+      actorRole,
+      'UPDATE_CUSTOMER',
+      'Customer',
+      id,
+    );
     return updated;
   }
 
   async remove(id: string, actorId: string, actorRole: Role) {
     await this.findOne(id);
-    await this.logAction(actorId, actorRole, 'DELETE_CUSTOMER', id);
+    await this.auditLog.logAction(
+      actorId,
+      actorRole,
+      'DELETE_CUSTOMER',
+      'Customer',
+      id,
+    );
     await this.prisma.customer.delete({ where: { id } });
     return { message: 'Đã xóa thông tin khách hàng thành công' };
   }

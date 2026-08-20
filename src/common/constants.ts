@@ -1,3 +1,4 @@
+import { QuoteStatus } from '@prisma/client/wasm';
 import 'dotenv/config';
 
 function requiredEnv(name: string): string {
@@ -8,7 +9,8 @@ function requiredEnv(name: string): string {
 
 function requiredNumberEnv(name: string): number {
   const value = Number(requiredEnv(name));
-  if (!Number.isFinite(value)) throw new Error(`Environment variable ${name} must be a number`);
+  if (!Number.isFinite(value))
+    throw new Error(`Environment variable ${name} must be a number`);
   return value;
 }
 
@@ -20,10 +22,10 @@ export const APP_CONSTANTS = {
   CORS_ORIGINS: requiredEnv('FRONTEND_URL')
     .split(',')
     .map((origin) => origin.trim())
-    .filter(Boolean),  
+    .filter(Boolean),
   COOKIE_SECURE: process.env['COOKIE_SECURE'] === 'true',
   THROTTLE_TTL: requiredNumberEnv('LOGIN_THROTTLE_TTL'),
-  THROTTLE_LIMIT: requiredNumberEnv('LOGIN_THROTTLE_LIMIT'),  
+  THROTTLE_LIMIT: requiredNumberEnv('LOGIN_THROTTLE_LIMIT'),
   VNAPPMONEY_TOKEN_URL: requiredEnv('VNAPPMONEY_API_KEY'),
   VNAPPMONEY_GOLD_URL: requiredEnv('VNAPPMONEY_GOLD_URL'),
   REFRESH_INTERVAL_MS: 24 * 60 * 60 * 1000, // Tự động gọi lại API ngoài 1 ngày/lần
@@ -31,14 +33,25 @@ export const APP_CONSTANTS = {
 
   MAX_FILE_SIZE: 10 * 1024 * 1024, // 10MB
   ALLOWED_MIME_TYPES: [
-      'image/jpeg',
-      'image/png',
-      'image/webp',
-      'image/gif',
-      'image/heic',
-      'image/heif',
-      'image/svg+xml',
-    ],
-    MATERIAL_TTL:60_000,
-
+    'image/jpeg',
+    'image/png',
+    'image/webp',
+    'image/gif',
+    'image/heic',
+    'image/heif',
+    'image/svg+xml',
+  ],
+  MATERIAL_TTL: 60_000,
+  // Dữ liệu tham chiếu ít đổi (giá kim loại, danh mục đá, cấu hình tính giá) — cache 1 phút
+  // để giảm truy vấn DB lặp lại (mỗi lần tính giá gọi getConfig()/getLatestAsync() nhiều lần).
+  REFERENCE_DATA_TTL: 60_000,
+  MAX_IMPORT_ROWS: 1000,
+  QUOTE_STATUS_LABELS: {
+    PENDING: 'Yêu cầu mới',
+    PROCESSING: 'Đang xử lý',
+    NEED_MORE_INFO: 'Cần bổ sung thông tin',
+    QUOTED: 'Hoàn thành / Đã báo giá',
+    CLOSED: 'Đã chốt',
+    REJECTED: 'Bị từ chối',
+  },
 };

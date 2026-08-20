@@ -29,8 +29,54 @@ export class AuditLogService {
         },
       });
     } catch (err) {
-      this.logger.warn(`Không thể ghi audit log (${params.action}): ${err instanceof Error ? err.message : err}`);
+      this.logger.warn(
+        `Không thể ghi audit log (${params.action}): ${err instanceof Error ? err.message : err}`,
+      );
     }
+  }
+
+  // Actor role đã biết (truyền từ controller/guard) — tra tên actor rồi ghi log.
+  async logAction(
+    actorId: string,
+    actorRole: Role,
+    action: string,
+    entityType?: string,
+    entityId?: string,
+  ) {
+    const actor = await this.prisma.user.findUnique({
+      where: { id: actorId },
+      select: { name: true },
+    });
+    await this.log({
+      actorId,
+      actorName: actor?.name || 'Không rõ',
+      actorRole,
+      action,
+      entityType,
+      entityId,
+    });
+  }
+
+  // Chỉ có userId (role chưa biết) — tự tra cả tên lẫn role; im lặng bỏ qua nếu user không còn tồn tại.
+  async logActionByUserId(
+    userId: string,
+    action: string,
+    entityId?: string,
+    entityType = 'QuoteRequest',
+  ) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { name: true, role: true },
+    });
+    if (!user) return;
+    await this.log({
+      actorId: userId,
+      actorName: user.name,
+      actorRole: user.role,
+      action,
+      entityType,
+      entityId,
+    });
   }
 
   // Đếm số lần mỗi action, nhóm theo role — kèm breakdown theo từng người (actorName) để biết ai làm gì
@@ -41,17 +87,26 @@ export class AuditLogService {
     });
 
     type ByActor = { actorId: string | null; actorName: string; count: number };
-    const byRole: Record<string, { action: string; count: number; byActor: ByActor[] }[]> = {};
+    const byRole: Record<
+      string,
+      { action: string; count: number; byActor: ByActor[] }[]
+    > = {};
 
     for (const row of rows) {
       if (!byRole[row.actorRole]) byRole[row.actorRole] = [];
-      let actionEntry = byRole[row.actorRole].find((a) => a.action === row.action);
+      let actionEntry = byRole[row.actorRole].find(
+        (a) => a.action === row.action,
+      );
       if (!actionEntry) {
         actionEntry = { action: row.action, count: 0, byActor: [] };
         byRole[row.actorRole].push(actionEntry);
       }
       actionEntry.count += row._count._all;
-      actionEntry.byActor.push({ actorId: row.actorId, actorName: row.actorName, count: row._count._all });
+      actionEntry.byActor.push({
+        actorId: row.actorId,
+        actorName: row.actorName,
+        count: row._count._all,
+      });
     }
 
     for (const role of Object.keys(byRole)) {

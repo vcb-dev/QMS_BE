@@ -1,4 +1,10 @@
-import { IsNotEmpty, IsNumber, IsOptional, IsString, IsArray, ValidateNested } from 'class-validator';
+import {
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  IsArray,
+  ValidateNested,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 import { QuoteOptionItemDto } from './quote-complete.dto';
 import { CreateCustomerDto } from '../../customers/dto/create-customer.dto';
@@ -31,15 +37,7 @@ export class QuickQuoteSubmitDto {
 
   @IsOptional()
   @IsString()
-  pricerId?: string;
-
-  @IsOptional()
-  @IsNumber()
-  quotedPrice?: number;
-
-  @IsOptional()
-  @IsNumber()
-  vat?: number;
+  assigneeId?: string;
 
   @IsOptional()
   @IsArray()

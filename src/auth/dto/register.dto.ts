@@ -19,9 +19,9 @@ export class RegisterDto {
   @MinLength(6, { message: 'Mật khẩu phải từ 6 ký tự trở lên' })
   password: string;
 
-  @ApiPropertyOptional({ enum: Role, default: Role.SALE, description: 'Vai trò (SALE, PRICING, ADMIN)' })
+  @ApiPropertyOptional({ enum: Role, default: Role.SALE, description: 'Vai trò (SALE, ORDER, ADMIN)' })
   @IsOptional()
-  @IsEnum(Role, { message: 'Vai trò không hợp lệ (chỉ nhận SALE, PRICING, ADMIN)' })
+  @IsEnum(Role, { message: 'Vai trò không hợp lệ (chỉ nhận SALE, ORDER, ADMIN)' })
   role?: Role;
 
   @ApiPropertyOptional({ description: 'ID phòng ban' })

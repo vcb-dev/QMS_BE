@@ -113,7 +113,7 @@ export class MailService {
           <div class="otp-expire">⏱ Mã có hiệu lực trong 15 phút</div>
         </div>
         <div class="warning">
-          ⚠️ <strong>Lưu ý bảo mật:</strong> Không chia sẻ mã OTP này với bất kỳ ai. VCB Jewelry sẽ không bao giờ yêu cầu mã OTP của bạn qua điện thoại hoặc email.
+          <strong>Lưu ý bảo mật:</strong> Không chia sẻ mã OTP này với bất kỳ ai. VCB Jewelry sẽ không bao giờ yêu cầu mã OTP của bạn qua điện thoại hoặc email.
         </div>
         <p style="color:#64748b; font-size:13px; margin-top:20px;">Nếu bạn không yêu cầu đặt lại mật khẩu, hãy bỏ qua email này.</p>
       </div>

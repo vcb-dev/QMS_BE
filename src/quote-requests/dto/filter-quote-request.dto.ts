@@ -17,7 +17,7 @@ export class FilterQuoteRequestDto {
 
   @IsOptional()
   @IsString()
-  pricerId?: string;
+  assigneeId?: string;
 
   @IsOptional()
   @IsString()
@@ -35,6 +35,12 @@ export class FilterQuoteRequestDto {
   @IsString()
   includeCounts?: string;
 
+  // Dashboard chỉ cần category/materials/requester/images để tính biểu đồ & vài ô mẫu,
+  // không cần customer/pricer/options (quan hệ nặng nhất) — set 'true' để bỏ chúng khỏi query.
+  @IsOptional()
+  @IsString()
+  lite?: string;
+
   @IsOptional()
   @IsString()
   startDate?: string;
@@ -46,6 +52,10 @@ export class FilterQuoteRequestDto {
   @IsOptional()
   @IsString()
   timeRange?: string;
+
+  @IsOptional()
+  @IsString()
+  withPreviousCounts?: string;
 
   @IsOptional()
   @Type(() => Number)

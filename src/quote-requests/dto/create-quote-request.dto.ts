@@ -34,6 +34,11 @@ export class CreateQuoteRequestDto {
   @IsString({ each: true })
   materialIds?: string[];
 
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  stoneIds?: string[]; // Đá khách muốn (đá chủ/đá tấm) khai lúc tạo yêu cầu — không bắt buộc
+
   @IsString()
   @IsNotEmpty({ message: 'Vui lòng chọn danh mục sản phẩm' })
   categoryId: string;
@@ -61,10 +66,6 @@ export class CreateQuoteRequestDto {
   @IsArray()
   @IsString({ each: true })
   imageUrls?: string[];
-
-  @IsOptional()
-  @IsNumber({}, { message: 'Giá báo chốt phải là dạng số' })
-  quotedPrice?: number;
 
   @IsOptional()
   @IsArray()

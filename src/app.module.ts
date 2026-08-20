@@ -7,6 +7,7 @@ import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
 import { DepartmentsModule } from './departments/departments.module';
 import { MaterialsModule } from './materials/materials.module';
+import { StonesModule } from './stones/stones.module';
 import { ProductCategoriesModule } from './product-categories/product-categories.module';
 import { CustomersModule } from './customers/customers.module';
 import { QuoteRequestsModule } from './quote-requests/quote-requests.module';
@@ -18,9 +19,10 @@ import { MailModule } from './mail/mail.module';
 import { LocationsModule } from './locations/locations.module';
 import { AuditLogModule } from './audit-log/audit-log.module';
 import { LoggerMiddleware } from './common/logger.middleware';
-import { APP_GUARD } from '@nestjs/core'; 
+import { APP_GUARD } from '@nestjs/core';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { CsrfGuard } from './auth/guards/csrf.guard';
+import { ExcelModule } from './excel/excel.module';
 @Module({
   imports: [
     ScheduleModule.forRoot(),
@@ -29,6 +31,7 @@ import { CsrfGuard } from './auth/guards/csrf.guard';
     UsersModule,
     DepartmentsModule,
     MaterialsModule,
+    StonesModule,
     ProductCategoriesModule,
     CustomersModule,
     QuoteRequestsModule,
@@ -40,20 +43,25 @@ import { CsrfGuard } from './auth/guards/csrf.guard';
     LocationsModule,
     AuditLogModule,
     ThrottlerModule.forRoot([
-          {                               
-            ttl: 60000, // 60,000ms = 1 minute                                   
-            limit: 60,                    
-          },                              
-        ]),   
+      {
+        ttl: 60000, // 60,000ms = 1 minute
+        limit: 60,
+      },
+    ]),
+    ExcelModule,
   ],
   controllers: [AppController],
-  providers: [AppService, {                                 
-          provide: APP_GUARD,             
-          useClass: ThrottlerGuard,       
-        }, {                             
-          provide: APP_GUARD,             
-          useClass: CsrfGuard,            
-        },],
+  providers: [
+    AppService,
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: CsrfGuard,
+    },
+  ],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {

@@ -1,4 +1,12 @@
-import { IsEnum, IsNotEmpty, IsNumber, IsOptional, IsString, IsArray, ValidateNested } from 'class-validator';
+import {
+  IsEnum,
+  IsNotEmpty,
+  IsNumber,
+  IsOptional,
+  IsString,
+  IsArray,
+  ValidateNested,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 import { QuoteOptionItemDto } from './quote-complete.dto';
 
@@ -24,14 +32,8 @@ export class UpdateQuoteStatusDto {
   @IsNumber()
   version?: number;
 
-  @IsOptional()
-  @IsNumber()
-  quotedPrice?: number;
-
-  @IsOptional()
-  @IsNumber()
-  vat?: number;
-
+  // Toàn bộ dữ liệu báo giá (vat/quotedPrice/materials/stones) nằm trong từng phần tử options[] —
+  // không còn field rời cấp ngoài (QuoteRequest không lưu cụm này nữa).
   @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })
