@@ -57,6 +57,12 @@ export class FilterQuoteRequestDto {
   @IsString()
   withPreviousCounts?: string;
 
+  // ADMIN bật để xem lại các yêu cầu PENDING/PROCESSING đang bị ẩn do người tạo/xử lý bị khóa
+  // tài khoản (isActive=false) — role khác gửi cờ này cũng bị bỏ qua, chỉ ADMIN mới có tác dụng.
+  @IsOptional()
+  @IsString()
+  includeLocked?: string;
+
   @IsOptional()
   @Type(() => Number)
   @IsInt()

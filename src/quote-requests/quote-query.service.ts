@@ -25,7 +25,7 @@ export class QuoteQueryService {
   clearCache() {
     this.listCache.clear();
   }
-
+  //Xây dựng câu truy vấn filter yêu cầu dựa trên trạng thái, danh mục, chất liệu , từ khóa , tìm kiếm, thời gian
   private buildWhereClause(filterDto: FilterQuoteRequestDto, _user: User) {
     const {
       status,
@@ -38,6 +38,7 @@ export class QuoteQueryService {
       startDate,
       endDate,
       timeRange,
+      includeLocked,
     } = filterDto;
 
     const andConditions: any[] = [];
@@ -211,6 +212,24 @@ export class QuoteQueryService {
       }
     }
 
+    // Ẩn đơn PENDING/PROCESSING mà người tạo (Sale) hoặc người xử lý (Order) đã bị khóa tài khoản
+    // (isActive=false) — không ai nên tiếp tục làm việc trên đơn của nhân viên không còn hoạt động.
+    // Đơn đã có kết quả (QUOTED/CLOSED) không bị ảnh hưởng, vẫn là hồ sơ lịch sử bình thường.
+    // Chỉ ADMIN bật includeLocked=true mới thấy lại được — role khác gửi cờ này bị bỏ qua.
+    if (!(includeLocked === 'true' && _user?.role === Role.ADMIN)) {
+      andConditions.push({
+        OR: [
+          { status: { notIn: [QuoteStatus.PENDING, QuoteStatus.PROCESSING] } },
+          {
+            AND: [
+              { requester: { isActive: true } },
+              { OR: [{ assigneeId: null }, { assignee: { isActive: true } }] },
+            ],
+          },
+        ],
+      });
+    }
+
     return andConditions.length > 0 ? { AND: andConditions } : {};
   }
 
@@ -351,6 +370,7 @@ export class QuoteQueryService {
 
     const optionSummarySelect = {
       id: true,
+      optionName: true,
       quotedPrice: true,
       vat: true,
       quotedDate: true,
@@ -372,6 +392,7 @@ export class QuoteQueryService {
         select: {
           stoneId: true,
           quantity: true,
+          unitPriceAtQuote: true,
           stone: { select: { id: true, name: true, stoneType: true } },
         },
       },
@@ -413,7 +434,6 @@ export class QuoteQueryService {
           images: {
             select: { id: true, imageUrl: true },
             orderBy: { id: 'asc' },
-            take: 1,
           },
           ...(isLite
             ? {

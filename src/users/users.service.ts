@@ -1,6 +1,10 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { Role } from '@prisma/client';
+import { Prisma, Role } from '@prisma/client';
 import { AuditLogService } from '../audit-log/audit-log.service';
 
 const USER_BASE_FIELDS = {
@@ -110,10 +114,17 @@ export class UsersService {
   async rejectUser(id: string, actorId: string, actorRole: Role) {
     const user = await this.prisma.user.findUnique({
       where: { id },
-      select: { id: true },
+      select: { id: true, isApproved: true },
     });
     if (!user) {
       throw new NotFoundException('Không tìm thấy người dùng');
+    }
+    // Chỉ xóa cứng được tài khoản CHƯA duyệt (chưa thể có quote/chat liên kết) — tài khoản đã
+    // duyệt có thể đã có dữ liệu nghiệp vụ, xóa cứng sẽ vỡ FK hoặc mất lịch sử. Khóa qua isActive.
+    if (user.isApproved) {
+      throw new BadRequestException(
+        'Tài khoản đã được duyệt — chỉ có thể khóa (isActive), không thể xóa cứng',
+      );
     }
 
     await this.auditLog.logAction(
@@ -123,7 +134,19 @@ export class UsersService {
       'User',
       id,
     );
-    await this.prisma.user.delete({ where: { id } });
+    try {
+      await this.prisma.user.delete({ where: { id } });
+    } catch (err) {
+      if (
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        (err.code === 'P2003' || err.code === 'P2014')
+      ) {
+        throw new BadRequestException(
+          'Không thể xóa — tài khoản đã có dữ liệu liên kết (yêu cầu báo giá, tin nhắn...)',
+        );
+      }
+      throw err;
+    }
     return { message: 'Đã từ chối và xóa tài khoản thành công' };
   }
 }
