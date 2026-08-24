@@ -3,31 +3,66 @@ import { BadRequestException } from '@nestjs/common';
 import { PricingConfigService } from './pricing-config.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { MetalPricesService } from '../metal-prices/metal-prices.service';
+import { MaterialsService } from '../materials/materials.service';
+import { PricingFormulasService } from '../pricing-formulas/pricing-formulas.service';
 
 describe('PricingConfigService.calculateMulti', () => {
   let service: PricingConfigService;
   let prisma: {
-    pricingConfig: { findUnique: jest.Mock };
     stone: { findMany: jest.Mock };
+    pricingFormula: { findUniqueOrThrow: jest.Mock };
   };
   let metalPricesService: { getLatestAsync: jest.Mock };
+  let materialsService: { findAll: jest.Mock };
+  let pricingFormulasService: { getDefault: jest.Mock };
 
-  const CONFIG_RECORD = {
-    id: 'singleton',
-    goldRatios: [
-      { key: 'GOLD_10K', standard: 41.7, applied: 0.42, label: '10K' },
-      { key: 'GOLD_14K', standard: 58.5, applied: 0.585, label: '14K' },
-    ],
-    profitMargins: [{ maxCost: 999999999999, divisor: 0.8, margin: '20%' }],
-    silverMultipliers: [3],
-    defaultVatRate: 10,
-    updatedAt: new Date(),
+  // 1 công thức bậc lợi nhuận duy nhất — Vàng 10K/14K dùng chung (giữ đúng kết quả tính đã
+  // verify trước đây: đơn tier, divisor 0.8, margin 20%)
+  const MARGIN_FORMULA = {
+    id: 'pfm-margin',
+    name: 'Bậc lợi nhuận theo chi phí',
+    formulaType: 'MARGIN_TIERS',
+    config: { tiers: [{ maxCost: 999999999999, divisor: 0.8, margin: '20%' }] },
+    isDefault: true,
   };
+
+  const MULTIPLIER_FORMULA = {
+    id: 'pfm-silver',
+    name: 'Hệ số nhân Bạc',
+    formulaType: 'MULTIPLIER',
+    config: { multipliers: [3] },
+    isDefault: false,
+  };
+
+  // priceRatioPct dạng phân số (<=1) đi thẳng qua normalizeAppliedRatio không đổi — tương đương
+  // 10K=42%, 14K=58.5% như goldRatios cũ, giữ nguyên kết quả tính đã verify ở các test dưới.
+  const MATERIALS = [
+    {
+      id: 'm1',
+      name: 'Vàng 10K',
+      priceRatioPct: 0.42,
+      pricingFormula: MARGIN_FORMULA,
+    },
+    {
+      id: 'm2',
+      name: 'Vàng 14K',
+      priceRatioPct: 0.585,
+      pricingFormula: MARGIN_FORMULA,
+    },
+    {
+      id: 'm3',
+      name: 'Bạc 925',
+      priceRatioPct: 1,
+      pricingFormula: MULTIPLIER_FORMULA,
+    },
+  ];
 
   beforeEach(async () => {
     prisma = {
-      pricingConfig: { findUnique: jest.fn().mockResolvedValue(CONFIG_RECORD) },
       stone: { findMany: jest.fn() },
+      pricingFormula: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue(MARGIN_FORMULA),
+      },
     };
     metalPricesService = {
       getLatestAsync: jest.fn().mockResolvedValue({
@@ -36,12 +71,20 @@ describe('PricingConfigService.calculateMulti', () => {
         platinumVnd: 0,
       }),
     };
+    materialsService = {
+      findAll: jest.fn().mockResolvedValue(MATERIALS),
+    };
+    pricingFormulasService = {
+      getDefault: jest.fn().mockResolvedValue(MARGIN_FORMULA),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         PricingConfigService,
         { provide: PrismaService, useValue: prisma },
         { provide: MetalPricesService, useValue: metalPricesService },
+        { provide: MaterialsService, useValue: materialsService },
+        { provide: PricingFormulasService, useValue: pricingFormulasService },
       ],
     }).compile();
 

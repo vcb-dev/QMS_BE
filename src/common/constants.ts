@@ -26,8 +26,9 @@ export const APP_CONSTANTS = {
   COOKIE_SECURE: process.env['COOKIE_SECURE'] === 'true',
   THROTTLE_TTL: requiredNumberEnv('LOGIN_THROTTLE_TTL'),
   THROTTLE_LIMIT: requiredNumberEnv('LOGIN_THROTTLE_LIMIT'),
-  VNAPPMONEY_TOKEN_URL: requiredEnv('VNAPPMONEY_API_KEY'),
-  VNAPPMONEY_GOLD_URL: requiredEnv('VNAPPMONEY_GOLD_URL'),
+  VNAPPMOB_API_KEY: requiredEnv('VNAPPMOB_API_KEY'),
+  VNAPPMOB_GOLD_URL: requiredEnv('VNAPPMOB_GOLD_URL'),
+  VANG_TODAY_URL: requiredEnv('VANG_TODAY_URL'),
   REFRESH_INTERVAL_MS: 24 * 60 * 60 * 1000, // Tự động gọi lại API ngoài 1 ngày/lần
   TOKEN_TTL_MS: 13 * 24 * 60 * 60 * 1000, // Token vnappmob sống 15 ngày, an toàn refresh sớm hơn
 

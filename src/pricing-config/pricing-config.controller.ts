@@ -1,13 +1,10 @@
-import { Controller, Get, Put, Post, Body, UseGuards } from '@nestjs/common';
+import { Controller, Post, Get, Body, UseGuards } from '@nestjs/common';
 import { PricingConfigService } from './pricing-config.service';
 import {
-  PricingConfigDto,
   CalculateMultiInput,
   CalculatePriceInput,
 } from './dto/pricing-config.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { RolesGuard } from '../auth/guards/roles.guard';
-import { Roles } from '../auth/decorators/roles.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -22,37 +19,28 @@ export class PricingConfigController {
     private readonly prisma: PrismaService,
   ) {}
 
-  // Sale không tự nhập tiền công — luôn lấy từ ProductCategory.laborCost theo danh mục sản phẩm đã chọn
-  private async resolveSaleLaborCost(categoryId?: string): Promise<number> {
-    if (!categoryId) return 0;
+  // Sale không tự nhập tiền công/VAT — luôn lấy theo danh mục sản phẩm đã chọn
+  // (ProductCategory.laborCost/vatRate), Order vẫn nhập tay tự do mỗi lần báo giá.
+  private async resolveSaleCategoryDefaults(
+    categoryId?: string,
+  ): Promise<{ laborCost: number; vatRate: number }> {
+    if (!categoryId) return { laborCost: 0, vatRate: 10 };
     const category = await this.prisma.productCategory.findUnique({
       where: { id: categoryId },
-      select: { laborCost: true },
+      select: { laborCost: true, vatRate: true },
     });
-    return category?.laborCost ? Number(category.laborCost) : 0;
-  }
-
-  /** Bảng tỉ lệ vàng & bảng margin gốc — Sale tuyệt đối không xem theo spec, chỉ ORDER/ADMIN */
-  @UseGuards(RolesGuard)
-  @Roles(Role.ORDER, Role.ADMIN)
-  @Get()
-  getConfig() {
-    return this.pricingConfigService.getConfig();
-  }
-
-  /** Sửa tỉ lệ/hệ số ảnh hưởng toàn hệ thống — chỉ ORDER/ADMIN */
-  @UseGuards(RolesGuard)
-  @Roles(Role.ORDER, Role.ADMIN)
-  @Put()
-  updateConfig(@Body() dto: Partial<PricingConfigDto>) {
-    return this.pricingConfigService.updateConfig(dto);
+    return {
+      laborCost: category?.laborCost ? Number(category.laborCost) : 0,
+      vatRate: category?.vatRate != null ? Number(category.vatRate) : 10,
+    };
   }
 
   /** Danh sách hệ số nhân Bạc để chọn lúc báo giá — Sale cũng được xem (không lộ tỷ lệ vàng/bảng lợi nhuận) */
   @Get('silver-multipliers')
   async getSilverMultipliers() {
-    const config = await this.pricingConfigService.getConfig();
-    return { silverMultipliers: config.silverMultipliers };
+    const silverMultipliers =
+      await this.pricingConfigService.getSilverMultipliers();
+    return { silverMultipliers };
   }
 
   @Post('calculate')
@@ -68,13 +56,16 @@ export class PricingConfigController {
       'PricingConfig',
     );
 
-    // Sale không được tự nhập tiền công/mức VAT nữa. Tiền công lấy theo danh mục sản phẩm đã chọn
-    // (ProductCategory.laborCost), VAT ép về mức chuẩn ORDER/ADMIN cấu hình.
+    // Sale không được tự nhập tiền công/mức VAT nữa. Cả hai lấy theo danh mục sản phẩm đã chọn.
     // Sale chỉ được chọn CÓ cộng VAT hay KHÔNG (dto.includeVat), không được tự set mức %.
     if (actorRole === Role.SALE) {
-      const config = await this.pricingConfigService.getConfig();
-      dto.laborCost = await this.resolveSaleLaborCost(dto.categoryId);
-      dto.vatRate = dto.includeVat === false ? 0 : config.defaultVatRate;
+      const { laborCost, vatRate } = await this.resolveSaleCategoryDefaults(
+        dto.categoryId,
+      );
+      dto.laborCost = laborCost;
+      dto.vatRate = dto.includeVat === false ? 0 : vatRate;
+      // Hệ số nhân Bạc chỉ ORDER/ADMIN được chọn — Sale luôn dùng mặc định
+      dto.silverMultiplier = undefined;
     }
 
     const result = await this.pricingConfigService.calculate5StepPrice(dto);
@@ -104,9 +95,11 @@ export class PricingConfigController {
     );
 
     if (actorRole === Role.SALE) {
-      const config = await this.pricingConfigService.getConfig();
-      dto.laborCost = await this.resolveSaleLaborCost(dto.categoryId);
-      dto.vatRate = dto.includeVat === false ? 0 : config.defaultVatRate;
+      const { laborCost, vatRate } = await this.resolveSaleCategoryDefaults(
+        dto.categoryId,
+      );
+      dto.laborCost = laborCost;
+      dto.vatRate = dto.includeVat === false ? 0 : vatRate;
     }
 
     const result = await this.pricingConfigService.calculateMulti(dto);
@@ -131,12 +124,16 @@ export class PricingConfigController {
       'PricingConfig',
     );
 
-    // Sale không tự nhập tiền công/mức VAT. Tiền công lấy theo danh mục sản phẩm đã chọn
-    // (ProductCategory.laborCost), VAT ép về mức chuẩn cấu hình. Sale chỉ chọn CÓ/KHÔNG cộng VAT (dto.includeVat do Sale gửi lên).
+    // Sale không tự nhập tiền công/mức VAT. Cả hai lấy theo danh mục sản phẩm đã chọn.
+    // Sale chỉ chọn CÓ/KHÔNG cộng VAT (dto.includeVat do Sale gửi lên).
     if (actorRole === Role.SALE) {
-      const config = await this.pricingConfigService.getConfig();
-      dto.laborCost = await this.resolveSaleLaborCost(dto.categoryId);
-      dto.vatRate = config.defaultVatRate;
+      const { laborCost, vatRate } = await this.resolveSaleCategoryDefaults(
+        dto.categoryId,
+      );
+      dto.laborCost = laborCost;
+      dto.vatRate = vatRate;
+      // Hệ số nhân Bạc chỉ ORDER/ADMIN được chọn — Sale luôn dùng mặc định
+      dto.silverMultiplier = undefined;
     }
 
     const options = await this.pricingConfigService.generateOptions(dto);

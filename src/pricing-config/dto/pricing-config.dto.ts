@@ -11,29 +11,6 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
-export class GoldRatio {
-  key: string;
-  standard: number;
-  applied: number;
-  label: string;
-}
-
-export class ProfitMargin {
-  maxCost: number;
-  divisor: number;
-  margin: string;
-}
-
-export class PricingConfigDto {
-  goldRatios: GoldRatio[];
-  profitMargins: ProfitMargin[];
-  // Danh sách hệ số nhân Bạc để chọn lúc tính giá (VD: [2.5, 3])
-  silverMultipliers: number[];
-  // VAT chuẩn — chỉ ORDER/ADMIN cấu hình, Sale không nhập tay được nữa (chỉ chọn có/không cộng)
-  defaultVatRate: number;
-  updatedAt?: string;
-}
-
 export class CalculatePriceInput {
   @IsNotEmpty({
     message: 'Vui lòng truyền tên hoặc mã chất liệu (materialNameOrKey)',

@@ -65,6 +65,9 @@ model User {
   assignedQuotes  QuoteRequest[] @relation("Assignee")
   chatMessages    QuoteChatMessage[]
   chatReads       QuoteChatRead[]
+  metalPriceUpdates     MetalPrice[]
+  pricingFormulaUpdates PricingFormula[]
+  auditLogs             AuditLog[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -90,11 +93,50 @@ model Department {
 // ==========================
 
 model Material {
-  id           String                @id @default(cuid())
-  name         String                @unique
-  quoteOptions QuoteOptionMaterial[]
+  id            String                @id @default(cuid())
+  name          String                @unique
+  // % dùng nhân với giá kim loại gốc lúc tính giá (vàng theo tuổi: vd 18K=75; Bạc/Bạch kim luôn 100
+  // vì giá gốc của 2 kim loại này đã là giá bán thẳng, không pha theo tuổi như vàng)
+  priceRatioPct Decimal               @default(100) @map("price_ratio_pct") @db.Decimal(6, 2)
+  // Công thức tính lãi mà chất liệu này dùng — nhiều chất liệu có thể trỏ chung 1 công thức
+  // (vd 4 loại vàng + bạch kim dùng chung bậc lợi nhuận theo chi phí, bạc dùng hệ số nhân riêng).
+  // Thêm chất liệu/kim loại mới chỉ cần trỏ tới công thức có sẵn hoặc tạo công thức mới — không sửa code.
+  pricingFormulaId String            @map("pricing_formula_id")
+  pricingFormula   PricingFormula    @relation(fields: [pricingFormulaId], references: [id])
+  quoteOptions     QuoteOptionMaterial[]
 
+  @@index([pricingFormulaId])
   @@map("materials")
+}
+
+// ==========================
+// 3b. PRICING FORMULAS (công thức tính lãi — gắn theo NHÓM, nhiều chất liệu dùng chung 1 công thức)
+// ==========================
+
+// MARGIN_TIERS: tra bậc lợi nhuận theo mốc chi phí, chia hệ số divisor (kiểu Vàng/Bạch kim hiện tại)
+// MULTIPLIER: nhân thẳng 1 hệ số cố định lên chi phí đã có VAT (kiểu Bạc hiện tại)
+enum PricingFormulaType {
+  MARGIN_TIERS
+  MULTIPLIER
+}
+
+model PricingFormula {
+  id          String             @id @default(cuid())
+  name        String             @unique
+  formulaType PricingFormulaType @map("formula_type")
+  // MARGIN_TIERS: { tiers: [{ maxCost, divisor, margin }] } — MULTIPLIER: { multipliers: number[] }
+  config      Json
+  // Công thức mặc định dùng để tính lãi phần ĐÁ khi báo giá (đá tách tính riêng khỏi kim loại,
+  // luôn cần 1 bậc lợi nhuận theo chi phí bất kể chất liệu kim loại đi kèm dùng công thức gì)
+  isDefault   Boolean            @default(false) @map("is_default")
+  materials   Material[]
+  // Người sửa lần gần nhất — FK thật tới User (trước không có), NULL nếu tài khoản đã bị xóa
+  updatedBy   User?              @relation(fields: [updatedById], references: [id], onDelete: SetNull)
+  updatedById String?            @map("updated_by_id")
+  updatedAt   DateTime           @updatedAt @map("updated_at")
+
+  @@index([updatedById])
+  @@map("pricing_formulas")
 }
 
 // ==========================
@@ -105,6 +147,10 @@ model ProductCategory {
   id            String         @id @default(cuid())
   name          String         @unique
   laborCost     Decimal?       @map("labor_cost") @db.Decimal(14, 2) // Tiền công chuẩn theo danh mục sản phẩm — Sale dùng giá này, Order vẫn nhập tay
+  // VAT chuẩn theo danh mục sản phẩm — thay cho PricingConfig.defaultVatRate (1 giá trị global
+  // duy nhất cho cả hệ thống) để mỗi danh mục có thể có mức VAT khác nhau, giống labor_cost.
+  // Sale không nhập tay được (chỉ chọn có/không cộng), Order vẫn sửa tự do mỗi lần báo giá.
+  vatRate       Decimal?       @map("vat_rate") @db.Decimal(5, 2)
   quoteRequests QuoteRequest[]
 
   @@map("product_categories")
@@ -115,24 +161,24 @@ model ProductCategory {
 // ==========================
 
 model Province {
-  id        String     @id @default(cuid())
-  name      String     @unique
-  code      String?    @unique
-  wards     Ward[]
-  customers Customer[]
-  createdAt DateTime   @default(now()) @map("created_at")
+  id                String     @id @default(cuid())
+  name              String     @unique
+  code              String?    @unique
+  wards             Ward[]
+  customers         Customer[]
+  createdAt         DateTime   @default(now()) @map("created_at")
 
   @@map("provinces")
 }
 
 model Ward {
-  id           String   @id @default(cuid())
+  id           String     @id @default(cuid())
   name         String
   code         String?
-  districtName String?  @map("district_name")
-  provinceId   String   @map("province_id")
-  province     Province @relation(fields: [provinceId], references: [id], onDelete: Cascade)
-  createdAt    DateTime @default(now()) @map("created_at")
+  districtName String?    @map("district_name")
+  provinceId   String     @map("province_id")
+  province     Province   @relation(fields: [provinceId], references: [id], onDelete: Cascade)
+  createdAt    DateTime   @default(now()) @map("created_at")
 
   @@index([provinceId])
   @@map("wards")
@@ -147,6 +193,7 @@ model Customer {
   name        String
   phone       String?
   address     String?   @db.Text
+  // CŨ — giữ song song để không mất dữ liệu, sẽ bỏ sau khi backfill xong provinceId/wardId
   province    String?
   provinceRel Province? @relation(fields: [province], references: [name], onDelete: SetNull)
   ward        String?
@@ -242,38 +289,38 @@ model QuoteRequestImage {
 }
 
 // ==========================
-// 8. METAL PRICES (Lưu giá vàng/bạc/bạch kim vào DB)
+// 8. METAL PRICES (Lịch sử các lần cập nhật giá vàng/bạc/bạch kim — append-only,
+// không sửa lên bản ghi cũ. Mỗi lần Order/Admin cập nhật giá tạo 1 dòng mới.)
 // ==========================
 
 model MetalPrice {
-  id          String   @id @default("singleton")
-  gold24kVnd  Decimal  @map("gold_24k_vnd") @db.Decimal(14, 2)
-  silverVnd   Decimal  @map("silver_vnd") @db.Decimal(14, 2)
-  platinumVnd Decimal  @map("platinum_vnd") @db.Decimal(14, 2)
-  source      String?
-  updatedAt   DateTime @updatedAt @map("updated_at")
+  id                 String   @id @default(cuid())
+  gold24kVnd         Decimal  @map("gold_24k_vnd") @db.Decimal(14, 2)
+  silverVnd          Decimal  @map("silver_vnd") @db.Decimal(14, 2)
+  platinumVnd        Decimal  @map("platinum_vnd") @db.Decimal(14, 2)
+  // % tăng/giảm của từng kim loại so với lần cập nhật gần nhất trước đó — null nếu là dòng đầu tiên
+  goldChangePct      Decimal? @map("gold_change_pct") @db.Decimal(6, 2)
+  silverChangePct    Decimal? @map("silver_change_pct") @db.Decimal(6, 2)
+  platinumChangePct  Decimal? @map("platinum_change_pct") @db.Decimal(6, 2)
+  source             String?
+  // true = giá đang được dùng để tính giá hiện tại — dòng mới nhất set true, các dòng cũ tự set false
+  isActive           Boolean  @default(true) @map("is_active")
+  // FK thật tới User — lấy tên qua quan hệ thay vì lưu trùng; NULL nếu tài khoản đã bị xóa (giữ lịch sử giá)
+  updatedBy          User?    @relation(fields: [updatedById], references: [id], onDelete: SetNull)
+  updatedById        String?  @map("updated_by_id")
+  createdAt          DateTime @default(now()) @map("created_at")
 
+  @@index([isActive])
+  @@index([createdAt])
+  @@index([updatedById])
   @@map("metal_prices")
 }
 
 // ==========================
-// 9. PRICING CONFIG (Cấu hình tham số lõi tính giá 5 bước)
+// PricingConfig (bảng cấu hình global cũ) đã bị xóa hoàn toàn — goldRatios chuyển sang
+// Material.priceRatioPct, profitMargins/silverMultipliers chuyển sang PricingFormula,
+// defaultVatRate chuyển sang ProductCategory.vatRate. Không còn gì đáng giữ lại ở bảng này.
 // ==========================
-
-model PricingConfig {
-  id                String   @id @default("singleton")
-  goldRatios        Json     @map("gold_ratios")
-  profitMargins     Json     @map("profit_margins")
-  // Danh sách hệ số nhân Bạc để chọn lúc tính giá (VD: [2.5, 3]) — không còn 1 giá trị cố định
-  silverMultipliers Json     @default("[2.5, 3]") @map("silver_multipliers")
-  // VAT chuẩn — chỉ ORDER/ADMIN cấu hình, Sale không nhập tay được nữa (chỉ chọn có/không cộng)
-  // Tiền công không còn nằm ở đây — Sale dùng tiền công theo danh mục sản phẩm (ProductCategory.laborCost),
-  // Order vẫn nhập tay tự do mỗi lần báo giá.
-  defaultVatRate    Decimal  @default(10) @map("default_vat_rate") @db.Decimal(5, 2)
-  updatedAt         DateTime @updatedAt @map("updated_at")
-
-  @@map("pricing_config")
-}
 
 // ==========================
 // 10. QUOTE OPTIONS (Báo giá nhiều phương án song song)
@@ -356,9 +403,10 @@ model QuoteOptionStone {
 // ==========================
 model AuditLog {
   id         String   @id @default(cuid())
+  // FK thật tới User — lấy tên qua quan hệ thay vì lưu trùng; NULL nếu tài khoản đã bị xóa (giữ lịch sử log)
+  actor      User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
   actorId    String?  @map("actor_id")
-  actorName  String   @map("actor_name")
-  actorRole  Role     @map("actor_role")
+  actorRole  Role     @map("actor_role") // snapshot role LÚC hành động — user đổi role sau đó không ảnh hưởng log cũ
   action     String // vd: ACCEPT_QUOTE, CREATE_QUOTE, LOGIN, APPROVE_USER...
   entityType String?  @map("entity_type") // vd: QuoteRequest, User, Customer
   entityId   String?  @map("entity_id")
@@ -366,6 +414,7 @@ model AuditLog {
 
   @@index([actorRole, action])
   @@index([createdAt])
+  @@index([actorId])
   @@map("audit_logs")
 }
 

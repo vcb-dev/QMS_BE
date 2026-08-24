@@ -1,10 +1,10 @@
 import { Module } from '@nestjs/common';
 import { VnGoldPriceService } from './vn-gold-price.service';
 import { VnGoldPriceController } from './vn-gold-price.controller';
-import { PricingConfigModule } from '../pricing-config/pricing-config.module';
+import { MaterialsModule } from '../materials/materials.module';
 
 @Module({
-  imports: [PricingConfigModule],
+  imports: [MaterialsModule],
   controllers: [VnGoldPriceController],
   providers: [VnGoldPriceService],
 })

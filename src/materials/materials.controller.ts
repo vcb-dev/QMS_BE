@@ -1,4 +1,12 @@
-import { Controller, Get, Post, Body, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Patch,
+  Param,
+  Body,
+  UseGuards,
+} from '@nestjs/common';
 import { MaterialsService } from './materials.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -17,7 +25,28 @@ export class MaterialsController {
 
   @Roles(Role.ADMIN)
   @Post()
-  async create(@Body('name') name: string) {
-    return this.materialsService.create(name);
+  async create(
+    @Body('name') name: string,
+    @Body('pricingFormulaId') pricingFormulaId: string,
+    @Body('priceRatioPct') priceRatioPct?: number,
+  ) {
+    return this.materialsService.create(name, pricingFormulaId, priceRatioPct);
+  }
+
+  // Sửa % tính giá / công thức tính lãi của 1 chất liệu — chỉ ORDER/ADMIN, thay cho bảng tỷ lệ
+  // vàng + bảng lợi nhuận cũ ở pricing-config
+  @Roles(Role.ORDER, Role.ADMIN)
+  @Patch(':id')
+  async update(
+    @Param('id') id: string,
+    @Body('name') name?: string,
+    @Body('priceRatioPct') priceRatioPct?: number,
+    @Body('pricingFormulaId') pricingFormulaId?: string,
+  ) {
+    return this.materialsService.update(id, {
+      name,
+      priceRatioPct,
+      pricingFormulaId,
+    });
   }
 }

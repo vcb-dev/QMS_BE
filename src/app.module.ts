@@ -7,6 +7,7 @@ import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
 import { DepartmentsModule } from './departments/departments.module';
 import { MaterialsModule } from './materials/materials.module';
+import { PricingFormulasModule } from './pricing-formulas/pricing-formulas.module';
 import { StonesModule } from './stones/stones.module';
 import { ProductCategoriesModule } from './product-categories/product-categories.module';
 import { CustomersModule } from './customers/customers.module';
@@ -33,6 +34,7 @@ import { RealtimeModule } from './realtime/realtime.module';
     UsersModule,
     DepartmentsModule,
     MaterialsModule,
+    PricingFormulasModule,
     StonesModule,
     ProductCategoriesModule,
     CustomersModule,

@@ -3,6 +3,13 @@ import { PrismaService } from '../prisma/prisma.service';
 import { MetalPrices } from './dto/metal-prices.dto';
 import { APP_CONSTANTS } from '../common/constants';
 
+// % biến động so với giá active trước đó — 0 nếu không đổi (có dữ liệu cũ để so), null nếu chưa từng có dữ liệu cũ
+function computeChangePct(next: number, prev: number): number | null {
+  if (!prev || prev <= 0) return null;
+  if (next === prev) return 0;
+  return Math.round(((next - prev) / prev) * 10000) / 100;
+}
+
 @Injectable()
 export class MetalPricesService implements OnModuleInit {
   private readonly logger = new Logger(MetalPricesService.name);
@@ -42,59 +49,116 @@ export class MetalPricesService implements OnModuleInit {
     return this.cached;
   }
 
-  async updatePrices(prices: Partial<MetalPrices>): Promise<MetalPrices> {
+  // Mỗi lần cập nhật giá tạo 1 DÒNG LỊCH SỬ MỚI — không sửa lên dòng cũ. Dòng mới set isActive=true,
+  // dòng đang active trước đó tự set isActive=false. % biến động tính riêng cho từng kim loại so
+  // với giá đang active ngay trước khi ghi dòng này (null nếu đây là lần đầu tiên có giá).
+  async updatePrices(
+    prices: Partial<
+      Pick<MetalPrices, 'gold24kVnd' | 'silverVnd' | 'platinumVnd'>
+    >,
+    updatedBy?: { id?: string },
+  ): Promise<MetalPrices> {
     const current = this.getLatest();
-    const updated: MetalPrices = {
-      ...current,
-      ...prices,
-      updatedAt: new Date().toISOString(),
-      source: 'cập nhật thủ công',
-    };
+    const hasPreviousRecord = !!this.cached;
+
+    const nextGold = prices.gold24kVnd ?? current.gold24kVnd;
+    const nextSilver = prices.silverVnd ?? current.silverVnd;
+    const nextPlatinum = prices.platinumVnd ?? current.platinumVnd;
+
+    const goldChangePct = hasPreviousRecord
+      ? computeChangePct(nextGold, current.gold24kVnd)
+      : null;
+    const silverChangePct = hasPreviousRecord
+      ? computeChangePct(nextSilver, current.silverVnd)
+      : null;
+    const platinumChangePct = hasPreviousRecord
+      ? computeChangePct(nextPlatinum, current.platinumVnd)
+      : null;
+
+    const [, created] = await this.prisma.$transaction([
+      this.prisma.metalPrice.updateMany({
+        where: { isActive: true },
+        data: { isActive: false },
+      }),
+      this.prisma.metalPrice.create({
+        data: {
+          gold24kVnd: nextGold,
+          silverVnd: nextSilver,
+          platinumVnd: nextPlatinum,
+          goldChangePct,
+          silverChangePct,
+          platinumChangePct,
+          source: 'cập nhật thủ công',
+          isActive: true,
+          updatedById: updatedBy?.id,
+        },
+        include: { updatedBy: { select: { name: true } } },
+      }),
+    ]);
+
+    const updated = this.toDto(created);
     this.cached = updated;
     this.lastDbLoadAt = Date.now();
-    await this.saveToDb(updated);
-    return this.cached;
+    this.logger.log(
+      'Đã lưu thành công giá vàng/bạc/bạch kim vào Database (PostgreSQL) — tạo dòng lịch sử mới',
+    );
+    return updated;
   }
 
-  private async saveToDb(prices: MetalPrices) {
-    try {
-      await this.prisma.metalPrice.upsert({
-        where: { id: 'singleton' },
-        create: {
-          id: 'singleton',
-          gold24kVnd: prices.gold24kVnd,
-          silverVnd: prices.silverVnd,
-          platinumVnd: prices.platinumVnd ?? 0,
-          source: prices.source,
-        },
-        update: {
-          gold24kVnd: prices.gold24kVnd,
-          silverVnd: prices.silverVnd,
-          platinumVnd: prices.platinumVnd ?? 0,
-          source: prices.source,
-        },
-      });
-      this.logger.log(
-        'Đã lưu thành công giá vàng và bạc vào Database (PostgreSQL)',
-      );
-    } catch (err) {
-      this.logger.error('Lỗi khi lưu giá vàng/bạc vào DB', err);
-    }
+  // Lịch sử các lần đổi giá, mới nhất trước — biết được thứ tự biến động giá qua thời gian
+  async getHistory(limit = 50): Promise<MetalPrices[]> {
+    const records = await this.prisma.metalPrice.findMany({
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+      include: { updatedBy: { select: { name: true } } },
+    });
+    return records.map((r) => this.toDto(r));
+  }
+
+  private toDto(record: {
+    id: string;
+    gold24kVnd: unknown;
+    silverVnd: unknown;
+    platinumVnd: unknown;
+    goldChangePct: unknown;
+    silverChangePct: unknown;
+    platinumChangePct: unknown;
+    isActive: boolean;
+    updatedById: string | null;
+    updatedBy: { name: string } | null;
+    createdAt: Date;
+    source: string | null;
+  }): MetalPrices {
+    return {
+      id: record.id,
+      gold24kVnd: Number(record.gold24kVnd),
+      silverVnd: Number(record.silverVnd),
+      platinumVnd: Number(record.platinumVnd),
+      goldChangePct:
+        record.goldChangePct !== null ? Number(record.goldChangePct) : null,
+      silverChangePct:
+        record.silverChangePct !== null ? Number(record.silverChangePct) : null,
+      platinumChangePct:
+        record.platinumChangePct !== null
+          ? Number(record.platinumChangePct)
+          : null,
+      isActive: record.isActive,
+      updatedById: record.updatedById,
+      updatedByName: record.updatedBy?.name ?? null,
+      updatedAt: record.createdAt.toISOString(),
+      source: record.source || 'Database PostgreSQL',
+    };
   }
 
   private async loadFromDb(): Promise<MetalPrices | null> {
     try {
-      const record = await this.prisma.metalPrice.findUnique({
-        where: { id: 'singleton' },
+      const record = await this.prisma.metalPrice.findFirst({
+        where: { isActive: true },
+        orderBy: { createdAt: 'desc' },
+        include: { updatedBy: { select: { name: true } } },
       });
       if (record) {
-        this.cached = {
-          gold24kVnd: Number(record.gold24kVnd),
-          silverVnd: Number(record.silverVnd),
-          platinumVnd: Number(record.platinumVnd),
-          updatedAt: record.updatedAt.toISOString(),
-          source: record.source || 'Database PostgreSQL',
-        };
+        this.cached = this.toDto(record);
         this.lastDbLoadAt = Date.now();
         return this.cached;
       }

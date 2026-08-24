@@ -77,59 +77,193 @@ async function main() {
     });
   }
 
-  // 3. TẠO CHẤT LIỆU MẪU (Materials)
+  // 2b. TẠO CÔNG THỨC TÍNH LÃI (PricingFormula) — gắn theo NHÓM, nhiều chất liệu dùng chung 1
+  // công thức. Thêm chất liệu/kim loại mới sau này chỉ cần trỏ tới công thức có sẵn hoặc tạo
+  // công thức mới qua UI, không cần sửa code tính giá.
+  console.log('📌 2b. Tạo công thức tính lãi...');
+  const marginTiersFormula = await prisma.pricingFormula.upsert({
+    where: { name: 'Bậc lợi nhuận theo chi phí' },
+    update: {},
+    create: {
+      name: 'Bậc lợi nhuận theo chi phí',
+      formulaType: 'MARGIN_TIERS',
+      isDefault: true, // Dùng làm công thức mặc định tính lãi phần Đá
+      config: {
+        tiers: [
+          { maxCost: 2000000, divisor: 0.55, margin: '45%' },
+          { maxCost: 5000000, divisor: 0.6, margin: '40%' },
+          { maxCost: 10000000, divisor: 0.65, margin: '35%' },
+          { maxCost: 20000000, divisor: 0.7, margin: '30%' },
+          { maxCost: 50000000, divisor: 0.75, margin: '25%' },
+          { maxCost: 999999999999, divisor: 0.8, margin: '20%' },
+        ],
+      },
+    },
+  });
+
+  const silverMultiplierFormula = await prisma.pricingFormula.upsert({
+    where: { name: 'Hệ số nhân Bạc' },
+    update: {},
+    create: {
+      name: 'Hệ số nhân Bạc',
+      formulaType: 'MULTIPLIER',
+      isDefault: false,
+      config: { multipliers: [2.5, 3] },
+    },
+  });
+
+  // 3. TẠO CHẤT LIỆU MẪU (Materials) — % tính giá (priceRatioPct) và công thức tính lãi lưu
+  // thẳng trên từng chất liệu: Vàng theo tuổi = % thực áp dụng, Bạc/Bạch kim = 100%
   console.log('📌 3. Tạo danh mục chất liệu kim loại...');
   const materials = [
-    'Vàng 10K',
-    'Vàng 14K',
-    'Vàng 18K',
-    'Vàng 24K (9999)',
-    'Bạc 925',
-    'Bạch Kim (Pt950)',
+    {
+      name: 'Vàng 10K',
+      priceRatioPct: 40,
+      pricingFormulaId: marginTiersFormula.id,
+    },
+    {
+      name: 'Vàng 14K',
+      priceRatioPct: 58,
+      pricingFormulaId: marginTiersFormula.id,
+    },
+    {
+      name: 'Vàng 18K',
+      priceRatioPct: 75,
+      pricingFormulaId: marginTiersFormula.id,
+    },
+    {
+      name: 'Vàng 24K (9999)',
+      priceRatioPct: 99.9,
+      pricingFormulaId: marginTiersFormula.id,
+    },
+    {
+      name: 'Bạc 925',
+      priceRatioPct: 100,
+      pricingFormulaId: silverMultiplierFormula.id,
+    },
+    {
+      name: 'Bạch Kim (Pt950)',
+      priceRatioPct: 100,
+      pricingFormulaId: marginTiersFormula.id,
+    },
   ];
 
-  for (const name of materials) {
+  for (const m of materials) {
     await prisma.material.upsert({
-      where: { name },
-      update: {},
-      create: { name },
+      where: { name: m.name },
+      update: {
+        priceRatioPct: m.priceRatioPct,
+        pricingFormulaId: m.pricingFormulaId,
+      },
+      create: m,
     });
   }
 
-  // 4. TẠO DANH MỤC SẢN PHẨM (Product Categories)
+  // 4. TẠO DANH MỤC SẢN PHẨM (Product Categories) — vatRate giờ nằm theo danh mục, thay cho
+  // PricingConfig.defaultVatRate cũ (1 giá trị global duy nhất cho cả hệ thống)
   console.log('📌 4. Tạo danh mục sản phẩm...');
   const categories = [
-    { name: 'Nhẫn Nữ', laborCost: 500000 },
-    { name: 'Nhẫn Nam', laborCost: 600000 },
-    { name: 'Dây Chuyền', laborCost: 700000 },
-    { name: 'Lắc Tay / Vòng Tay', laborCost: 650000 },
-    { name: 'Bông Tai', laborCost: 450000 },
-    { name: 'Mặt Dây Chuyền', laborCost: 500000 },
-    { name: 'Kiềng Cưới', laborCost: 1200000 },
+    { name: 'Nhẫn Nữ', laborCost: 500000, vatRate: 10 },
+    { name: 'Nhẫn Nam', laborCost: 600000, vatRate: 10 },
+    { name: 'Dây Chuyền', laborCost: 700000, vatRate: 10 },
+    { name: 'Lắc Tay / Vòng Tay', laborCost: 650000, vatRate: 10 },
+    { name: 'Bông Tai', laborCost: 450000, vatRate: 10 },
+    { name: 'Mặt Dây Chuyền', laborCost: 500000, vatRate: 10 },
+    { name: 'Kiềng Cưới', laborCost: 1200000, vatRate: 10 },
   ];
 
   for (const cat of categories) {
     await prisma.productCategory.upsert({
       where: { name: cat.name },
-      update: { laborCost: cat.laborCost },
-      create: { name: cat.name, laborCost: cat.laborCost },
+      update: { laborCost: cat.laborCost, vatRate: cat.vatRate },
+      create: {
+        name: cat.name,
+        laborCost: cat.laborCost,
+        vatRate: cat.vatRate,
+      },
     });
   }
 
   // 5. TẠO BẢNG GIÁ ĐÁ MẪU (Stones)
   console.log('📌 5. Tạo danh mục đá...');
   const stones = [
-    { stoneType: StoneType.MAIN, name: 'Moissanite Tròn 5.0mm (0.5ct)', cut: 'Round', size: '5.0mm', price: 450000 },
-    { stoneType: StoneType.MAIN, name: 'Moissanite Tròn 6.5mm (1.0ct)', cut: 'Round', size: '6.5mm', price: 950000 },
-    { stoneType: StoneType.MAIN, name: 'Moissanite Tròn 7.2mm (1.5ct)', cut: 'Round', size: '7.2mm', price: 1650000 },
-    { stoneType: StoneType.MAIN, name: 'Moissanite Tròn 8.0mm (2.0ct)', cut: 'Round', size: '8.0mm', price: 2500000 },
-    { stoneType: StoneType.MAIN, name: 'Đá CZ Tròn 5.0mm', cut: 'Round', size: '5.0mm', price: 50000 },
-    { stoneType: StoneType.MAIN, name: 'Đá CZ Tròn 6.5mm', cut: 'Round', size: '6.5mm', price: 80000 },
-    { stoneType: StoneType.SIDE, name: 'Đá tấm Moissanite 1.2mm', cut: 'Round', size: '1.2mm', price: 25000 },
-    { stoneType: StoneType.SIDE, name: 'Đá tấm Moissanite 1.5mm', cut: 'Round', size: '1.5mm', price: 35000 },
-    { stoneType: StoneType.SIDE, name: 'Đá tấm Moissanite 1.8mm', cut: 'Round', size: '1.8mm', price: 45000 },
-    { stoneType: StoneType.SIDE, name: 'Đá tấm CZ 1.2mm', cut: 'Round', size: '1.2mm', price: 5000 },
-    { stoneType: StoneType.SIDE, name: 'Đá tấm CZ 1.5mm', cut: 'Round', size: '1.5mm', price: 8000 },
+    {
+      stoneType: StoneType.MAIN,
+      name: 'Moissanite Tròn 5.0mm (0.5ct)',
+      cut: 'Round',
+      size: '5.0mm',
+      price: 450000,
+    },
+    {
+      stoneType: StoneType.MAIN,
+      name: 'Moissanite Tròn 6.5mm (1.0ct)',
+      cut: 'Round',
+      size: '6.5mm',
+      price: 950000,
+    },
+    {
+      stoneType: StoneType.MAIN,
+      name: 'Moissanite Tròn 7.2mm (1.5ct)',
+      cut: 'Round',
+      size: '7.2mm',
+      price: 1650000,
+    },
+    {
+      stoneType: StoneType.MAIN,
+      name: 'Moissanite Tròn 8.0mm (2.0ct)',
+      cut: 'Round',
+      size: '8.0mm',
+      price: 2500000,
+    },
+    {
+      stoneType: StoneType.MAIN,
+      name: 'Đá CZ Tròn 5.0mm',
+      cut: 'Round',
+      size: '5.0mm',
+      price: 50000,
+    },
+    {
+      stoneType: StoneType.MAIN,
+      name: 'Đá CZ Tròn 6.5mm',
+      cut: 'Round',
+      size: '6.5mm',
+      price: 80000,
+    },
+    {
+      stoneType: StoneType.SIDE,
+      name: 'Đá tấm Moissanite 1.2mm',
+      cut: 'Round',
+      size: '1.2mm',
+      price: 25000,
+    },
+    {
+      stoneType: StoneType.SIDE,
+      name: 'Đá tấm Moissanite 1.5mm',
+      cut: 'Round',
+      size: '1.5mm',
+      price: 35000,
+    },
+    {
+      stoneType: StoneType.SIDE,
+      name: 'Đá tấm Moissanite 1.8mm',
+      cut: 'Round',
+      size: '1.8mm',
+      price: 45000,
+    },
+    {
+      stoneType: StoneType.SIDE,
+      name: 'Đá tấm CZ 1.2mm',
+      cut: 'Round',
+      size: '1.2mm',
+      price: 5000,
+    },
+    {
+      stoneType: StoneType.SIDE,
+      name: 'Đá tấm CZ 1.5mm',
+      cut: 'Round',
+      size: '1.5mm',
+      price: 8000,
+    },
   ];
 
   const existingStones = await prisma.stone.count();
@@ -139,62 +273,28 @@ async function main() {
     }
   }
 
-  // 6. TẠO GIÁ KIM LOẠI (Metal Prices Singleton)
+  // 6. TẠO GIÁ KIM LOẠI (Metal Prices — bảng lịch sử, chỉ seed dòng đầu tiên nếu chưa có dòng nào)
   console.log('📌 6. Khởi tạo giá kim loại thị trường...');
-  await prisma.metalPrice.upsert({
-    where: { id: 'singleton' },
-    update: {
-      gold24kVnd: 13900000,
-      silverVnd: 1200000,
-      platinumVnd: 6000000,
-      source: 'giá khởi tạo mặc định (Vàng 24K & Bạc)',
-    },
-    create: {
-      id: 'singleton',
-      gold24kVnd: 13900000,
-      silverVnd: 1200000,
-      platinumVnd: 6000000,
-      source: 'giá khởi tạo mặc định (Vàng 24K & Bạc)',
-    },
-  });
+  const existingMetalPrice = await prisma.metalPrice.count();
+  if (existingMetalPrice === 0) {
+    await prisma.metalPrice.create({
+      data: {
+        gold24kVnd: 13900000,
+        silverVnd: 1200000,
+        platinumVnd: 6000000,
+        source: 'giá khởi tạo mặc định (Vàng 24K & Bạc)',
+        isActive: true,
+      },
+    });
+  }
 
-  // 7. TẠO CẤU HÌNH TÍNH GIÁ (Pricing Config Singleton)
-  console.log('📌 7. Khởi tạo quy tắc tính giá lõi 5 bước...');
-  const goldRatios = [
-    { key: '10K', standard: 41.6, applied: 40, label: 'Vàng 10K (40%)' },
-    { key: '14K', standard: 58.3, applied: 58, label: 'Vàng 14K (58%)' },
-    { key: '18K', standard: 75.0, applied: 75, label: 'Vàng 18K (75%)' },
-    { key: '24K', standard: 99.9, applied: 99.9, label: 'Vàng 24K (99.9%)' },
-  ];
-
-  const profitMargins = [
-    { maxCost: 2000000, divisor: 0.55, margin: '45%' },
-    { maxCost: 5000000, divisor: 0.60, margin: '40%' },
-    { maxCost: 10000000, divisor: 0.65, margin: '35%' },
-    { maxCost: 20000000, divisor: 0.70, margin: '30%' },
-    { maxCost: 50000000, divisor: 0.75, margin: '25%' },
-    { maxCost: 999999999999, divisor: 0.80, margin: '20%' },
-  ];
-
-  await prisma.pricingConfig.upsert({
-    where: { id: 'singleton' },
-    update: {
-      goldRatios: goldRatios as any,
-      profitMargins: profitMargins as any,
-      silverMultipliers: [2.5, 3] as any,
-      defaultVatRate: 10,
-    },
-    create: {
-      id: 'singleton',
-      goldRatios: goldRatios as any,
-      profitMargins: profitMargins as any,
-      silverMultipliers: [2.5, 3] as any,
-      defaultVatRate: 10,
-    },
-  });
+  // PricingConfig (bảng cấu hình global cũ) đã xóa hoàn toàn — VAT giờ nằm theo danh mục sản
+  // phẩm (bước 4), profitMargins/silverMultipliers nằm ở PricingFormula (bước 2b)
 
   // 8. TẠO DỮ LIỆU ĐỊA GIỚI HÀNH CHÍNH (Provinces & Wards từ doc/data.json)
-  console.log('📌 8. Nạp dữ liệu 34 Tỉnh/Thành & các Xã/Phường từ doc/data.json...');
+  console.log(
+    '📌 8. Nạp dữ liệu 34 Tỉnh/Thành & các Xã/Phường từ doc/data.json...',
+  );
   const possiblePaths = [
     path.resolve(__dirname, '../../doc/data.json'),
     path.resolve(process.cwd(), '../doc/data.json'),
@@ -229,13 +329,16 @@ async function main() {
       }>;
     }> = JSON.parse(rawData);
 
-    console.log(`📍 Tìm thấy ${provincesData.length} Tỉnh/Thành phố trong data.json.`);
+    console.log(
+      `📍 Tìm thấy ${provincesData.length} Tỉnh/Thành phố trong data.json.`,
+    );
 
     let totalWardsCount = 0;
 
     for (const p of provincesData) {
       const provinceName: string = (p.name || p.short_name || '').trim();
-      const provinceCode: string | undefined = (p.code || p.province_code || '').trim() || undefined;
+      const provinceCode: string | undefined =
+        (p.code || p.province_code || '').trim() || undefined;
 
       if (!provinceName) continue;
 
@@ -254,7 +357,9 @@ async function main() {
           where: { provinceId: province.id },
           select: { name: true, code: true },
         });
-        const existingKeys = new Set(existingWards.map((w) => `${w.name}_${w.code || ''}`));
+        const existingKeys = new Set(
+          existingWards.map((w) => `${w.name}_${w.code || ''}`),
+        );
 
         const wardsToCreate = p.wards
           .filter((w) => !existingKeys.has(`${w.name}_${w.ward_code || ''}`))
@@ -279,7 +384,9 @@ async function main() {
       }
     }
 
-    console.log(`✅ Đã nạp thành công ${provincesData.length} Tỉnh/Thành phố và ${totalWardsCount} Xã/Phường vào cơ sở dữ liệu!`);
+    console.log(
+      `✅ Đã nạp thành công ${provincesData.length} Tỉnh/Thành phố và ${totalWardsCount} Xã/Phường vào cơ sở dữ liệu!`,
+    );
   }
 
   console.log('🎉 Hoàn tất Seeding dữ liệu!');

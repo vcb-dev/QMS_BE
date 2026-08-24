@@ -29,27 +29,30 @@ export class ProductCategoriesController {
   async create(
     @Body('name') name: string,
     @Body('laborCost') laborCost?: number,
+    @Body('vatRate') vatRate?: number,
   ) {
-    return this.categoriesService.create(name, laborCost);
+    return this.categoriesService.create(name, laborCost, vatRate);
   }
 
-  // Lưu tiền công nhiều danh mục cùng lúc (1 API call) — phải khai TRƯỚC @Patch(':id') để không bị route ':id' nuốt mất
+  // Lưu tiền công/VAT nhiều danh mục cùng lúc (1 API call) — phải khai TRƯỚC @Patch(':id') để không bị route ':id' nuốt mất
   @Roles(Role.ORDER, Role.ADMIN)
-  @Patch('labor-costs')
-  async updateLaborCosts(
-    @Body('items') items: { id: string; laborCost: number }[],
+  @Patch('bulk')
+  async updateBulk(
+    @Body('items')
+    items: { id: string; laborCost?: number; vatRate?: number }[],
   ) {
-    return this.categoriesService.updateManyLaborCosts(items);
+    return this.categoriesService.updateMany(items);
   }
 
-  // Tiền công theo danh mục sản phẩm — Sale dùng giá này khi báo giá, chỉ ORDER/ADMIN sửa được
+  // Tiền công/VAT theo danh mục sản phẩm — Sale dùng giá này khi báo giá, chỉ ORDER/ADMIN sửa được
   @Roles(Role.ORDER, Role.ADMIN)
   @Patch(':id')
-  async updateLaborCost(
+  async update(
     @Param('id') id: string,
-    @Body('laborCost') laborCost: number,
+    @Body('laborCost') laborCost?: number,
+    @Body('vatRate') vatRate?: number,
   ) {
-    return this.categoriesService.updateLaborCost(id, laborCost);
+    return this.categoriesService.update(id, { laborCost, vatRate });
   }
 
   @Roles(Role.ORDER, Role.ADMIN)
