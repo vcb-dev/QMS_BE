@@ -3,10 +3,11 @@ import {
   WebSocketServer,
   SubscribeMessage,
   OnGatewayInit,
+  OnGatewayDisconnect,
   MessageBody,
   ConnectedSocket,
 } from '@nestjs/websockets';
-import { ForbiddenException, BadRequestException } from '@nestjs/common';
+import { ForbiddenException, BadRequestException, Logger } from '@nestjs/common';
 
 import { Server, Socket } from 'socket.io';
 import { JwtService } from '@nestjs/jwt';
@@ -25,16 +26,35 @@ interface AuthedSocket extends Socket {
 // riêng khi mở 1 yêu cầu) cùng nối vào namespace này.
 @WebSocketGateway({
   cors: {
-    origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+    origin: process.env.FRONTEND_URL,
     credentials: true,
   },
 })
-export class RealtimeGateway implements OnGatewayInit {
+export class RealtimeGateway implements OnGatewayInit, OnGatewayDisconnect {
   @WebSocketServer()
-  server: Server;
+  server!: Server;
 
-  constructor( private readonly quoteChatService: QuoteChatService,private readonly jwtService: JwtService) {}
+  private readonly logger = new Logger(RealtimeGateway.name);
 
+  // Rate limit gửi tin nhắn: tối đa MAX_MESSAGES tin trong RATE_WINDOW_MS mỗi socket.
+  private static readonly RATE_WINDOW_MS = 3000;
+  private static readonly MAX_MESSAGES = 5;
+  private messageTimestamps = new Map<string, number[]>();
+
+  // Mỗi socket chỉ ở 1 phòng chat tại 1 thời điểm — tránh giữ mapping room thừa khi client
+  // chuyển qua lại giữa nhiều yêu cầu báo giá mà không ngắt kết nối socket.
+  private currentChatRoom = new Map<string, string>();
+
+  constructor(
+    private readonly quoteChatService: QuoteChatService,
+    private readonly jwtService: JwtService,
+  ) {}
+
+  handleDisconnect(client: AuthedSocket) {
+    this.messageTimestamps.delete(client.id);
+    this.currentChatRoom.delete(client.id);
+  }
+  //Tự động chạy máy chủ Socket và xác thực socket bằng JWT (từ cookie hoặc từ token trong handshake.auth) — nếu không hợp lệ thì từ chối kết nối.
   afterInit(server: Server) {
     server.use(async (socket: AuthedSocket, next) => {
       const handshakeToken = socket.handshake.auth?.token as string | undefined;
@@ -61,6 +81,7 @@ export class RealtimeGateway implements OnGatewayInit {
     });
   }
 
+  // Trích xuất token JWT từ cookie (nếu có) để xác thực socket — nếu không có token trong handshake.auth thì dùng cookie.
   private extractTokenFromCookie(cookieHeader?: string): string | null {
     if (!cookieHeader) return null;
     const match = cookieHeader.match(
@@ -69,14 +90,16 @@ export class RealtimeGateway implements OnGatewayInit {
     return match ? decodeURIComponent(match[1]) : null;
   }
 
+  // Broadcast sự kiện statusChanged cho tất cả socket đã xác thực — không cần room riêng.
   broadcastStatusChanged(quoteRequestId: string, status: string) {
     this.server.emit('statusChanged', { quoteRequestId, status });
   }
 
-private roomName(quoteRequestId: string) {
+  // Tạo tên phòng chat dựa trên quoteRequestId để phân biệt các cuộc trò chuyện khác nhau.
+  private roomName(quoteRequestId: string) {
     return `quote-chat:${quoteRequestId}`;
   }
-
+  // Xử lý sự kiện joinRequest từ client FE: xác thực user, kiểm tra quyền truy cập cuộc trò chuyện, tham gia phòng chat tương ứng.
   @SubscribeMessage('joinRequest')
   async handleJoin(
     @ConnectedSocket() client: AuthedSocket,
@@ -90,7 +113,11 @@ private roomName(quoteRequestId: string) {
         data.quoteRequestId,
         userId,
       );
-      client.join(this.roomName(data.quoteRequestId));
+      const newRoom = this.roomName(data.quoteRequestId);
+      const oldRoom = this.currentChatRoom.get(client.id);
+      if (oldRoom && oldRoom !== newRoom) client.leave(oldRoom);
+      client.join(newRoom);
+      this.currentChatRoom.set(client.id, newRoom);
     } catch {
       client.emit('error', {
         message: 'Bạn không có quyền xem cuộc trò chuyện này',
@@ -98,6 +125,7 @@ private roomName(quoteRequestId: string) {
     }
   }
 
+  // Xử lý sự kiện sendMessage từ client FE: xác thực user, kiểm tra quyền truy cập cuộc trò chuyện, lưu tin nhắn và phát broadcast cho tất cả socket trong phòng chat.
   @SubscribeMessage('sendMessage')
   async handleSendMessage(
     @ConnectedSocket() client: AuthedSocket,
@@ -111,6 +139,19 @@ private roomName(quoteRequestId: string) {
   ) {
     const userId = client.data.user?.id;
     if (!userId) return;
+
+    const now = Date.now();
+    const timestamps = (this.messageTimestamps.get(client.id) || []).filter(
+      (t) => now - t < RealtimeGateway.RATE_WINDOW_MS,
+    );
+    if (timestamps.length >= RealtimeGateway.MAX_MESSAGES) {
+      client.emit('error', {
+        message: 'Bạn đang gửi tin nhắn quá nhanh, vui lòng chờ một chút',
+      });
+      return;
+    }
+    timestamps.push(now);
+    this.messageTimestamps.set(client.id, timestamps);
 
     try {
       const message = await this.quoteChatService.saveMessage(
@@ -143,9 +184,10 @@ private roomName(quoteRequestId: string) {
 
     try {
       await this.quoteChatService.markRead(data.quoteRequestId, userId);
-    } catch {
-      // Im lặng bỏ qua — markRead không phải thao tác người dùng chủ động thấy kết quả trực tiếp.
+    } catch (err: any) {
+      this.logger.warn(
+        `Lỗi khi đánh dấu đã đọc tin nhắn (quoteRequestId: ${data.quoteRequestId}, userId: ${userId}): ${err.message}`,
+      );
     }
   }
-
 }

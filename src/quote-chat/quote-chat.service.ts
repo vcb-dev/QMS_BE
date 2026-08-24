@@ -15,6 +15,14 @@ export class QuoteChatService {
 
   constructor(private prisma: PrismaService) {}
 
+  private static readonly CACHE_TTL_MS = 30 * 1000; // ngắn để giảm cửa sổ stale khi quote bị reassign
+
+  private evictExpired(now: number) {
+    for (const [key, entry] of this.participantCache) {
+      if (entry.expiresAt < now) this.participantCache.delete(key);
+    }
+  }
+
   async assertParticipant(quoteRequestId: string, userId: string) {
     const now = Date.now();
     let cached = this.participantCache.get(quoteRequestId);
@@ -34,15 +42,14 @@ export class QuoteChatService {
       cached = {
         requesterId: request.requesterId,
         assigneeId: request.assigneeId,
-        expiresAt: now + 5 * 60 * 1000, // Cache 5 phút
+        expiresAt: now + QuoteChatService.CACHE_TTL_MS,
       };
       this.participantCache.set(quoteRequestId, cached);
+
+      if (this.participantCache.size > 200) this.evictExpired(now);
     }
 
-    if (
-      cached.requesterId !== userId &&
-      cached.assigneeId !== userId
-    ) {
+    if (cached.requesterId !== userId && cached.assigneeId !== userId) {
       throw new ForbiddenException(
         'Bạn không có quyền xem cuộc trò chuyện này',
       );
@@ -63,6 +70,11 @@ export class QuoteChatService {
     if (!trimmedContent && !imageUrl) {
       throw new BadRequestException(
         'Tin nhắn phải có nội dung hoặc ảnh đính kèm',
+      );
+    }
+    if (trimmedContent && trimmedContent.length > 2000) {
+      throw new BadRequestException(
+        'Nội dung tin nhắn không được vượt quá 2000 ký tự',
       );
     }
 
