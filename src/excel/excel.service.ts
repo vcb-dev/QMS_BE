@@ -72,11 +72,20 @@ export class ExcelService {
       ...rows.map((row) => columns.map((c) => row[c.key] ?? '')),
     ];
 
-    const sheet = XLSX.utils.aoa_to_sheet(aoa);
-    const workbook = XLSX.utils.book_new();
-    // Tên sheet Excel giới hạn 31 ký tự, quá là lỗi khi mở file.
-    XLSX.utils.book_append_sheet(workbook, sheet, sheetName.slice(0, 31));
+    try {
+      const sheet = XLSX.utils.aoa_to_sheet(aoa);
+      const workbook = XLSX.utils.book_new();
+      // Tên sheet Excel giới hạn 31 ký tự, quá là lỗi khi mở file.
+      XLSX.utils.book_append_sheet(workbook, sheet, sheetName.slice(0, 31));
 
-    return XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
+      return XLSX.write(workbook, {
+        type: 'buffer',
+        bookType: 'xlsx',
+      }) as Buffer;
+    } catch {
+      throw new BadRequestException(
+        'Không tạo được file Excel từ dữ liệu đã cho',
+      );
+    }
   }
 }
