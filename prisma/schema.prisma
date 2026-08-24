@@ -95,6 +95,8 @@ model Department {
 model Material {
   id            String                @id @default(cuid())
   name          String                @unique
+  // false = ngừng dùng, ẩn khỏi danh sách chọn — không xóa cứng để không vỡ FK từ QuoteOption cũ
+  isActive      Boolean               @default(true) @map("is_active")
   // % dùng nhân với giá kim loại gốc lúc tính giá (vàng theo tuổi: vd 18K=75; Bạc/Bạch kim luôn 100
   // vì giá gốc của 2 kim loại này đã là giá bán thẳng, không pha theo tuổi như vàng)
   priceRatioPct Decimal               @default(100) @map("price_ratio_pct") @db.Decimal(6, 2)
@@ -129,6 +131,8 @@ model PricingFormula {
   // Công thức mặc định dùng để tính lãi phần ĐÁ khi báo giá (đá tách tính riêng khỏi kim loại,
   // luôn cần 1 bậc lợi nhuận theo chi phí bất kể chất liệu kim loại đi kèm dùng công thức gì)
   isDefault   Boolean            @default(false) @map("is_default")
+  // false = ngừng dùng — không xóa cứng để không vỡ FK từ Material còn trỏ tới công thức này
+  isActive    Boolean            @default(true) @map("is_active")
   materials   Material[]
   // Người sửa lần gần nhất — FK thật tới User (trước không có), NULL nếu tài khoản đã bị xóa
   updatedBy   User?              @relation(fields: [updatedById], references: [id], onDelete: SetNull)
@@ -146,6 +150,8 @@ model PricingFormula {
 model ProductCategory {
   id            String         @id @default(cuid())
   name          String         @unique
+  // false = ngừng dùng, ẩn khỏi danh sách chọn — không xóa cứng để không vỡ FK từ QuoteRequest cũ
+  isActive      Boolean        @default(true) @map("is_active")
   laborCost     Decimal?       @map("labor_cost") @db.Decimal(14, 2) // Tiền công chuẩn theo danh mục sản phẩm — Sale dùng giá này, Order vẫn nhập tay
   // VAT chuẩn theo danh mục sản phẩm — thay cho PricingConfig.defaultVatRate (1 giá trị global
   // duy nhất cho cả hệ thống) để mỗi danh mục có thể có mức VAT khác nhau, giống labor_cost.
@@ -263,6 +269,8 @@ model Stone {
   cut          String? // Giác cắt
   size         String? // Size đá
   price        Decimal            @db.Decimal(14, 2) // Giá / viên
+  // false = ngừng dùng, ẩn khỏi danh sách chọn — không xóa cứng để không vỡ FK từ QuoteOption cũ
+  isActive     Boolean            @default(true) @map("is_active")
   quoteOptions QuoteOptionStone[]
 
   createdAt DateTime @default(now()) @map("created_at")

@@ -45,7 +45,10 @@ export class StonesService {
   async findAll(stoneType?: StoneType) {
     let all = this.cache.get();
     if (!all) {
-      all = await this.prisma.stone.findMany({ orderBy: { name: 'asc' } });
+      all = await this.prisma.stone.findMany({
+        where: { isActive: true },
+        orderBy: { name: 'asc' },
+      });
       this.cache.set(all);
     }
     return stoneType ? all.filter((s) => s.stoneType === stoneType) : all;
@@ -80,6 +83,19 @@ export class StonesService {
   // Lưu giá nhiều viên đá cùng lúc — 1 API call, 1 transaction
   async updateManyPrices(items: { id: string; price: number }[]) {
     if (!items || items.length === 0) return { updated: 0 };
+    const found = await this.prisma.stone.findMany({
+      where: { id: { in: items.map((it) => it.id) } },
+      select: { id: true },
+    });
+    const foundIds = new Set(found.map((s) => s.id));
+    const missingIds = items
+      .map((it) => it.id)
+      .filter((id) => !foundIds.has(id));
+    if (missingIds.length > 0) {
+      throw new NotFoundException(
+        `Không tìm thấy đá với id: ${missingIds.join(', ')}`,
+      );
+    }
     await this.prisma.$transaction(
       items.map((it) =>
         this.prisma.stone.update({
