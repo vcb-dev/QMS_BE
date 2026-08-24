@@ -17,6 +17,7 @@ import { PricingConfigModule } from './pricing-config/pricing-config.module';
 import { VnGoldPriceModule } from './vn-gold-price/vn-gold-price.module';
 import { CloudinaryModule } from './cloudinary/cloudinary.module';
 import { MailModule } from './mail/mail.module';
+import { LarkModule } from './lark/lark.module';
 import { LocationsModule } from './locations/locations.module';
 import { AuditLogModule } from './audit-log/audit-log.module';
 import { LoggerMiddleware } from './common/logger.middleware';
@@ -44,6 +45,7 @@ import { RealtimeModule } from './realtime/realtime.module';
     VnGoldPriceModule,
     CloudinaryModule,
     MailModule,
+    LarkModule,
     LocationsModule,
     AuditLogModule,
     ThrottlerModule.forRoot([
