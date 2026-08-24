@@ -172,6 +172,7 @@ model Province {
   code              String?    @unique
   wards             Ward[]
   customers         Customer[]
+  customersById     Customer[] @relation("CustomerProvinceById")
   createdAt         DateTime   @default(now()) @map("created_at")
 
   @@map("provinces")
@@ -184,6 +185,7 @@ model Ward {
   districtName String?    @map("district_name")
   provinceId   String     @map("province_id")
   province     Province   @relation(fields: [provinceId], references: [id], onDelete: Cascade)
+  customers    Customer[]
   createdAt    DateTime   @default(now()) @map("created_at")
 
   @@index([provinceId])
@@ -203,6 +205,12 @@ model Customer {
   province    String?
   provinceRel Province? @relation(fields: [province], references: [name], onDelete: SetNull)
   ward        String?
+  // MỚI — khóa ngoại thật thay cho tên tỉnh/phường dạng string tự do, tránh vỡ khi sáp nhập/đổi
+  // tên hành chính. NULL = chưa backfill hoặc customer không chọn qua danh mục.
+  provinceId  String?   @map("province_id")
+  provinceById Province? @relation("CustomerProvinceById", fields: [provinceId], references: [id], onDelete: SetNull)
+  wardId      String?   @map("ward_id")
+  wardRel     Ward?     @relation(fields: [wardId], references: [id], onDelete: SetNull)
   note        String?   @db.Text
 
   quoteRequests QuoteRequest[]
