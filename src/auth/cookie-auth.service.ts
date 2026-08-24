@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { CookieOptions, Response } from 'express';
 import { randomBytes } from 'crypto';
+import {APP_CONSTANTS} from '../common/constants';
 import {
   COOKIE_ACCESS,
   COOKIE_CSRF,
@@ -27,10 +28,10 @@ export class CookieAuthService {
     tokens: { accessToken: string; refreshToken: string },
   ) {
     const accessMaxAge = this.parseDurationMs(
-      this.config.get<string>('JWT_ACCESS_EXPIRES', '7d'),
+      this.config.get<string>('JWT_ACCESS_EXPIRES', APP_CONSTANTS.JWT_ACCESS_EXPIRES),
     );
     const refreshMaxAge = this.parseDurationMs(
-      this.config.get<string>('JWT_REFRESH_EXPIRES', '30d'),
+      this.config.get<string>('JWT_REFRESH_EXPIRES', APP_CONSTANTS.JWT_REFRESH_EXPIRES),
     );
     const csrf = randomBytes(32).toString('hex');
 
