@@ -27,7 +27,6 @@ import { CreateQuoteRequestDto } from './dto/create-quote-request.dto';
 import { UpdateQuoteRequestDto } from './dto/update-quote-request.dto';
 import { FilterQuoteRequestDto } from './dto/filter-quote-request.dto';
 import { UpdateQuoteStatusDto } from './dto/update-quote-status.dto';
-import { QuickQuoteSubmitDto } from './dto/quick-quote.dto';
 import { ExportQuoteRequestDto } from './dto/export-quote-request.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -56,18 +55,6 @@ export class QuoteRequestsController {
     @UploadedFiles() files?: Express.Multer.File[],
   ) {
     return this.quoteRequestsService.create(userId, dto, files);
-  }
-
-  @ApiOperation({
-    summary:
-      'Gửi yêu cầu Báo Giá Nhanh đến người báo giá / Pricer (SALE / ORDER / ADMIN)',
-  })
-  @Post('quick-submit')
-  async submitQuickQuote(
-    @CurrentUser('id') userId: string,
-    @Body() dto: QuickQuoteSubmitDto,
-  ) {
-    return this.quoteRequestsService.submitQuickQuote(userId, dto);
   }
 
   @ApiOperation({

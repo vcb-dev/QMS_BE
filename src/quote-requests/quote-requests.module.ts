@@ -8,6 +8,7 @@ import { MailModule } from '../mail/mail.module';
 import { AuditLogModule } from '../audit-log/audit-log.module';
 import { ExcelModule } from '../excel/excel.module';
 import { RealtimeModule } from '../realtime/realtime.module';
+import { LarkModule } from '../lark/lark.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { RealtimeModule } from '../realtime/realtime.module';
     AuditLogModule,
     ExcelModule,
     RealtimeModule,
+    LarkModule,
   ],
   controllers: [QuoteRequestsController],
   providers: [QuoteRequestsService, QuoteQueryService, QuoteWorkflowService],

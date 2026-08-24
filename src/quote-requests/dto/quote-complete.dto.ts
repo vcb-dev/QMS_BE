@@ -73,6 +73,11 @@ export class QuoteOptionItemDto {
   @IsString()
   note?: string;
 
+  // Tên/mô tả đá khi báo giá đá tổng nhập tay (không chọn từ danh mục Stone qua field `stones`)
+  @IsOptional()
+  @IsString()
+  stoneDescription?: string;
+
   @IsOptional()
   @Type(() => Number)
   @IsNumber()

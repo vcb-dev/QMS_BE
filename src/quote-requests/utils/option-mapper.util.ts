@@ -3,6 +3,7 @@
 // trả QuoteOption/QuoteRequest ra ngoài, để tránh mỗi service tự viết include khác nhau.
 
 import { OptionSelectionStatus } from '@prisma/client';
+import { PrismaService } from '../../prisma/prisma.service';
 
 export const OPTION_DETAIL_INCLUDE = {
   materials: { include: { material: true } },
@@ -23,9 +24,35 @@ export const REQUEST_DETAIL_INCLUDE = {
   },
 } as const;
 
+// Giá/viên đá TẠI THỜI ĐIỂM báo giá — gọi 1 lần trước khi build nhiều option, tránh N+1 query.
+// Không snapshot thì xem lại đơn cũ sẽ ra giá đá SAI (giá hôm nay) dù QuoteOption.stonePrice đã
+// đóng băng đúng tổng tiền.
+export async function buildStonePriceMap(
+  prisma: PrismaService,
+  effectiveOptions: any[],
+): Promise<Map<string, number>> {
+  const stoneIds = [
+    ...new Set(
+      effectiveOptions.flatMap((opt) =>
+        (opt.stones || []).map((s: any) => s.stoneId),
+      ),
+    ),
+  ].filter(Boolean);
+  if (stoneIds.length === 0) return new Map();
+  const stones = await prisma.stone.findMany({
+    where: { id: { in: stoneIds } },
+    select: { id: true, price: true },
+  });
+  return new Map(stones.map((s) => [s.id, Number(s.price)]));
+}
+
 // Build nested-create payload cho 1 QuoteOption từ QuoteOptionItemDto — dùng ở mọi chỗ
 // tạo/ghi-đè option (create request, quick-quote, complete quote, quick-approve).
-export function buildOptionCreateInput(opt: any, idx: number) {
+export function buildOptionCreateInput(
+  opt: any,
+  idx: number,
+  stonePriceMap?: Map<string, number>,
+) {
   return {
     optionName: opt.optionName || `Phương án ${idx + 1}`,
     weightChi: opt.weightChi,
@@ -39,6 +66,7 @@ export function buildOptionCreateInput(opt: any, idx: number) {
     // Có giá = vừa báo giá thật; option nháp (chưa có giá) thì chưa có mốc báo giá
     quotedDate: opt.quotedPrice != null ? new Date() : undefined,
     note: opt.note,
+    stoneDescription: opt.stoneDescription,
     // FE đánh dấu phương án nào là giá chính (radio) — ghi thẳng vào selectionStatus, nguồn sự
     // thật duy nhất cho "phương án nào đang dùng để báo giá" (thay QuoteRequest.selectedOptionId cũ).
     selectionStatus: opt.isSelected
@@ -57,6 +85,7 @@ export function buildOptionCreateInput(opt: any, idx: number) {
           create: opt.stones.map((s: any) => ({
             stoneId: s.stoneId,
             quantity: s.quantity,
+            unitPriceAtQuote: stonePriceMap?.get(s.stoneId),
           })),
         }
       : undefined,
@@ -80,7 +109,11 @@ export function mapOptionDetail(opt: any) {
           stoneName: s.stone?.name,
           stoneType: s.stone?.stoneType,
           quantity: s.quantity,
-          price: s.stone?.price,
+          // Ưu tiên giá đã đóng băng lúc báo giá; record cũ (trước khi có field này) fallback giá hiện tại
+          price:
+            s.unitPriceAtQuote != null
+              ? Number(s.unitPriceAtQuote)
+              : s.stone?.price,
         }))
       : opt.stones,
   };

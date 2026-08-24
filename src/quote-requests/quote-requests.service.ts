@@ -4,7 +4,6 @@ import { CreateQuoteRequestDto } from './dto/create-quote-request.dto';
 import { UpdateQuoteRequestDto } from './dto/update-quote-request.dto';
 import { FilterQuoteRequestDto } from './dto/filter-quote-request.dto';
 import { UpdateQuoteStatusDto } from './dto/update-quote-status.dto';
-import { QuickQuoteSubmitDto } from './dto/quick-quote.dto';
 import { ExportQuoteRequestDto } from './dto/export-quote-request.dto';
 import { QuoteStatus, User, Role } from '@prisma/client';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
@@ -13,10 +12,12 @@ import { QuoteWorkflowService } from './quote-workflow.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { ExcelService } from '../excel/excel.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
+import { LarkNotificationService } from '../lark/lark-notification.service';
 import { EXPORT_FIELD_DEFS } from './dto/export-field-defs';
 import {
   REQUEST_DETAIL_INCLUDE,
   buildOptionCreateInput,
+  buildStonePriceMap,
   mapQuoteRequestDetail,
 } from './utils/option-mapper.util';
 
@@ -30,6 +31,7 @@ export class QuoteRequestsService {
     private auditLog: AuditLogService,
     private excelService: ExcelService,
     private realtimeGateway: RealtimeGateway,
+    private larkService: LarkNotificationService,
   ) {}
 
   private generateCode(): string {
@@ -93,11 +95,15 @@ export class QuoteRequestsService {
             ]
           : [];
 
+    const stonePriceMap = await buildStonePriceMap(
+      this.prisma,
+      effectiveOptions,
+    );
     const optionsCreate =
       effectiveOptions.length > 0
         ? {
             create: effectiveOptions.map((opt, idx) =>
-              buildOptionCreateInput(opt, idx),
+              buildOptionCreateInput(opt, idx, stonePriceMap),
             ),
           }
         : undefined;
@@ -153,107 +159,13 @@ export class QuoteRequestsService {
     });
 
     await this.auditLog.logActionByUserId(userId, 'CREATE_QUOTE', created.id);
-    return mapQuoteRequestDetail(created);
-  }
-
-  async submitQuickQuote(userId: string, dto: QuickQuoteSubmitDto) {
-    this.queryService.clearCache();
-    const {
-      quoteRequestId,
-      categoryId,
-      materialId,
-      customerId,
-      newCustomer,
-      assigneeId,
-      options,
-    } = dto;
-
-    let finalCustomerId = customerId;
-    if (!finalCustomerId && newCustomer) {
-      const createdCust = await this.prisma.customer.create({
-        data: {
-          name: newCustomer.name,
-          phone: newCustomer.phone || null,
-          address: newCustomer.address || null,
-          province: newCustomer.province || '',
-          ward: newCustomer.ward || '',
-          note: newCustomer.note || null,
-        },
-      });
-      finalCustomerId = createdCust.id;
-      await this.auditLog.logActionByUserId(
-        userId,
-        'CREATE_CUSTOMER',
-        createdCust.id,
-        'Customer',
-      );
-    }
-
-    if (!finalCustomerId) {
-      throw new BadRequestException(
-        'Vui lòng chọn khách hàng có sẵn hoặc nhập thông tin khách hàng mới',
-      );
-    }
-
-    const effectiveOptions: any[] =
-      options && options.length > 0
-        ? options
-        : materialId
-          ? [{ optionName: 'Phương án báo giá', materials: [{ materialId }] }]
-          : [];
-
-    const optionsCreate =
-      effectiveOptions.length > 0
-        ? {
-            create: effectiveOptions.map((opt, idx) =>
-              buildOptionCreateInput(opt, idx),
-            ),
-          }
-        : undefined;
-
-    if (quoteRequestId) {
-      if (effectiveOptions.length > 0) {
-        await this.prisma.quoteOption.deleteMany({ where: { quoteRequestId } });
-      }
-      await this.auditLog.logActionByUserId(
-        userId,
-        'QUICK_SUBMIT_QUOTE',
-        quoteRequestId,
-      );
-      const updated = await this.prisma.quoteRequest.update({
-        where: { id: quoteRequestId },
-        data: {
-          categoryId,
-          customerId: finalCustomerId,
-          assigneeId: assigneeId || undefined,
-          status: QuoteStatus.PROCESSING,
-          options: optionsCreate,
-        },
-        include: REQUEST_DETAIL_INCLUDE,
-      });
-      return mapQuoteRequestDetail(updated);
-    }
-
-    const code = this.generateCode();
-    const created = await this.prisma.quoteRequest.create({
-      data: {
-        code,
-        status: QuoteStatus.PROCESSING,
-        requesterId: userId,
-        customerId: finalCustomerId,
-        categoryId,
-        assigneeId: assigneeId || undefined,
-        options: optionsCreate,
-      },
-      include: REQUEST_DETAIL_INCLUDE,
-    });
-
-    await this.auditLog.logActionByUserId(
-      userId,
-      'QUICK_SUBMIT_QUOTE',
+    const detail = mapQuoteRequestDetail(created);
+    this.realtimeGateway.broadcastStatusChanged(created.id, created.status);
+    this.larkService.notifyOrder(
+      `📋 Yêu cầu báo giá mới: ${created.code} (${(created as any).category?.name || 'Sản phẩm chế tác'}) — người tạo: ${(created as any).requester?.name || 'Sale'}`,
       created.id,
     );
-    return mapQuoteRequestDetail(created);
+    return detail;
   }
 
   async findAll(filterDto: FilterQuoteRequestDto, user: User) {
@@ -316,6 +228,7 @@ export class QuoteRequestsService {
     this.queryService.clearCache();
     await this.auditLog.logActionByUserId(userId, 'DELETE_QUOTE', id);
     await this.prisma.quoteRequest.delete({ where: { id } });
+    this.realtimeGateway.broadcastStatusChanged(id, 'DELETED');
     return { message: 'Đã hủy yêu cầu báo giá thành công' };
   }
 
@@ -336,7 +249,14 @@ export class QuoteRequestsService {
   }
 
   async deleteOption(id: string, optionId: string, userId: string, role: Role) {
-    return this.workflowService.deleteOption(id, optionId, userId, role);
+    const res = await this.workflowService.deleteOption(
+      id,
+      optionId,
+      userId,
+      role,
+    );
+    this.realtimeGateway.broadcastStatusChanged(id, 'OPTION_DELETED');
+    return res;
   }
 
   /**

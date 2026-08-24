@@ -345,6 +345,9 @@ model QuoteOption {
   quotedPrice    Decimal?  @map("quoted_price") @db.Decimal(14, 2) // NULL = option nháp (vd Sale khai chất liệu mong muốn), chưa có giá
   quotedDate     DateTime? @map("quoted_date") // Mốc thật sự gửi báo giá cho khách — khác createdAt (mốc tạo record nháp)
   note           String?   @db.Text
+  // Tên/mô tả đá khi Order nhập tay tổng tiền đá (không chọn từ danh mục Stone) — không có
+  // QuoteOptionStone nào để tra tên, nên phải lưu snapshot text này, khác case đá chọn từ danh mục.
+  stoneDescription String? @map("stone_description") @db.Text
   // SELECTED = phương án chính đang dùng để báo giá, CLOSED = khách đã chốt đúng phương án này —
   // nguồn sự thật duy nhất cho "phương án nào đang được chọn", thay cho QuoteRequest.selectedOptionId cũ.
   selectionStatus OptionSelectionStatus @default(NONE) @map("selection_status")
@@ -389,6 +392,10 @@ model QuoteOptionStone {
   stone    Stone       @relation(fields: [stoneId], references: [id])
   stoneId  String      @map("stone_id")
   quantity Int         @default(1)
+  // Giá/viên TẠI THỜI ĐIỂM báo giá — Stone.price có thể đổi sau này, không snapshot thì xem lại
+  // đơn cũ sẽ ra giá đá SAI (giá hôm nay) dù QuoteOption.stonePrice đã đóng băng đúng tổng tiền.
+  // NULL = record tạo trước khi có field này, FE/BE fallback đọc Stone.price hiện tại.
+  unitPriceAtQuote Decimal? @map("unit_price_at_quote") @db.Decimal(14, 2)
 
   createdAt DateTime @default(now()) @map("created_at")
 

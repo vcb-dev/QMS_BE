@@ -15,9 +15,11 @@ import { QuoteStatus, Role, OptionSelectionStatus } from '@prisma/client';
 import { QuoteQueryService } from './quote-query.service';
 import { MailService } from '../mail/mail.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
+import { LarkNotificationService } from '../lark/lark-notification.service';
 import {
   REQUEST_DETAIL_INCLUDE,
   buildOptionCreateInput,
+  buildStonePriceMap,
   mapQuoteRequestDetail,
   pickPrimaryOption,
 } from './utils/option-mapper.util';
@@ -29,6 +31,7 @@ export class QuoteWorkflowService {
     private queryService: QuoteQueryService,
     private mailService: MailService,
     private auditLog: AuditLogService,
+    private larkService: LarkNotificationService,
   ) {}
 
   private assertRole(role: Role, allowed: Role[], message: string) {
@@ -116,6 +119,10 @@ export class QuoteWorkflowService {
       price,
       this.pickProductName(quote),
     );
+    this.larkService.notifySale(
+      `✅ Đơn ${quote.code} (${this.pickProductName(quote)}) đã có giá: ${price.toLocaleString('vi-VN')}đ`,
+      quote.id,
+    );
   }
 
   private notifySaleQuoteRejected(quote: any, reason: string) {
@@ -125,6 +132,10 @@ export class QuoteWorkflowService {
       this.pickProductName(quote),
       reason,
     );
+    this.larkService.notifySale(
+      `❌ Đơn ${quote.code} (${this.pickProductName(quote)}) bị từ chối: ${reason}`,
+      quote.id,
+    );
   }
 
   private notifySaleNeedMoreInfo(quote: any, reason: string) {
@@ -133,6 +144,10 @@ export class QuoteWorkflowService {
       this.mailService.sendNeedMoreInfo.bind(this.mailService),
       this.pickProductName(quote),
       reason,
+    );
+    this.larkService.notifySale(
+      `⚠️ Đơn ${quote.code} (${this.pickProductName(quote)}) cần bổ sung thông tin: ${reason}`,
+      quote.id,
     );
   }
 
@@ -145,12 +160,15 @@ export class QuoteWorkflowService {
 
     // FE luôn gửi kèm options đầy đủ (mỗi phương án tự mang materials/stones riêng) —
     // xoá & ghi đè toàn bộ, không còn khái niệm "vá từng field rời" ở cấp Request nữa.
+    const stonePriceMap = dto.options
+      ? await buildStonePriceMap(this.prisma, dto.options)
+      : new Map<string, number>();
     const optionsCreate =
       dto.options && dto.options.length > 0
         ? {
             deleteMany: {},
             create: dto.options.map((opt, idx) =>
-              buildOptionCreateInput(opt, idx),
+              buildOptionCreateInput(opt, idx, stonePriceMap),
             ),
           }
         : undefined;
@@ -356,7 +374,12 @@ export class QuoteWorkflowService {
       },
       include: REQUEST_DETAIL_INCLUDE,
     });
-    return mapQuoteRequestDetail(updated);
+    const mapped = mapQuoteRequestDetail(updated);
+    this.larkService.notifyOrder(
+      `🔄 Đơn ${mapped.code} (${this.pickProductName(mapped)}) đã được gửi lại, cần xử lý`,
+      mapped.id,
+    );
+    return mapped;
   }
 
   async updateStatus(
