@@ -34,6 +34,34 @@ export class UsersService {
     });
   }
 
+  async getStats() {
+    const [totalUsers, roleGroups, deptGroups, pendingCount] = await Promise.all([
+      this.prisma.user.count(),
+      this.prisma.user.groupBy({ by: ['role'], _count: { _all: true } }),
+      this.prisma.user.groupBy({ by: ['departmentId'], _count: { _all: true } }),
+      this.prisma.user.count({ where: { isApproved: false } }),
+    ]);
+
+    const byRole = { SALE: 0, ORDER: 0, ADMIN: 0 };
+    for (const g of roleGroups) {
+      if (g.role in byRole) byRole[g.role as keyof typeof byRole] = g._count._all;
+    }
+
+    const deptIds = deptGroups.map((g) => g.departmentId).filter((id): id is string => !!id);
+    const depts = deptIds.length
+      ? await this.prisma.department.findMany({ where: { id: { in: deptIds } }, select: { id: true, name: true } })
+      : [];
+    const deptNameById = new Map(depts.map((d) => [d.id, d.name]));
+    const byDept = deptGroups
+      .map((g) => ({
+        name: (g.departmentId && deptNameById.get(g.departmentId)) || 'Chưa gán bộ phận',
+        count: g._count._all,
+      }))
+      .sort((a, b) => b.count - a.count);
+
+    return { totalUsers, byRole, byDept, pendingCount };
+  }
+
   async findPending() {
     return this.prisma.user.findMany({
       where: { isApproved: false },

@@ -20,6 +20,7 @@ import { QuoteOptionsService } from './quote-options.service';
 import {
   REQUEST_DETAIL_INCLUDE,
   buildOptionCreateInput,
+  computeFinalOption,
   mapQuoteRequestDetail,
   pickPrimaryOption,
 } from '../utils/option-mapper.util';
@@ -39,6 +40,22 @@ export class QuoteWorkflowService {
     if (!allowed.includes(role)) {
       throw new ForbiddenException(message);
     }
+  }
+
+  // Đồng bộ finalOptionId/finalPrice trên QuoteRequest — gọi ngay sau MỌI chỗ ghi QuoteOption
+  // (6 nơi trong file này). Luôn đọc lại option THẬT SỰ vừa ghi (không suy đoán từ input DTO) để
+  // đảm bảo đúng business rule (pickPrimaryOption) bất kể path nào gọi tới.
+  private async syncFinalOption(quoteRequestId: string) {
+    const options = await this.prisma.quoteOption.findMany({
+      where: { quoteRequestId },
+      select: { id: true, quotedPrice: true, selectionStatus: true },
+      orderBy: { createdAt: 'asc' },
+    });
+    const { finalOptionId, finalPrice } = computeFinalOption(options);
+    await this.prisma.quoteRequest.update({
+      where: { id: quoteRequestId },
+      data: { finalOptionId, finalPrice },
+    });
   }
 
   private async accept(id: string, userId: string) {
@@ -160,7 +177,11 @@ export class QuoteWorkflowService {
     this.queryService.clearCache();
 
     // FE luôn gửi kèm options đầy đủ (mỗi phương án tự mang materials/stones riêng) —
-    // xoá & ghi đè toàn bộ, không còn khái niệm "vá từng field rời" ở cấp Request nữa.
+    const existing = await this.prisma.quoteRequest.findUnique({
+      where: { id },
+      select: { categoryId: true },
+    });
+
     const stonePriceMap = dto.options
       ? await this.quoteOptionsService.buildStonePriceMap(dto.options)
       : new Map<string, number>();
@@ -169,7 +190,12 @@ export class QuoteWorkflowService {
         ? {
             deleteMany: {},
             create: dto.options.map((opt, idx) =>
-              buildOptionCreateInput(opt, idx, stonePriceMap),
+              buildOptionCreateInput(
+                opt,
+                idx,
+                existing?.categoryId,
+                stonePriceMap,
+              ),
             ),
           }
         : undefined;
@@ -184,6 +210,7 @@ export class QuoteWorkflowService {
       include: REQUEST_DETAIL_INCLUDE,
     });
 
+    await this.syncFinalOption(id);
     const mapped = mapQuoteRequestDetail(updated);
     this.notifySaleQuoteCompleted(mapped);
     return mapped;
@@ -209,6 +236,7 @@ export class QuoteWorkflowService {
         data: { selectionStatus: OptionSelectionStatus.SELECTED },
       }),
     ]);
+    await this.syncFinalOption(id);
     return this.queryService.findOne(id, role);
   }
 
@@ -293,6 +321,7 @@ export class QuoteWorkflowService {
           data: { selectionStatus: OptionSelectionStatus.CLOSED },
         }),
       ]);
+      await this.syncFinalOption(id);
     }
 
     const updated = await this.prisma.quoteRequest.update({
@@ -354,6 +383,7 @@ export class QuoteWorkflowService {
     }
 
     await this.prisma.quoteOption.delete({ where: { id: optionId } });
+    await this.syncFinalOption(requestId);
     await this.auditLog.logAction(
       userId,
       role,
@@ -437,7 +467,7 @@ export class QuoteWorkflowService {
         return this.completeQuote(id, userId, { options: dto.options! });
       }
 
-      case QuoteAction.QUICK_QUOTE:
+      case QuoteAction.QUICK_QUOTE: {
         this.queryService.clearCache();
         await this.auditLog.logAction(
           userId,
@@ -446,24 +476,29 @@ export class QuoteWorkflowService {
           'QuoteRequest',
           id,
         );
-        return mapQuoteRequestDetail(
-          await this.prisma.quoteRequest.update({
-            where: { id },
-            data: {
-              status: QuoteStatus.PROCESSING,
-              options:
-                dto.options && dto.options.length > 0
-                  ? {
-                      deleteMany: {},
-                      create: dto.options.map((opt, idx) =>
-                        buildOptionCreateInput(opt, idx),
-                      ),
-                    }
-                  : undefined,
-            },
-            include: REQUEST_DETAIL_INCLUDE,
-          }),
-        );
+        const existing = await this.prisma.quoteRequest.findUnique({
+          where: { id },
+          select: { categoryId: true },
+        });
+        const updated = await this.prisma.quoteRequest.update({
+          where: { id },
+          data: {
+            status: QuoteStatus.PROCESSING,
+            options:
+              dto.options && dto.options.length > 0
+                ? {
+                    deleteMany: {},
+                    create: dto.options.map((opt, idx) =>
+                      buildOptionCreateInput(opt, idx, existing?.categoryId),
+                    ),
+                  }
+                : undefined,
+          },
+          include: REQUEST_DETAIL_INCLUDE,
+        });
+        await this.syncFinalOption(id);
+        return mapQuoteRequestDetail(updated);
+      }
 
       case QuoteAction.QUICK_APPROVE: {
         this.assertRole(
@@ -480,11 +515,15 @@ export class QuoteWorkflowService {
           id,
         );
 
-        const existingOptCount = await this.prisma.quoteOption.count({
-          where: { quoteRequestId: id },
+        const existingReq = await this.prisma.quoteRequest.findUnique({
+          where: { id },
+          select: { categoryId: true, _count: { select: { options: true } } },
         });
+        if (!existingReq) {
+          throw new NotFoundException('Không tìm thấy yêu cầu báo giá');
+        }
         if (
-          existingOptCount === 0 &&
+          existingReq._count.options === 0 &&
           (!dto.options || dto.options.length === 0)
         ) {
           throw new BadRequestException(
@@ -502,13 +541,14 @@ export class QuoteWorkflowService {
                 ? {
                     deleteMany: {},
                     create: dto.options.map((opt, idx) =>
-                      buildOptionCreateInput(opt, idx),
+                      buildOptionCreateInput(opt, idx, existingReq.categoryId),
                     ),
                   }
                 : undefined,
           },
           include: REQUEST_DETAIL_INCLUDE,
         });
+        await this.syncFinalOption(id);
         const mapped = mapQuoteRequestDetail(approved);
         this.notifySaleQuoteCompleted(mapped);
         return mapped;

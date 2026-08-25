@@ -13,6 +13,10 @@ export class FilterQuoteRequestDto {
 
   @IsOptional()
   @IsString()
+  customerId?: string;
+
+  @IsOptional()
+  @IsString()
   requesterId?: string;
 
   @IsOptional()

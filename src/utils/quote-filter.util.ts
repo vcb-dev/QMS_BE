@@ -13,6 +13,7 @@ export function buildQuoteWhereClause(
   const {
     status,
     search,
+    customerId,
     requesterId,
     assigneeId,
     categoryId,
@@ -25,6 +26,10 @@ export function buildQuoteWhereClause(
   } = filterDto;
 
   const andConditions: any[] = [];
+
+  if (customerId) {
+    andConditions.push({ customerId });
+  }
 
   const targetOwner = ownerId || requesterId;
   if (targetOwner) {

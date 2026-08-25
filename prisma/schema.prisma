@@ -295,6 +295,13 @@ model QuoteRequest {
   createdAt            DateTime            @default(now()) @map("created_at")
   updatedAt            DateTime            @updatedAt @map("updated_at")
 
+  // Denormalize "phương án báo giá đại diện" (pickPrimaryOption) — đồng bộ app-layer bằng
+  // syncFinalOption() trong quote-workflow.service.ts mỗi khi options của đơn thay đổi. Cột scalar
+  // thuần, không khai báo quan hệ Prisma — đây là cache, không phải quan hệ nghiệp vụ.
+  finalOptionId String?  @map("final_option_id")
+  finalPrice    Decimal? @map("final_price") @db.Decimal(14, 2)
+
+  @@index([status, finalPrice])
   @@index([status, createdAt(sort: Desc)])
   @@index([requesterId])
   @@index([requesterId, status])
@@ -382,10 +389,17 @@ model QuoteOption {
   materials QuoteOptionMaterial[]
   stones    QuoteOptionStone[]
 
+  // Khóa gộp trùng sản phẩm cho trang Quản Lý Sản Phẩm — categoryId (của đơn cha) + chất liệu
+  // (materialId:weightChi, sort) + đá (stoneId:quantity, sort, hoặc mô tả/giá tay). Tính SẴN lúc
+  // ghi option (buildOptionCreateInput) — KHÔNG tính lại lúc đọc, tránh phải join nhiều bảng mỗi
+  // lần query danh sách sản phẩm.
+  dedupKey String? @map("dedup_key")
+
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
   @@index([quoteRequestId])
+  @@index([dedupKey])
   @@map("quote_options")
 }
 

@@ -1,7 +1,8 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { FilterQuoteRequestDto } from './dto/filter-quote-request.dto';
-import { QuoteStatus, User, Role } from '@prisma/client';
+import { LibraryProductsQueryDto } from './dto/library-products-query.dto';
+import { QuoteStatus, User, Role, Prisma } from '@prisma/client';
 import { APP_CONSTANTS } from '../common/constants';
 import {
   REQUEST_DETAIL_INCLUDE,
@@ -16,6 +17,10 @@ import {
   getMyReqCount,
   primaryOptionPrice,
 } from '../utils/quote-counts.util';
+import {
+  bucketTimeline,
+  bucketPriceRange,
+} from '../utils/dashboard-stats.util';
 import { QuoteOptionsService, LivePriceItem } from './quote-options.service';
 
 @Injectable()
@@ -81,6 +86,512 @@ export class QuoteQueryService {
       quotedRevenue,
       counts,
     };
+  }
+
+  /**
+   * Dữ liệu 6 biểu đồ/bảng của Dashboard (timeline, sale ranking, phân bố danh mục/chất liệu/giá,
+   * sản phẩm nổi bật) — tính hết ở BE, gọi 1 lần cho kỳ hiện tại (KHÔNG gọi lại cho kỳ trước, kỳ
+   * trước chỉ cần getStats()). Dùng finalOptionId (đúng phương án CLOSED/SELECTED) cho
+   * materialDistribution/featuredProducts thay vì "option mới nhất" như hành vi FE cũ.
+   */
+  async getDashboardCharts(filterDto: FilterQuoteRequestDto, _user: User) {
+    const where = buildQuoteWhereClause(filterDto, _user);
+
+    const [timelineRows, saleGroups, categoryGroups, priceStatRows] =
+      await Promise.all([
+        this.prisma.quoteRequest.findMany({
+          where,
+          select: { createdAt: true, status: true },
+        }),
+        this.prisma.quoteRequest.groupBy({
+          by: ['requesterId', 'status'],
+          where,
+          _count: { _all: true },
+        }),
+        this.prisma.quoteRequest.groupBy({
+          by: ['categoryId'],
+          where,
+          _count: { _all: true },
+        }),
+        this.prisma.quoteRequest.findMany({
+          where,
+          select: { finalOptionId: true, finalPrice: true },
+        }),
+      ]);
+
+    const timeline = bucketTimeline(
+      timelineRows,
+      filterDto.timeRange || 'THIS_MONTH',
+    );
+
+    // saleStats — top 8
+    const saleTotals = new Map<string, { total: number; closed: number }>();
+    for (const g of saleGroups) {
+      const cur = saleTotals.get(g.requesterId) || { total: 0, closed: 0 };
+      cur.total += g._count._all;
+      if (g.status === QuoteStatus.CLOSED) cur.closed += g._count._all;
+      saleTotals.set(g.requesterId, cur);
+    }
+    const saleIds = [...saleTotals.keys()];
+    const saleUsers = saleIds.length
+      ? await this.prisma.user.findMany({
+          where: { id: { in: saleIds } },
+          select: { id: true, name: true },
+        })
+      : [];
+    const saleNameById = new Map(saleUsers.map((u) => [u.id, u.name]));
+    const saleStats = saleIds
+      .map((id) => ({
+        id,
+        name: saleNameById.get(id) || 'Chưa rõ',
+        total: saleTotals.get(id)!.total,
+        closed: saleTotals.get(id)!.closed,
+      }))
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 8);
+
+    // categoryDistribution — top 8
+    const categoryIds = categoryGroups
+      .map((g) => g.categoryId)
+      .filter((id): id is string => !!id);
+    const categories = categoryIds.length
+      ? await this.prisma.productCategory.findMany({
+          where: { id: { in: categoryIds } },
+          select: { id: true, name: true },
+        })
+      : [];
+    const categoryNameById = new Map(categories.map((c) => [c.id, c.name]));
+    const categoryDistribution = categoryGroups
+      .map((g) => ({
+        name:
+          (g.categoryId && categoryNameById.get(g.categoryId)) ||
+          'Chưa phân loại',
+        value: g._count._all,
+      }))
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 8);
+
+    // materialDistribution + featuredProducts — dùng finalOptionId (phương án đại diện đúng nghiệp vụ)
+    const finalOptionIds = priceStatRows
+      .map((r) => r.finalOptionId)
+      .filter((id): id is string => !!id);
+
+    const [optionMaterials, featuredOptions] = await Promise.all([
+      finalOptionIds.length
+        ? this.prisma.quoteOptionMaterial.findMany({
+            where: { optionId: { in: finalOptionIds } },
+            select: { optionId: true, material: { select: { name: true } } },
+          })
+        : Promise.resolve([]),
+      finalOptionIds.length
+        ? this.prisma.quoteOption.findMany({
+            where: { id: { in: finalOptionIds } },
+            orderBy: { quotedDate: 'desc' },
+            take: 4,
+            select: {
+              id: true,
+              quotedPrice: true,
+              quoteRequest: {
+                select: {
+                  id: true,
+                  category: { select: { name: true } },
+                  images: {
+                    select: { id: true, imageUrl: true },
+                    orderBy: { id: 'asc' },
+                  },
+                },
+              },
+              materials: { select: { material: { select: { name: true } } } },
+            },
+          })
+        : Promise.resolve([]),
+    ]);
+
+    const materialsByOption = new Map<string, string[]>();
+    for (const row of optionMaterials) {
+      const arr = materialsByOption.get(row.optionId) || [];
+      arr.push(row.material.name);
+      materialsByOption.set(row.optionId, arr);
+    }
+    const materialMap = new Map<string, number>();
+    for (const row of priceStatRows) {
+      const names = row.finalOptionId
+        ? materialsByOption.get(row.finalOptionId)
+        : undefined;
+      const effective = names && names.length > 0 ? names : ['Chưa rõ'];
+      for (const name of effective)
+        materialMap.set(name, (materialMap.get(name) || 0) + 1);
+    }
+    const materialDistribution = [...materialMap.entries()]
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 8);
+
+    const priceRangeDistribution = bucketPriceRange(
+      priceStatRows.map((r) => Number(r.finalPrice || 0)),
+    );
+
+    const featuredProducts = featuredOptions.map((o: any) => {
+      const matNames = o.materials.map((m: any) => m.material.name);
+      const catName = o.quoteRequest.category?.name || '';
+      return {
+        key: `${o.quoteRequest.id}:${o.id}`,
+        productName:
+          `${catName} ${matNames.join(', ')}`.trim() || 'Sản phẩm chế tác',
+        price: Number(o.quotedPrice || 0),
+        images: o.quoteRequest.images,
+      };
+    });
+
+    return {
+      timeline,
+      saleStats,
+      categoryDistribution,
+      materialDistribution,
+      priceRangeDistribution,
+      featuredProducts,
+    };
+  }
+
+  /**
+   * Hiệu suất Sale (tổng đơn/đã chốt/tỷ lệ chốt, TẤT CẢ sale active — không cắt top 8 như
+   * Dashboard) + hiệu suất người báo giá (thời gian TB báo giá/xử lý). Dùng finalOptionId cho
+   * quotedDate — cùng nguyên tắc đã áp dụng ở getDashboardCharts.
+   */
+  async getStaffPerformance() {
+    const [saleGroups, saleUsers, pricerRows, pricerUsers] = await Promise.all([
+      this.prisma.quoteRequest.groupBy({
+        by: ['requesterId', 'status'],
+        where: { requester: { role: Role.SALE, isActive: true } },
+        _count: { _all: true },
+      }),
+      this.prisma.user.findMany({
+        where: { role: Role.SALE, isActive: true },
+        select: { id: true, name: true },
+      }),
+      this.prisma.quoteRequest.findMany({
+        where: {
+          assignee: { role: Role.ORDER, isActive: true },
+          acceptedAt: { not: null },
+        },
+        select: {
+          assigneeId: true,
+          acceptedAt: true,
+          returnedAt: true,
+          status: true,
+          updatedAt: true,
+          finalOptionId: true,
+        },
+      }),
+      this.prisma.user.findMany({
+        where: { role: Role.ORDER, isActive: true },
+        select: { id: true, name: true },
+      }),
+    ]);
+
+    const saleTotals = new Map<string, { total: number; closed: number }>();
+    for (const g of saleGroups) {
+      const cur = saleTotals.get(g.requesterId) || { total: 0, closed: 0 };
+      cur.total += g._count._all;
+      if (g.status === QuoteStatus.CLOSED) cur.closed += g._count._all;
+      saleTotals.set(g.requesterId, cur);
+    }
+    const saleStats = saleUsers
+      .map((u) => {
+        const t = saleTotals.get(u.id) || { total: 0, closed: 0 };
+        return {
+          id: u.id,
+          name: u.name,
+          total: t.total,
+          closed: t.closed,
+          closeRate: t.total > 0 ? (t.closed / t.total) * 100 : 0,
+        };
+      })
+      .sort((a, b) => b.total - a.total);
+
+    const optionIds = pricerRows
+      .map((r) => r.finalOptionId)
+      .filter((id): id is string => !!id);
+    const optionDates = optionIds.length
+      ? await this.prisma.quoteOption.findMany({
+          where: { id: { in: optionIds } },
+          select: { id: true, quotedDate: true },
+        })
+      : [];
+    const quotedDateByOptionId = new Map(
+      optionDates.map((o) => [o.id, o.quotedDate]),
+    );
+
+    const handledCountByAssignee = new Map<string, number>();
+    const durationsByAssignee = new Map<
+      string,
+      { quote: number[]; process: number[] }
+    >();
+    for (const r of pricerRows) {
+      if (!r.assigneeId || !r.acceptedAt) continue;
+      handledCountByAssignee.set(
+        r.assigneeId,
+        (handledCountByAssignee.get(r.assigneeId) || 0) + 1,
+      );
+      const acceptedMs = new Date(r.acceptedAt).getTime();
+      const quotedDate = r.finalOptionId
+        ? quotedDateByOptionId.get(r.finalOptionId)
+        : null;
+      const bucket = durationsByAssignee.get(r.assigneeId) || {
+        quote: [],
+        process: [],
+      };
+      if (quotedDate) {
+        const dur = new Date(quotedDate).getTime() - acceptedMs;
+        if (dur >= 0) {
+          bucket.quote.push(dur);
+          bucket.process.push(dur);
+        }
+      } else if (r.returnedAt) {
+        const dur = new Date(r.returnedAt).getTime() - acceptedMs;
+        if (dur >= 0) bucket.process.push(dur);
+      } else if (r.status === QuoteStatus.REJECTED && r.updatedAt) {
+        const dur = new Date(r.updatedAt).getTime() - acceptedMs;
+        if (dur >= 0) bucket.process.push(dur);
+      }
+      durationsByAssignee.set(r.assigneeId, bucket);
+    }
+
+    const avg = (arr: number[]) =>
+      arr.length > 0 ? arr.reduce((s, v) => s + v, 0) / arr.length : null;
+    const pricerStats = pricerUsers
+      .map((u) => {
+        const b = durationsByAssignee.get(u.id) || { quote: [], process: [] };
+        return {
+          id: u.id,
+          name: u.name,
+          totalHandled: handledCountByAssignee.get(u.id) || 0,
+          avgQuoteMs: avg(b.quote),
+          avgProcessMs: avg(b.process),
+        };
+      })
+      .sort((a, b) => b.totalHandled - a.totalHandled);
+
+    return { saleStats, pricerStats };
+  }
+
+  /**
+   * Danh sách sản phẩm đã báo giá (Thư viện/Quản lý sản phẩm) — gộp trùng theo dedupKey, sort +
+   * phân trang thật ở SQL. Bước 1 dùng raw SQL lấy đúng option_id đại diện mỗi nhóm trùng + tổng
+   * số lần trùng + phân trang; bước 2 hydrate chi tiết (materials/stones/images) bằng Prisma cho
+   * ĐÚNG các option_id của trang hiện tại (nhỏ, không kéo toàn bộ).
+   */
+  async getLibraryProducts(dto: LibraryProductsQueryDto) {
+    const page = dto.page ?? 1;
+    const limit = dto.limit ?? 8;
+    const offset = (page - 1) * limit;
+    const search = dto.search?.trim();
+
+    const filters: Prisma.Sql[] = [
+      Prisma.sql`qo.quoted_price IS NOT NULL`,
+      Prisma.sql`qr.status IN ('QUOTED', 'CLOSED')`,
+      Prisma.sql`qo.dedup_key IS NOT NULL`,
+    ];
+    if (dto.categoryId && dto.categoryId !== 'ALL') {
+      filters.push(Prisma.sql`qr.category_id = ${dto.categoryId}`);
+    }
+    if (dto.materialId && dto.materialId !== 'ALL') {
+      filters.push(
+        Prisma.sql`EXISTS (SELECT 1 FROM quote_option_materials qom WHERE qom.option_id = qo.id AND qom.material_id = ${dto.materialId})`,
+      );
+    }
+    if (search) {
+      filters.push(Prisma.sql`(
+        qr.code ILIKE ${`%${search}%`}
+        OR pc.name ILIKE ${`%${search}%`}
+        OR EXISTS (
+          SELECT 1 FROM quote_option_materials qom2
+          JOIN materials m ON m.id = qom2.material_id
+          WHERE qom2.option_id = qo.id AND m.name ILIKE ${`%${search}%`}
+        )
+      )`);
+    }
+    const cutoff = this.libraryTimeRangeCutoff(dto.timeRange);
+    if (cutoff) {
+      filters.push(
+        Prisma.sql`COALESCE(qo.quoted_date, qr.created_at) >= ${cutoff}`,
+      );
+    }
+    const whereSql = Prisma.join(filters, ' AND ');
+
+    const sortSql =
+      dto.sortMode === 'PRICE_ASC'
+        ? Prisma.sql`quoted_price ASC, option_id`
+        : dto.sortMode === 'MOST_QUOTED'
+          ? Prisma.sql`duplicate_count DESC, option_id`
+          : dto.sortMode === 'RECENT'
+            ? Prisma.sql`COALESCE(quoted_date, request_created_at) DESC, option_id`
+            : Prisma.sql`quoted_price DESC, option_id`;
+
+    const cteSql = Prisma.sql`
+      WITH candidates AS (
+        SELECT qo.id AS option_id, qo.dedup_key, qo.quoted_price, qo.quoted_date,
+               qr.id AS request_id, qr.created_at AS request_created_at
+        FROM quote_options qo
+        JOIN quote_requests qr ON qr.id = qo.quote_request_id
+        LEFT JOIN product_categories pc ON pc.id = qr.category_id
+        WHERE ${whereSql}
+      ),
+      deduped AS (
+        SELECT DISTINCT ON (dedup_key) *,
+          COUNT(*) OVER (PARTITION BY dedup_key) AS duplicate_count
+        FROM candidates
+        ORDER BY dedup_key, COALESCE(quoted_date, request_created_at) DESC
+      )
+      SELECT option_id, duplicate_count, quoted_price, quoted_date, request_created_at
+      FROM deduped
+    `;
+
+    const [pageRows, totalRows] = await Promise.all([
+      this.prisma.$queryRaw<{ option_id: string; duplicate_count: number }[]>(
+        Prisma.sql`
+        ${cteSql} ORDER BY ${sortSql} LIMIT ${limit} OFFSET ${offset}
+      `,
+      ),
+      this.prisma.$queryRaw<{ count: bigint }[]>(Prisma.sql`
+        SELECT COUNT(*)::bigint AS count FROM (${cteSql}) t
+      `),
+    ]);
+    const total = Number(totalRows[0]?.count || 0);
+
+    const duplicateCountByOptionId = new Map(
+      pageRows.map((r) => [r.option_id, Number(r.duplicate_count)]),
+    );
+    const optionIds = pageRows.map((r) => r.option_id);
+
+    const options = optionIds.length
+      ? await this.prisma.quoteOption.findMany({
+          where: { id: { in: optionIds } },
+          select: {
+            ...OPTION_SUMMARY_SELECT,
+            quoteRequest: {
+              select: {
+                id: true,
+                code: true,
+                categoryId: true,
+                createdAt: true,
+                category: { select: { name: true } },
+                images: {
+                  select: { id: true, imageUrl: true },
+                  orderBy: { id: 'asc' },
+                },
+              },
+            },
+          },
+        })
+      : [];
+
+    if (dto.withLivePrice === 'true') {
+      await this.attachLivePricesToOptions(options as any[]);
+    }
+
+    const optionById = new Map(options.map((o: any) => [o.id, o]));
+    const data = pageRows
+      .map((row) => optionById.get(row.option_id))
+      .filter((o): o is any => !!o)
+      .map((o: any) => {
+        const catName = o.quoteRequest.category?.name || '';
+        const matStr = (o.materials || [])
+          .map((m: any) => m.material?.name)
+          .filter(Boolean)
+          .join(', ');
+        const weightVal = o.weightChi;
+        const weightDisplay =
+          weightVal != null && Number(weightVal) > 0
+            ? `${weightVal} chỉ`
+            : null;
+
+        let stoneDisplay = 'Không đính đá';
+        if (o.stones && o.stones.length > 0) {
+          const totalStones = o.stones.reduce(
+            (sum: number, s: any) => sum + (s.quantity || 1),
+            0,
+          );
+          const names = o.stones
+            .map((s: any) => `${s.quantity}v ${s.stone?.name || 'đá'}`)
+            .join(', ');
+          stoneDisplay = `${totalStones} viên (${names})`;
+        } else if (o.stoneDescription) {
+          stoneDisplay = o.stoneDescription;
+        } else if (o.stoneCost && Number(o.stoneCost) > 0) {
+          stoneDisplay = `Đá trị giá ${Number(o.stoneCost).toLocaleString('vi-VN')}đ`;
+        }
+
+        return {
+          key: `${o.quoteRequest.id}:${o.id}`,
+          requestId: o.quoteRequest.id,
+          code: o.quoteRequest.code,
+          categoryId: o.quoteRequest.categoryId,
+          images: o.quoteRequest.images,
+          option: o,
+          productName: `${catName} ${matStr}`.trim() || 'Sản phẩm chế tác',
+          matStr,
+          weightDisplay,
+          stoneDisplay,
+          materialIds: (o.materials || [])
+            .map((m: any) => m.materialId)
+            .filter(Boolean),
+          requestCreatedAt: o.quoteRequest.createdAt,
+          duplicateCount: duplicateCountByOptionId.get(o.id) || 1,
+        };
+      });
+
+    return {
+      data,
+      meta: { total, page, limit, totalPages: Math.ceil(total / limit) || 1 },
+    };
+  }
+
+  private libraryTimeRangeCutoff(timeRange: string | undefined): Date | null {
+    const now = new Date();
+    if (timeRange === 'TODAY')
+      return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    if (timeRange === 'THIS_WEEK') {
+      const day = now.getDay() || 7;
+      return new Date(
+        now.getFullYear(),
+        now.getMonth(),
+        now.getDate() - day + 1,
+      );
+    }
+    if (timeRange === 'THIS_MONTH')
+      return new Date(now.getFullYear(), now.getMonth(), 1);
+    return null;
+  }
+
+  private async attachLivePricesToOptions(options: any[]) {
+    const inputs: LivePriceItem[] = [];
+    for (const opt of options) {
+      if (opt.quotedPrice == null) continue;
+      inputs.push({
+        key: opt.id,
+        materials: (opt.materials || []).map((m: any) => ({
+          materialId: m.materialId,
+          weightChi: Number(m.weightChi) || 0,
+        })),
+        laborCost: Number(opt.laborCost) || 0,
+        vatRate: opt.vat != null ? Number(opt.vat) : 10,
+        stones:
+          (opt.stones || []).length > 0
+            ? opt.stones.map((s: any) => ({
+                stoneId: s.stoneId,
+                quantity: s.quantity,
+              }))
+            : undefined,
+        manualStoneCost: Number(opt.stoneCost) || 0,
+      });
+    }
+    if (inputs.length === 0) return;
+    const priceMap =
+      await this.quoteOptionsService.batchComputeLivePrices(inputs);
+    for (const opt of options) {
+      if (priceMap.has(opt.id)) opt.livePrice = priceMap.get(opt.id);
+    }
   }
 
   async findAll(filterDto: FilterQuoteRequestDto, _user: User) {

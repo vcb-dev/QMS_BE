@@ -26,6 +26,7 @@ import { QuoteRequestsService } from './quote-requests.service';
 import { CreateQuoteRequestDto } from './dto/create-quote-request.dto';
 import { UpdateQuoteRequestDto } from './dto/update-quote-request.dto';
 import { FilterQuoteRequestDto } from './dto/filter-quote-request.dto';
+import { LibraryProductsQueryDto } from './dto/library-products-query.dto';
 import { UpdateQuoteStatusDto } from './dto/update-quote-status.dto';
 import { ExportQuoteRequestDto } from './dto/export-quote-request.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -84,6 +85,36 @@ export class QuoteRequestsController {
     @CurrentUser() user: any,
   ) {
     return this.quoteQueryService.getStats(filterDto, user);
+  }
+
+  @ApiOperation({
+    summary:
+      'Lấy dữ liệu 6 biểu đồ/bảng của Dashboard (timeline, sale ranking, phân bố danh mục/chất liệu/giá, sản phẩm nổi bật)',
+  })
+  @Get('dashboard-charts')
+  async getDashboardCharts(
+    @Query() filterDto: FilterQuoteRequestDto,
+    @CurrentUser() user: any,
+  ) {
+    return this.quoteQueryService.getDashboardCharts(filterDto, user);
+  }
+
+  @ApiOperation({
+    summary:
+      'Hiệu suất Sale (tổng đơn/đã chốt/tỷ lệ chốt) + hiệu suất người báo giá (thời gian TB)',
+  })
+  @Get('staff-performance')
+  async getStaffPerformance() {
+    return this.quoteQueryService.getStaffPerformance();
+  }
+
+  @ApiOperation({
+    summary:
+      'Danh sách sản phẩm đã báo giá (Thư viện) — gộp trùng theo dedupKey, sort/phân trang thật ở SQL',
+  })
+  @Get('library-products')
+  async getLibraryProducts(@Query() dto: LibraryProductsQueryDto) {
+    return this.quoteQueryService.getLibraryProducts(dto);
   }
 
   @ApiOperation({

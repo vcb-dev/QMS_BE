@@ -3,6 +3,6 @@
 -- lịch sử đã copy đủ sang base_metal_price_history (backfill Task 3, đã verify). Không code nào
 -- (kể cả prisma/seed.ts) còn đụng tới bảng này nữa.
 
-ALTER TABLE "metal_prices" DROP CONSTRAINT IF EXISTS "metal_prices_updated_by_id_fkey";
+ALTER TABLE IF EXISTS "metal_prices" DROP CONSTRAINT IF EXISTS "metal_prices_updated_by_id_fkey";
 
-DROP TABLE "metal_prices";
+DROP TABLE IF EXISTS "metal_prices";

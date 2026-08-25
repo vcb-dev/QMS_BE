@@ -2,10 +2,24 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateCustomerDto } from './dto/create-customer.dto';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
+import { CustomerStatsQueryDto } from './dto/customer-stats-query.dto';
 import { AuditLogService } from '../audit-log/audit-log.service';
-import { Role } from '@prisma/client';
+import { Role, Prisma } from '@prisma/client';
 
 const CUSTOMER_INCLUDE = { province: true, ward: true } as const;
+
+interface CustomerStatRow {
+  id: string;
+  name: string;
+  phone: string | null;
+  address: string | null;
+  provinceId: string | null;
+  wardId: string | null;
+  total_orders: number;
+  total_closed: number;
+  closed_value: string;
+  last_order: Date | null;
+}
 
 @Injectable()
 export class CustomersService {
@@ -28,6 +42,121 @@ export class CustomersService {
       include: CUSTOMER_INCLUDE,
       orderBy: { createdAt: 'desc' },
     });
+  }
+
+  async getStats(dto: CustomerStatsQueryDto) {
+    const page = dto.page ?? 1;
+    const limit = dto.limit ?? 12;
+    const offset = (page - 1) * limit;
+    const search = dto.search?.trim();
+    const sortMode = dto.sortMode ?? 'TOP_SPEND';
+
+    const searchCondition = search
+      ? Prisma.sql`WHERE (c.name ILIKE ${`%${search}%`} OR c.phone ILIKE ${`%${search}%`})`
+      : Prisma.empty;
+
+    const orderBy =
+      sortMode === 'MOST_ORDERS'
+        ? Prisma.sql`total_orders DESC, c.id`
+        : sortMode === 'RECENT'
+          ? Prisma.sql`last_order DESC NULLS LAST, c.id`
+          : Prisma.sql`closed_value DESC, c.id`;
+
+    const rows = await this.prisma.$queryRaw<CustomerStatRow[]>(Prisma.sql`
+      SELECT c.id, c.name, c.phone, c.address,
+        c.province_id AS "provinceId", c.ward_id AS "wardId",
+        COUNT(qr.id)::int AS total_orders,
+        COUNT(qr.id) FILTER (WHERE qr.status = 'CLOSED')::int AS total_closed,
+        COALESCE(SUM(qr.final_price) FILTER (WHERE qr.status = 'CLOSED'), 0)::numeric AS closed_value,
+        MAX(qr.created_at) AS last_order
+      FROM customers c
+      LEFT JOIN quote_requests qr ON qr.customer_id = c.id
+      ${searchCondition}
+      GROUP BY c.id
+      ORDER BY ${orderBy}
+      LIMIT ${limit} OFFSET ${offset}
+    `);
+
+    const [{ count: totalRaw }] = await this.prisma.$queryRaw<
+      { count: bigint }[]
+    >(Prisma.sql`
+      SELECT COUNT(*)::bigint AS count FROM customers c ${searchCondition}
+    `);
+    const total = Number(totalRaw);
+
+    const [{ sum: totalClosedValueAllRaw }] = await this.prisma.$queryRaw<
+      { sum: string | null }[]
+    >(Prisma.sql`
+      SELECT COALESCE(SUM(final_price), 0)::numeric AS sum FROM quote_requests WHERE status = 'CLOSED'
+    `);
+
+    const provinceIds = [
+      ...new Set(
+        rows.map((r) => r.provinceId).filter((id): id is string => !!id),
+      ),
+    ];
+    const wardIds = [
+      ...new Set(rows.map((r) => r.wardId).filter((id): id is string => !!id)),
+    ];
+    const [provinces, wards] = await Promise.all([
+      provinceIds.length
+        ? this.prisma.province.findMany({
+            where: { id: { in: provinceIds } },
+            select: { id: true, name: true },
+          })
+        : Promise.resolve<{ id: string; name: string }[]>([]),
+      wardIds.length
+        ? this.prisma.ward.findMany({
+            where: { id: { in: wardIds } },
+            select: { id: true, name: true, districtName: true },
+          })
+        : Promise.resolve<
+            { id: string; name: string; districtName: string | null }[]
+          >([]),
+    ]);
+    const provinceById = new Map<string, string>(
+      provinces.map((p): [string, string] => [p.id, p.name]),
+    );
+    const wardById = new Map<
+      string,
+      { name: string; districtName: string | null }
+    >(
+      wards.map(
+        (w): [string, { name: string; districtName: string | null }] => [
+          w.id,
+          { name: w.name, districtName: w.districtName },
+        ],
+      ),
+    );
+
+    const data = rows.map((r) => ({
+      customer: {
+        id: r.id,
+        name: r.name,
+        phone: r.phone ?? undefined,
+        address: r.address ?? undefined,
+        province: r.provinceId
+          ? { id: r.provinceId, name: provinceById.get(r.provinceId) || '' }
+          : undefined,
+        ward: r.wardId
+          ? {
+              id: r.wardId,
+              name: wardById.get(r.wardId)?.name || '',
+              districtName: wardById.get(r.wardId)?.districtName || undefined,
+            }
+          : undefined,
+      },
+      totalOrders: r.total_orders,
+      totalClosed: r.total_closed,
+      closedValue: Number(r.closed_value),
+      lastOrder: r.last_order,
+    }));
+
+    return {
+      data,
+      meta: { total, page, limit, totalPages: Math.ceil(total / limit) || 1 },
+      totalClosedValueAll: Number(totalClosedValueAllRaw),
+    };
   }
 
   async findOne(id: string) {

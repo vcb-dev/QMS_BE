@@ -76,8 +76,29 @@ export function buildProductName(
 export function buildOptionCreateInput(
   opt: any,
   idx: number,
+  categoryId?: string,
   stonePriceMap?: Map<string, number>,
 ) {
+  const matKey =
+    opt.materials?.length > 0
+      ? opt.materials
+          .map(
+            (m: any) =>
+              `${m.materialId}:${m.weightChi != null ? m.weightChi : opt.weightChi || 0}`,
+          )
+          .sort()
+          .join(',')
+      : `${opt.materialName || ''}:${opt.weightChi || 0}`;
+  const stoneKey =
+    opt.stones?.length > 0
+      ? opt.stones
+          .map((s: any) => `${s.stoneId}:${s.quantity}`)
+          .sort()
+          .join(',')
+      : opt.stoneDescription ||
+        (opt.stoneCost ? `cost:${opt.stoneCost}` : 'none');
+  const dedupKey = `${categoryId || ''}|${matKey}|${stoneKey}`;
+
   return {
     optionName: opt.optionName || `Phương án ${idx + 1}`,
     weightChi: opt.weightChi,
@@ -92,6 +113,7 @@ export function buildOptionCreateInput(
     quotedDate: opt.quotedPrice != null ? new Date() : undefined,
     note: opt.note,
     stoneDescription: opt.stoneDescription,
+    dedupKey,
     // FE đánh dấu phương án nào là giá chính (radio) — ghi thẳng vào selectionStatus, nguồn sự
     // thật duy nhất cho "phương án nào đang dùng để báo giá" (thay QuoteRequest.selectedOptionId cũ).
     selectionStatus: opt.isSelected
@@ -169,4 +191,17 @@ export function pickPrimaryOption(quote: any) {
   const priced = options.filter((o: any) => o.quotedPrice != null);
   if (priced.length > 0) return priced[priced.length - 1];
   return options[0];
+}
+
+// Rút gọn kết quả pickPrimaryOption thành 2 giá trị cần denormalize xuống QuoteRequest —
+// dùng bởi syncFinalOption() trong quote-workflow.service.ts, tách riêng để test thuần không cần
+// mock Prisma.
+export function computeFinalOption(
+  options: { id: string; quotedPrice: any; selectionStatus: string }[],
+): { finalOptionId: string | null; finalPrice: any } {
+  const primary = pickPrimaryOption({ options });
+  return {
+    finalOptionId: primary?.id ?? null,
+    finalPrice: primary?.quotedPrice ?? null,
+  };
 }

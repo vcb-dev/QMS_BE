@@ -27,6 +27,12 @@ export class UsersController {
     return this.usersService.findPending();
   }
 
+  @ApiOperation({ summary: 'Thống kê tổng hợp người dùng (tổng số, theo vai trò, theo bộ phận, chờ duyệt)' })
+  @Get('stats')
+  async getStats() {
+    return this.usersService.getStats();
+  }
+
   @ApiOperation({ summary: 'Lấy thông tin người dùng theo ID' })
   @Get(':id')
   async findOne(@Param('id') id: string) {

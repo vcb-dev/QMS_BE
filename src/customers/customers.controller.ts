@@ -1,8 +1,19 @@
-import { Controller, Get, Post, Patch, Delete, Body, Param, Query, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Patch,
+  Delete,
+  Body,
+  Param,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { CustomersService } from './customers.service';
 import { CreateCustomerDto } from './dto/create-customer.dto';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
+import { CustomerStatsQueryDto } from './dto/customer-stats-query.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Role } from '@prisma/client';
@@ -20,13 +31,25 @@ export class CustomersController {
     return this.customersService.findAll(search);
   }
 
+  @ApiOperation({
+    summary:
+      'Số liệu tổng hợp theo khách hàng (tổng đơn/đã chốt/giá trị/đơn gần nhất) — phân trang & sort thật ở SQL',
+  })
+  @Get('stats')
+  async getStats(@Query() dto: CustomerStatsQueryDto) {
+    return this.customersService.getStats(dto);
+  }
+
   @ApiOperation({ summary: 'Lấy chi tiết khách hàng theo ID' })
   @Get(':id')
   async findOne(@Param('id') id: string) {
     return this.customersService.findOne(id);
   }
 
-  @ApiOperation({ summary: 'Tạo mới khách hàng (Tách biệt tỉnh/thành và phường/xã/quận/huyện)' })
+  @ApiOperation({
+    summary:
+      'Tạo mới khách hàng (Tách biệt tỉnh/thành và phường/xã/quận/huyện)',
+  })
   @Post()
   async create(
     @Body() dto: CreateCustomerDto,

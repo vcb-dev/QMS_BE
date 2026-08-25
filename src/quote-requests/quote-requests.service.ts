@@ -142,7 +142,7 @@ export class QuoteRequestsService {
       effectiveOptions.length > 0
         ? {
             create: effectiveOptions.map((opt, idx) =>
-              buildOptionCreateInput(opt, idx, stonePriceMap),
+              buildOptionCreateInput(opt, idx, dto.categoryId, stonePriceMap),
             ),
           }
         : undefined;
