@@ -1,20 +1,22 @@
 import { Controller, Post, Get, Body, UseGuards } from '@nestjs/common';
-import { PricingConfigService } from './pricing-config.service';
+import { QuoteOptionsService } from './quote-options.service';
 import {
   CalculateMultiInput,
   CalculatePriceInput,
-} from './dto/pricing-config.dto';
+} from './dto/calculate-price.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { Role } from '@prisma/client';
 
+// Máy tính giá dùng lúc Sale/Order soạn phương án báo giá (trước khi lưu) — khác batchComputeLivePrices
+// (tính lại giá cho option ĐÃ LƯU, không qua HTTP, gọi thẳng từ QuoteQueryService).
 @UseGuards(JwtAuthGuard)
-@Controller('pricing-config')
-export class PricingConfigController {
+@Controller('quote-options')
+export class QuoteOptionsController {
   constructor(
-    private readonly pricingConfigService: PricingConfigService,
+    private readonly quoteOptionsService: QuoteOptionsService,
     private readonly auditLog: AuditLogService,
     private readonly prisma: PrismaService,
   ) {}
@@ -39,7 +41,7 @@ export class PricingConfigController {
   @Get('silver-multipliers')
   async getSilverMultipliers() {
     const silverMultipliers =
-      await this.pricingConfigService.getSilverMultipliers();
+      await this.quoteOptionsService.getSilverMultipliers();
     return { silverMultipliers };
   }
 
@@ -53,7 +55,7 @@ export class PricingConfigController {
       actorId,
       actorRole,
       'CALCULATE_PRICE',
-      'PricingConfig',
+      'QuoteOption',
     );
 
     // Sale không được tự nhập tiền công/mức VAT nữa. Cả hai lấy theo danh mục sản phẩm đã chọn.
@@ -68,7 +70,7 @@ export class PricingConfigController {
       dto.silverMultiplier = undefined;
     }
 
-    const result = await this.pricingConfigService.calculate5StepPrice(dto);
+    const result = await this.quoteOptionsService.calculate5StepPrice(dto);
 
     // Sale chỉ được xem Giá bán — ẩn toàn bộ cấu thành giá (giá vốn/tiền công/giá vàng/VAT) theo spec
     if (actorRole === Role.SALE) {
@@ -91,7 +93,7 @@ export class PricingConfigController {
       actorId,
       actorRole,
       'CALCULATE_MULTI_MATERIAL_PRICE',
-      'PricingConfig',
+      'QuoteOption',
     );
 
     if (actorRole === Role.SALE) {
@@ -102,7 +104,7 @@ export class PricingConfigController {
       dto.vatRate = dto.includeVat === false ? 0 : vatRate;
     }
 
-    const result = await this.pricingConfigService.calculateMulti(dto);
+    const result = await this.quoteOptionsService.calculateMulti(dto);
     if (actorRole === Role.SALE) {
       return {
         quotedPrice: result.quotedPrice,
@@ -121,7 +123,7 @@ export class PricingConfigController {
       actorId,
       actorRole,
       'GENERATE_PRICING_OPTIONS',
-      'PricingConfig',
+      'QuoteOption',
     );
 
     // Sale không tự nhập tiền công/mức VAT. Cả hai lấy theo danh mục sản phẩm đã chọn.
@@ -136,7 +138,7 @@ export class PricingConfigController {
       dto.silverMultiplier = undefined;
     }
 
-    const options = await this.pricingConfigService.generateOptions(dto);
+    const options = await this.quoteOptionsService.generateOptions(dto);
 
     // Sale không xem Tiền công/VAT trong từng phương án — chỉ xem Giá bán
     if (actorRole === Role.SALE) {

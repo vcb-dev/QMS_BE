@@ -19,34 +19,14 @@ export class CreateCustomerDto {
   phone?: string;
 
   @ApiPropertyOptional({
-    description:
-      'Tỉnh / Thành phố riêng biệt (text tự do, giữ tương thích ngược)',
-    example: 'Hồ Chí Minh',
-  })
-  @IsOptional()
-  @IsString()
-  province?: string;
-
-  @ApiPropertyOptional({
-    description:
-      'Phường / Xã / Quận / Huyện riêng biệt (text tự do, giữ tương thích ngược)',
-    example: 'Phường Bến Nghé, Quận 1',
-  })
-  @IsOptional()
-  @IsString()
-  ward?: string;
-
-  @ApiPropertyOptional({
-    description:
-      'ID tỉnh/thành đã chọn từ danh mục — ưu tiên hơn province (text) nếu có',
+    description: 'ID tỉnh/thành đã chọn từ danh mục',
   })
   @IsOptional()
   @IsString()
   provinceId?: string;
 
   @ApiPropertyOptional({
-    description:
-      'ID phường/xã đã chọn từ danh mục — ưu tiên hơn ward (text) nếu có',
+    description: 'ID phường/xã đã chọn từ danh mục',
   })
   @IsOptional()
   @IsString()

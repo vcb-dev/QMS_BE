@@ -13,6 +13,18 @@ function requiredNumberEnv(name: string): number {
     throw new Error(`Environment variable ${name} must be a number`);
   return value;
 }
+export interface VnGoldPriceItem {
+  key: string;
+  label: string;
+  priceVnd: number; // đ/chỉ
+  changeAmount: number | null;
+  changePct: number | null;
+}
+
+export interface VangTodaySource {
+  code: string; // data-code trên vang.today
+  label: string;
+}
 
 export const APP_CONSTANTS = {
   PORT: requiredNumberEnv('PORT'),
@@ -56,4 +68,13 @@ export const APP_CONSTANTS = {
     CLOSED: 'Đã chốt',
     REJECTED: 'Bị từ chối',
   },
+VANG_TODAY_SOURCES : [
+    { code: 'SJL1L10', label: 'SJC 9999' },
+    { code: 'BT9999NTT', label: 'Bảo Tín 9999' },
+    { code: 'DOHNL', label: 'DOJI Hà Nội' },
+    { code: 'PQHN24NTT', label: 'PNJ 24K' },
+  ],
+  
+  VANG_TODAY_PATH : '/vi/'
+  
 };

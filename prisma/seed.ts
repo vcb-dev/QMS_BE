@@ -273,19 +273,30 @@ async function main() {
     }
   }
 
-  // 6. TẠO GIÁ KIM LOẠI (Metal Prices — bảng lịch sử, chỉ seed dòng đầu tiên nếu chưa có dòng nào)
-  console.log('📌 6. Khởi tạo giá kim loại thị trường...');
-  const existingMetalPrice = await prisma.metalPrice.count();
-  if (existingMetalPrice === 0) {
-    await prisma.metalPrice.create({
-      data: {
-        gold24kVnd: 13900000,
-        silverVnd: 1200000,
-        platinumVnd: 6000000,
-        source: 'giá khởi tạo mặc định (Vàng 24K & Bạc)',
-        isActive: true,
-      },
-    });
+  // 6. TẠO KIM LOẠI GỐC + GIÁ KHỞI TẠO (BaseMetal + BaseMetalPriceHistory — bảng lịch sử, chỉ seed nếu chưa có kim loại gốc nào)
+  console.log('📌 6. Khởi tạo danh mục kim loại gốc & giá thị trường...');
+  const existingBaseMetal = await prisma.baseMetal.count();
+  if (existingBaseMetal === 0) {
+    const baseMetalSeeds = [
+      { name: 'Vàng 24K', isDefault: true, priceVnd: 13900000 },
+      { name: 'Bạc', isDefault: false, priceVnd: 1200000 },
+      { name: 'Bạch kim', isDefault: false, priceVnd: 6000000 },
+    ];
+    for (const bm of baseMetalSeeds) {
+      await prisma.baseMetal.create({
+        data: {
+          name: bm.name,
+          isDefault: bm.isDefault,
+          priceHistory: {
+            create: {
+              priceVnd: bm.priceVnd,
+              source: 'giá khởi tạo mặc định',
+              isActive: true,
+            },
+          },
+        },
+      });
+    }
   }
 
   // PricingConfig (bảng cấu hình global cũ) đã xóa hoàn toàn — VAT giờ nằm theo danh mục sản

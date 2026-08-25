@@ -2,9 +2,12 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { APP_CONSTANTS } from '../common/constants';
 import { CacheWithTtl } from '../common/cache-with-ttl.util';
-import { Material, PricingFormula } from '@prisma/client';
+import { Material, PricingFormula, BaseMetal } from '@prisma/client';
 
-type MaterialWithFormula = Material & { pricingFormula: PricingFormula };
+type MaterialWithFormula = Material & {
+  pricingFormula: PricingFormula;
+  baseMetal: BaseMetal | null;
+};
 
 type PlainMaterial = Omit<MaterialWithFormula, 'priceRatioPct'> & {
   priceRatioPct: number;
@@ -40,7 +43,7 @@ export class MaterialsService {
     const data = await this.prisma.material.findMany({
       where: { isActive: true },
       orderBy: { name: 'asc' },
-      include: { pricingFormula: true },
+      include: { pricingFormula: true, baseMetal: true },
     });
     const plain = data.map((m) => this.toPlain(m));
     this.cache.set(plain);
@@ -49,7 +52,13 @@ export class MaterialsService {
 
   // pricingFormulaId bắt buộc — chất liệu mới phải trỏ ngay tới 1 công thức tính lãi có sẵn
   // (chọn công thức dùng chung, hoặc tạo công thức mới qua /pricing-formulas trước khi tạo chất liệu)
-  async create(name: string, pricingFormulaId: string, priceRatioPct?: number) {
+  // baseMetalId để trống = chất liệu phi kim loại (đá/phụ kiện, không tính theo giá kim loại gốc).
+  async create(
+    name: string,
+    pricingFormulaId: string,
+    priceRatioPct?: number,
+    baseMetalId?: string,
+  ) {
     assertValidRatio(priceRatioPct);
     if (!pricingFormulaId) {
       throw new BadRequestException(
@@ -58,24 +67,34 @@ export class MaterialsService {
     }
     this.cache.clear();
     const created = await this.prisma.material.create({
-      data: { name, priceRatioPct: priceRatioPct ?? 100, pricingFormulaId },
-      include: { pricingFormula: true },
+      data: {
+        name,
+        priceRatioPct: priceRatioPct ?? 100,
+        pricingFormulaId,
+        baseMetalId: baseMetalId || null,
+      },
+      include: { pricingFormula: true, baseMetal: true },
     });
     return this.toPlain(created);
   }
 
-  // Sửa % tính giá / công thức tính lãi / tên của 1 chất liệu đã có — dùng cho màn Cấu hình giá
-  // thay bảng tỷ lệ vàng + bảng lợi nhuận cũ (giờ nằm thẳng trên chất liệu, kết nối rõ ràng).
+  // Sửa % tính giá / công thức tính lãi / tên / kim loại gốc của 1 chất liệu đã có — dùng cho màn
+  // Cấu hình giá thay bảng tỷ lệ vàng + bảng lợi nhuận cũ (giờ nằm thẳng trên chất liệu).
   async update(
     id: string,
-    patch: { name?: string; priceRatioPct?: number; pricingFormulaId?: string },
+    patch: {
+      name?: string;
+      priceRatioPct?: number;
+      pricingFormulaId?: string;
+      baseMetalId?: string | null;
+    },
   ) {
     assertValidRatio(patch.priceRatioPct);
     this.cache.clear();
     const updated = await this.prisma.material.update({
       where: { id },
       data: patch,
-      include: { pricingFormula: true },
+      include: { pricingFormula: true, baseMetal: true },
     });
     return this.toPlain(updated);
   }

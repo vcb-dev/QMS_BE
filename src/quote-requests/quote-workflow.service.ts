@@ -16,13 +16,13 @@ import { QuoteQueryService } from './quote-query.service';
 import { MailService } from '../mail/mail.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { LarkNotificationService } from '../lark/lark-notification.service';
+import { QuoteOptionsService } from './quote-options.service';
 import {
   REQUEST_DETAIL_INCLUDE,
   buildOptionCreateInput,
-  buildStonePriceMap,
   mapQuoteRequestDetail,
   pickPrimaryOption,
-} from './utils/option-mapper.util';
+} from '../utils/option-mapper.util';
 
 @Injectable()
 export class QuoteWorkflowService {
@@ -32,6 +32,7 @@ export class QuoteWorkflowService {
     private mailService: MailService,
     private auditLog: AuditLogService,
     private larkService: LarkNotificationService,
+    private quoteOptionsService: QuoteOptionsService,
   ) {}
 
   private assertRole(role: Role, allowed: Role[], message: string) {
@@ -161,7 +162,7 @@ export class QuoteWorkflowService {
     // FE luôn gửi kèm options đầy đủ (mỗi phương án tự mang materials/stones riêng) —
     // xoá & ghi đè toàn bộ, không còn khái niệm "vá từng field rời" ở cấp Request nữa.
     const stonePriceMap = dto.options
-      ? await buildStonePriceMap(this.prisma, dto.options)
+      ? await this.quoteOptionsService.buildStonePriceMap(dto.options)
       : new Map<string, number>();
     const optionsCreate =
       dto.options && dto.options.length > 0
@@ -188,7 +189,7 @@ export class QuoteWorkflowService {
     return mapped;
   }
 
-  private async selectOption(id: string, optionId: string) {
+  private async selectOption(id: string, optionId: string, role: Role) {
     this.queryService.clearCache();
     const option = await this.prisma.quoteOption.findUnique({
       where: { id: optionId },
@@ -208,7 +209,7 @@ export class QuoteWorkflowService {
         data: { selectionStatus: OptionSelectionStatus.SELECTED },
       }),
     ]);
-    return this.queryService.findOne(id);
+    return this.queryService.findOne(id, role);
   }
 
   private async rejectQuote(id: string, userId: string, rejectReason: string) {
@@ -246,7 +247,7 @@ export class QuoteWorkflowService {
     return mapped;
   }
 
-  private async markClosed(id: string, optionId?: string) {
+  private async markClosed(id: string, role: Role, optionId?: string) {
     this.queryService.clearCache();
     const quote = await this.prisma.quoteRequest.findUnique({
       where: { id },
@@ -301,7 +302,12 @@ export class QuoteWorkflowService {
       },
       include: REQUEST_DETAIL_INCLUDE,
     });
-    return mapQuoteRequestDetail(updated);
+    const mapped = mapQuoteRequestDetail(updated);
+    // Sale gọi được action này — không được thấy cấu thành giá vốn trong response trả về.
+    if (role === Role.SALE) {
+      mapped.options = this.queryService.stripCostFieldsForSale(mapped.options);
+    }
+    return mapped;
   }
 
   // ORDER/ADMIN xóa 1 phương án báo giá không muốn đề xuất nữa (VD: nhập nhầm, hoặc phương án
@@ -363,7 +369,7 @@ export class QuoteWorkflowService {
     return mapQuoteRequestDetail(updated);
   }
 
-  private async resubmitQuote(id: string) {
+  private async resubmitQuote(id: string, role: Role) {
     this.queryService.clearCache();
     const updated = await this.prisma.quoteRequest.update({
       where: { id },
@@ -379,6 +385,10 @@ export class QuoteWorkflowService {
       `🔄 Đơn ${mapped.code} (${this.pickProductName(mapped)}) đã được gửi lại, cần xử lý`,
       mapped.id,
     );
+    // Sale gọi được action này — không được thấy cấu thành giá vốn trong response trả về.
+    if (role === Role.SALE) {
+      mapped.options = this.queryService.stripCostFieldsForSale(mapped.options);
+    }
     return mapped;
   }
 
@@ -579,7 +589,7 @@ export class QuoteWorkflowService {
           'QuoteRequest',
           id,
         );
-        return this.resubmitQuote(id);
+        return this.resubmitQuote(id, role);
 
       case QuoteAction.MARK_CLOSED:
         this.assertRole(
@@ -594,7 +604,7 @@ export class QuoteWorkflowService {
           'QuoteRequest',
           id,
         );
-        return this.markClosed(id, dto.optionId);
+        return this.markClosed(id, role, dto.optionId);
 
       case QuoteAction.SELECT_OPTION:
         this.assertRole(
@@ -614,7 +624,7 @@ export class QuoteWorkflowService {
           'QuoteRequest',
           id,
         );
-        return this.selectOption(id, dto.optionId);
+        return this.selectOption(id, dto.optionId, role);
 
       default:
         throw new BadRequestException(

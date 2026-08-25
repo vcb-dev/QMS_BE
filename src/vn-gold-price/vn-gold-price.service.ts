@@ -1,12 +1,8 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { Interval } from '@nestjs/schedule';
 import * as https from 'https';
-import { APP_CONSTANTS } from '../common/constants';
+import { APP_CONSTANTS,VnGoldPriceItem  } from '../common/constants';
 import { MaterialsService } from '../materials/materials.service';
-import { classifyMaterialType } from '../materials/material-type.util';
-import { VnGoldPriceItem } from './vn-gold-price.types';
-import { VANG_TODAY_PATH, VANG_TODAY_SOURCES } from './vn-gold-price.constants';
-
 @Injectable()
 export class VnGoldPriceService implements OnModuleInit {
   private readonly logger = new Logger(VnGoldPriceService.name);
@@ -164,7 +160,7 @@ export class VnGoldPriceService implements OnModuleInit {
 
     const materials = await this.materialsService.findAll();
     const goldMaterials = materials.filter(
-      (m) => classifyMaterialType(m.name) === 'GOLD',
+      (m) => (m as any).baseMetal?.isDefault,
     );
     const nextRaw: Record<string, number> = {};
 
@@ -192,7 +188,7 @@ export class VnGoldPriceService implements OnModuleInit {
   // thương hiệu ở VANG_TODAY_SOURCES, quy đổi từ đ/lượng sang đ/chỉ.
   private async refreshVangToday(): Promise<void> {
     const html = await this.httpGetText(
-      `${APP_CONSTANTS.VANG_TODAY_URL}${VANG_TODAY_PATH}`,
+      `${APP_CONSTANTS.VANG_TODAY_URL}${APP_CONSTANTS.VANG_TODAY_PATH}`,
     );
     const items = this.parseVangTodayItems(html);
     if (items.length === 0) {
@@ -205,7 +201,7 @@ export class VnGoldPriceService implements OnModuleInit {
   private parseVangTodayItems(html: string): VnGoldPriceItem[] {
     const items: VnGoldPriceItem[] = [];
 
-    for (const source of VANG_TODAY_SOURCES) {
+    for (const source of APP_CONSTANTS.VANG_TODAY_SOURCES) {
       const blockMatch = html.match(
         new RegExp(
           `data-code="${source.code}"[\\s\\S]*?<!-- History Panel -->`,
@@ -213,8 +209,11 @@ export class VnGoldPriceService implements OnModuleInit {
       );
       if (!blockMatch) continue;
 
+      // vang.today dùng nháy đơn cho span đổi giá khi có biến động (class='change-up'/'change-down')
+      // nhưng chuyển sang nháy kép khi giá đứng yên (class="change-neutral") — chấp nhận cả 2 kiểu,
+      // nếu không brand nào đứng giá hôm đó sẽ bị bỏ sót khỏi kết quả.
       const cellRegex =
-        /<div class="price-value">([\d.,]+)<span class="currency-unit">₫<\/span><\/div>\s*<div class="price-change"><span class='change-(up|down|neutral)'>([^<]*)<\/span><\/div>/g;
+        /<div class="price-value">([\d.,]+)<span class="currency-unit">₫<\/span><\/div>\s*<div class="price-change"><span class=["']change-(up|down|neutral)["']>([^<]*)<\/span><\/div>/g;
       const cells = [...blockMatch[0].matchAll(cellRegex)];
       const sellCell = cells[1]; // 0 = mua vào, 1 = bán ra
       if (!sellCell) continue;

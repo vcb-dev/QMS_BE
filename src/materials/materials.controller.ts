@@ -29,12 +29,18 @@ export class MaterialsController {
     @Body('name') name: string,
     @Body('pricingFormulaId') pricingFormulaId: string,
     @Body('priceRatioPct') priceRatioPct?: number,
+    @Body('baseMetalId') baseMetalId?: string,
   ) {
-    return this.materialsService.create(name, pricingFormulaId, priceRatioPct);
+    return this.materialsService.create(
+      name,
+      pricingFormulaId,
+      priceRatioPct,
+      baseMetalId,
+    );
   }
 
-  // Sửa % tính giá / công thức tính lãi của 1 chất liệu — chỉ ORDER/ADMIN, thay cho bảng tỷ lệ
-  // vàng + bảng lợi nhuận cũ ở pricing-config
+  // Sửa % tính giá / công thức tính lãi / kim loại gốc của 1 chất liệu — chỉ ORDER/ADMIN, thay
+  // cho bảng tỷ lệ vàng + bảng lợi nhuận cũ ở pricing-config
   @Roles(Role.ORDER, Role.ADMIN)
   @Patch(':id')
   async update(
@@ -42,11 +48,13 @@ export class MaterialsController {
     @Body('name') name?: string,
     @Body('priceRatioPct') priceRatioPct?: number,
     @Body('pricingFormulaId') pricingFormulaId?: string,
+    @Body('baseMetalId') baseMetalId?: string | null,
   ) {
     return this.materialsService.update(id, {
       name,
       priceRatioPct,
       pricingFormulaId,
+      baseMetalId,
     });
   }
 }

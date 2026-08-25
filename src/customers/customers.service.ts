@@ -4,9 +4,8 @@ import { CreateCustomerDto } from './dto/create-customer.dto';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { Role } from '@prisma/client';
-import { resolveLocation } from './utils/location.util';
 
-const CUSTOMER_INCLUDE = { provinceById: true, wardRel: true } as const;
+const CUSTOMER_INCLUDE = { province: true, ward: true } as const;
 
 @Injectable()
 export class CustomersService {
@@ -21,8 +20,6 @@ export class CustomersService {
           OR: [
             { name: { contains: search, mode: 'insensitive' as const } },
             { phone: { contains: search, mode: 'insensitive' as const } },
-            { province: { contains: search, mode: 'insensitive' as const } },
-            { ward: { contains: search, mode: 'insensitive' as const } },
           ],
         }
       : {};
@@ -47,7 +44,6 @@ export class CustomersService {
   async create(dto: CreateCustomerDto, actorId: string, actorRole: Role) {
     const cleanName = dto.name.trim();
     const cleanPhone = dto.phone ? dto.phone.trim() : '';
-    const loc = await resolveLocation(this.prisma, dto);
 
     if (cleanPhone) {
       const existingByPhone = await this.prisma.customer.findFirst({
@@ -60,10 +56,8 @@ export class CustomersService {
           data: {
             name: cleanName || existingByPhone.name,
             address: dto.address?.trim() || existingByPhone.address,
-            province: loc.province || existingByPhone.province,
-            provinceId: loc.provinceId || existingByPhone.provinceId,
-            ward: loc.ward || existingByPhone.ward,
-            wardId: loc.wardId || existingByPhone.wardId,
+            provinceId: dto.provinceId || existingByPhone.provinceId,
+            wardId: dto.wardId || existingByPhone.wardId,
             note: dto.note || existingByPhone.note,
           },
           include: CUSTOMER_INCLUDE,
@@ -89,10 +83,8 @@ export class CustomersService {
         data: {
           phone: cleanPhone || existingByName.phone,
           address: dto.address?.trim() || existingByName.address,
-          province: loc.province || existingByName.province,
-          provinceId: loc.provinceId || existingByName.provinceId,
-          ward: loc.ward || existingByName.ward,
-          wardId: loc.wardId || existingByName.wardId,
+          provinceId: dto.provinceId || existingByName.provinceId,
+          wardId: dto.wardId || existingByName.wardId,
           note: dto.note || existingByName.note,
         },
         include: CUSTOMER_INCLUDE,
@@ -112,10 +104,8 @@ export class CustomersService {
         name: cleanName,
         phone: cleanPhone || null,
         address: dto.address?.trim() || null,
-        province: loc.province || null,
-        provinceId: loc.provinceId || null,
-        ward: loc.ward || null,
-        wardId: loc.wardId || null,
+        provinceId: dto.provinceId || null,
+        wardId: dto.wardId || null,
         note: dto.note || null,
       },
       include: CUSTOMER_INCLUDE,
@@ -137,17 +127,9 @@ export class CustomersService {
     actorRole: Role,
   ) {
     await this.findOne(id);
-    const hasLocationChange =
-      dto.province !== undefined ||
-      dto.provinceId !== undefined ||
-      dto.ward !== undefined ||
-      dto.wardId !== undefined;
-    const loc = hasLocationChange
-      ? await resolveLocation(this.prisma, dto)
-      : {};
     const updated = await this.prisma.customer.update({
       where: { id },
-      data: { ...dto, ...loc },
+      data: dto,
       include: CUSTOMER_INCLUDE,
     });
     await this.auditLog.logAction(

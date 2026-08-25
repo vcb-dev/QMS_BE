@@ -5,279 +5,31 @@ import { QuoteStatus, User, Role } from '@prisma/client';
 import { APP_CONSTANTS } from '../common/constants';
 import {
   REQUEST_DETAIL_INCLUDE,
+  OPTION_SUMMARY_SELECT,
   mapQuoteRequestDetail,
   pickPrimaryOption,
-} from './utils/option-mapper.util';
-
-// Tên chất liệu trong DB nhúng sẵn tỉ lệ vàng (VD: "Vàng 14K (58.5%)") để hiển thị ở dropdown chọn
-// chất liệu — nhưng ghép vào productName tự sinh thì thừa/rối, nên cắt phần "(xx.x%)" ra ở đây.
-function stripMaterialPercent(name: string): string {
-  return name.replace(/\s*\(\d+(\.\d+)?%\)/g, '').trim();
-}
+  buildProductName,
+} from '../utils/option-mapper.util';
+import { buildQuoteWhereClause } from '../utils/quote-filter.util';
+import {
+  countsFromGroupBy,
+  getMyReqCount,
+  primaryOptionPrice,
+} from '../utils/quote-counts.util';
+import { QuoteOptionsService, LivePriceItem } from './quote-options.service';
 
 @Injectable()
 export class QuoteQueryService {
   private readonly listCache = new Map<string, { at: number; data: any }>();
   private readonly cacheTtlMs = 30_000;
 
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private quoteOptionsService: QuoteOptionsService,
+  ) {}
 
   clearCache() {
     this.listCache.clear();
-  }
-  //Xây dựng câu truy vấn filter yêu cầu dựa trên trạng thái, danh mục, chất liệu , từ khóa , tìm kiếm, thời gian
-  private buildWhereClause(filterDto: FilterQuoteRequestDto, _user: User) {
-    const {
-      status,
-      search,
-      requesterId,
-      assigneeId,
-      categoryId,
-      materialId,
-      ownerId,
-      startDate,
-      endDate,
-      timeRange,
-      includeLocked,
-    } = filterDto;
-
-    const andConditions: any[] = [];
-
-    const targetOwner = ownerId || requesterId;
-    if (targetOwner) {
-      if (_user?.role === Role.ORDER) {
-        andConditions.push({ assigneeId: targetOwner });
-      } else {
-        andConditions.push({ requesterId: targetOwner });
-      }
-    }
-
-    if (status && Object.values(QuoteStatus).includes(status)) {
-      andConditions.push({ status: status });
-    }
-
-    if (assigneeId) {
-      andConditions.push({ assigneeId });
-    }
-
-    if (categoryId && categoryId !== 'ALL') {
-      andConditions.push({ categoryId });
-    }
-
-    if (materialId && materialId !== 'ALL') {
-      andConditions.push({
-        options: { some: { materials: { some: { materialId } } } },
-      });
-    }
-
-    if (search && search.trim() !== '') {
-      const trimmed = search.trim();
-      const matchedStatuses = Object.entries(APP_CONSTANTS.QUOTE_STATUS_LABELS)
-        .filter(([, label]) =>
-          label.toLowerCase().includes(trimmed.toLowerCase()),
-        )
-        .map(([value]) => value as QuoteStatus);
-
-      andConditions.push({
-        OR: [
-          { code: { contains: trimmed, mode: 'insensitive' } },
-          { category: { name: { contains: trimmed, mode: 'insensitive' } } },
-          { customer: { name: { contains: trimmed, mode: 'insensitive' } } },
-          { customer: { phone: { contains: trimmed, mode: 'insensitive' } } },
-          { customerMeasurements: { contains: trimmed, mode: 'insensitive' } },
-          {
-            options: {
-              some: {
-                materials: {
-                  some: {
-                    material: {
-                      name: { contains: trimmed, mode: 'insensitive' },
-                    },
-                  },
-                },
-              },
-            },
-          },
-          { requester: { name: { contains: trimmed, mode: 'insensitive' } } },
-          {
-            requester: {
-              department: { name: { contains: trimmed, mode: 'insensitive' } },
-            },
-          },
-          {
-            assignee: {
-              department: { name: { contains: trimmed, mode: 'insensitive' } },
-            },
-          },
-          ...(matchedStatuses.length
-            ? [{ status: { in: matchedStatuses } }]
-            : []),
-        ],
-      });
-    }
-
-    if (timeRange || startDate || endDate) {
-      let start: Date | undefined;
-      let end: Date | undefined;
-
-      if (startDate) {
-        start = new Date(startDate);
-      }
-      if (endDate) {
-        end = new Date(endDate);
-      }
-
-      if (timeRange && !start) {
-        const now = new Date();
-        switch (timeRange) {
-          case 'TODAY':
-            start = new Date(
-              now.getFullYear(),
-              now.getMonth(),
-              now.getDate(),
-              0,
-              0,
-              0,
-            );
-            end = new Date(
-              now.getFullYear(),
-              now.getMonth(),
-              now.getDate(),
-              23,
-              59,
-              59,
-            );
-            break;
-          case 'THIS_WEEK': {
-            const day = now.getDay() || 7;
-            start = new Date(
-              now.getFullYear(),
-              now.getMonth(),
-              now.getDate() - day + 1,
-              0,
-              0,
-              0,
-            );
-            break;
-          }
-          case 'LAST_WEEK': {
-            const day = now.getDay() || 7;
-            const thisMonday = new Date(
-              now.getFullYear(),
-              now.getMonth(),
-              now.getDate() - day + 1,
-              0,
-              0,
-              0,
-            );
-            start = new Date(
-              thisMonday.getFullYear(),
-              thisMonday.getMonth(),
-              thisMonday.getDate() - 7,
-              0,
-              0,
-              0,
-            );
-            end = new Date(
-              thisMonday.getFullYear(),
-              thisMonday.getMonth(),
-              thisMonday.getDate() - 1,
-              23,
-              59,
-              59,
-            );
-            break;
-          }
-          case 'THIS_MONTH':
-            start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0);
-            break;
-          case 'LAST_MONTH':
-            start = new Date(now.getFullYear(), now.getMonth() - 1, 1, 0, 0, 0);
-            end = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59);
-            break;
-          case 'THIS_YEAR':
-            start = new Date(now.getFullYear(), 0, 1, 0, 0, 0);
-            break;
-          case 'ALL':
-          default:
-            break;
-        }
-      }
-
-      const createdAtFilter: any = {};
-      if (start) createdAtFilter.gte = start;
-      if (end) createdAtFilter.lte = end;
-      if (Object.keys(createdAtFilter).length > 0) {
-        andConditions.push({ createdAt: createdAtFilter });
-      }
-    }
-
-    // Ẩn đơn PENDING/PROCESSING mà người tạo (Sale) hoặc người xử lý (Order) đã bị khóa tài khoản
-    // (isActive=false) — không ai nên tiếp tục làm việc trên đơn của nhân viên không còn hoạt động.
-    // Đơn đã có kết quả (QUOTED/CLOSED) không bị ảnh hưởng, vẫn là hồ sơ lịch sử bình thường.
-    // Chỉ ADMIN bật includeLocked=true mới thấy lại được — role khác gửi cờ này bị bỏ qua.
-    if (!(includeLocked === 'true' && _user?.role === Role.ADMIN)) {
-      andConditions.push({
-        OR: [
-          { status: { notIn: [QuoteStatus.PENDING, QuoteStatus.PROCESSING] } },
-          {
-            AND: [
-              { requester: { isActive: true } },
-              { OR: [{ assigneeId: null }, { assignee: { isActive: true } }] },
-            ],
-          },
-        ],
-      });
-    }
-
-    return andConditions.length > 0 ? { AND: andConditions } : {};
-  }
-
-  private myReqCountPromise(user: User) {
-    if (!user?.id) return Promise.resolve(0);
-    return this.prisma.quoteRequest.count({
-      where:
-        user.role === Role.ORDER
-          ? { assigneeId: user.id }
-          : { requesterId: user.id },
-    });
-  }
-
-  private countsFromGroupBy(
-    res: { status: QuoteStatus; _count: { _all: number } }[],
-    myReqCnt: number,
-  ) {
-    const map: Record<string, number> = {
-      total: 0,
-      myReq: myReqCnt,
-      pending: 0,
-      processing: 0,
-      needMoreInfo: 0,
-      quoted: 0,
-      rejected: 0,
-      closed: 0,
-    };
-    for (const item of res) {
-      const cnt = item._count._all;
-      map.total += cnt;
-      if (item.status === QuoteStatus.PENDING) map.pending = cnt;
-      else if (item.status === QuoteStatus.PROCESSING) map.processing = cnt;
-      else if (item.status === QuoteStatus.NEED_MORE_INFO)
-        map.needMoreInfo = cnt;
-      else if (item.status === QuoteStatus.QUOTED) map.quoted = cnt;
-      else if (item.status === QuoteStatus.REJECTED) map.rejected = cnt;
-      else if (item.status === QuoteStatus.CLOSED) map.closed = cnt;
-    }
-    return map;
-  }
-
-  // Giá đại diện của 1 request cho mục đích thống kê/hiển thị nhanh — dùng chung logic với
-  // pickPrimaryOption (ưu tiên option CLOSED, rồi SELECTED, rồi option có giá mới nhất).
-  // quotedPrice không còn ở QuoteRequest nên không thể groupBy._sum trực tiếp như trước,
-  // phải tự cộng ở app layer.
-  private primaryOptionPrice(row: { options?: any[] }): number {
-    const price = pickPrimaryOption(row)?.quotedPrice;
-    return Number(price || 0);
   }
 
   /**
@@ -285,7 +37,7 @@ export class QuoteQueryService {
    * Dùng cho % thay đổi kỳ trước & KPI, thay vì kéo cả list rồi tính tay ở FE.
    */
   async getStats(filterDto: FilterQuoteRequestDto, _user: User) {
-    const where = this.buildWhereClause(filterDto, _user);
+    const where = buildQuoteWhereClause(filterDto, _user);
 
     const [groupByRes, myReqCnt, revenueRows] = await Promise.all([
       this.prisma.quoteRequest.groupBy({
@@ -293,7 +45,7 @@ export class QuoteQueryService {
         where,
         _count: { _all: true },
       }),
-      this.myReqCountPromise(_user),
+      getMyReqCount(this.prisma, _user),
       this.prisma.quoteRequest.findMany({
         where: {
           ...where,
@@ -309,12 +61,12 @@ export class QuoteQueryService {
       }),
     ]);
 
-    const counts = this.countsFromGroupBy(groupByRes, myReqCnt);
+    const counts = countsFromGroupBy(groupByRes, myReqCnt);
 
     let closedRevenue = 0;
     let quotedRevenue = 0;
     for (const row of revenueRows) {
-      const price = this.primaryOptionPrice(row);
+      const price = primaryOptionPrice(row);
       if (row.status === QuoteStatus.CLOSED) closedRevenue += price;
       else if (row.status === QuoteStatus.QUOTED) quotedRevenue += price;
     }
@@ -337,7 +89,10 @@ export class QuoteQueryService {
       userId: _user?.id,
       role: _user?.role,
     });
-    const cached = this.listCache.get(cacheKey);
+    // withLivePrice=true là nút "Tải lại giá" bấm tay — phải luôn tính lại giá MỚI NHẤT, cache
+    // 30s ở đây sẽ trả nhầm giá cũ nếu bấm lại trong vòng 30s sau khi vừa đổi giá kim loại/đá.
+    const skipCache = filterDto.withLivePrice === 'true';
+    const cached = skipCache ? undefined : this.listCache.get(cacheKey);
     if (cached && Date.now() - cached.at < this.cacheTtlMs) {
       return cached.data;
     }
@@ -347,10 +102,10 @@ export class QuoteQueryService {
     const limitNum = Math.max(1, Math.min(100, Number(limit) || 10));
     const skip = (pageNum - 1) * limitNum;
 
-    const where = this.buildWhereClause(filterDto, _user);
+    const where = buildQuoteWhereClause(filterDto, _user);
     // Counts phải bỏ status filter — nếu không, groupBy chỉ còn đúng status đang chọn,
     // các ô trạng thái khác trên UI sẽ hiện 0 hết.
-    const countsWhere = this.buildWhereClause(
+    const countsWhere = buildQuoteWhereClause(
       { ...filterDto, status: undefined },
       _user,
     );
@@ -361,42 +116,12 @@ export class QuoteQueryService {
         where: countsWhere,
         _count: { _all: true },
       }),
-      this.myReqCountPromise(_user),
-    ]).then(([res, myReqCnt]) => this.countsFromGroupBy(res, myReqCnt));
+      getMyReqCount(this.prisma, _user),
+    ]).then(([res, myReqCnt]) => countsFromGroupBy(res, myReqCnt));
 
     // Dashboard fetch 500 dòng chỉ để vẽ biểu đồ/thống kê — không cần customer/assignee/options
     // (quan hệ nặng nhất, không dùng tới), bỏ luôn cho nhẹ query.
     const isLite = filterDto.lite === 'true';
-
-    const optionSummarySelect = {
-      id: true,
-      optionName: true,
-      quotedPrice: true,
-      vat: true,
-      quotedDate: true,
-      weightChi: true,
-      laborCost: true,
-      stoneCost: true,
-      totalMetalCost: true,
-      metalRawCost: true,
-      stonePrice: true,
-      selectionStatus: true,
-      materials: {
-        select: {
-          materialId: true,
-          weightChi: true,
-          material: { select: { id: true, name: true } },
-        },
-      },
-      stones: {
-        select: {
-          stoneId: true,
-          quantity: true,
-          unitPriceAtQuote: true,
-          stone: { select: { id: true, name: true, stoneType: true } },
-        },
-      },
-    } as const;
 
     const [items, total, counts] = await Promise.all([
       this.prisma.quoteRequest.findMany({
@@ -422,7 +147,7 @@ export class QuoteQueryService {
           categoryId: true,
           requesterId: true,
           assigneeId: true,
-          category: { select: { id: true, name: true } },
+          category: { select: { id: true, name: true, vatRate: true } },
           requester: {
             select: {
               id: true,
@@ -442,13 +167,13 @@ export class QuoteQueryService {
                 options: {
                   orderBy: { createdAt: 'desc' },
                   take: 1,
-                  select: optionSummarySelect,
+                  select: OPTION_SUMMARY_SELECT,
                 },
               }
             : {
                 options: {
                   orderBy: { createdAt: 'asc' },
-                  select: optionSummarySelect,
+                  select: OPTION_SUMMARY_SELECT,
                 },
                 customer: {
                   select: {
@@ -483,6 +208,22 @@ export class QuoteQueryService {
 
     const sanitizedItems = items.map((item: any) => this.sanitizeItem(item));
 
+    if (filterDto.withLivePrice === 'true' && !isLite) {
+      // Phải tính giá sống TRƯỚC khi ẩn field giá vốn — attachLivePrices cần đọc laborCost/
+      // stoneCost của chính option đó để tính lại giá, ẩn trước thì Sale mở Thư Viện Sản Phẩm sẽ
+      // luôn ra null.
+      await this.attachLivePrices(sanitizedItems);
+    }
+
+    // Sale chỉ được xem Giá bán — không được thấy cấu thành giá (giá vốn kim loại/tiền công/giá
+    // đá), giống chính sách đã áp dụng ở quote-options.controller cho luồng tính giá. Ẩn ở tầng
+    // service (không phải chỉ FE) vì đây là dữ liệu nghiệp vụ nhạy cảm nhất hệ thống.
+    if (_user?.role === Role.SALE) {
+      for (const item of sanitizedItems) {
+        item.options = this.stripCostFieldsForSale(item.options);
+      }
+    }
+
     const totalPages = Math.ceil(total / limitNum) || 1;
 
     const result = {
@@ -496,19 +237,78 @@ export class QuoteQueryService {
       },
     };
 
-    this.listCache.set(cacheKey, { at: Date.now(), data: result });
+    if (!skipCache) {
+      this.listCache.set(cacheKey, { at: Date.now(), data: result });
+    }
     return result;
   }
 
+  // Gắn giá "sống" (livePrice) vào từng option — tính theo config HIỆN TẠI (giá kim loại/đá/tỷ lệ/
+  // VAT hôm nay), không đụng quotedPrice đã đóng băng. 1 lệnh gọi cho cả trang, 0 query DB thêm
+  // (batchComputeLivePrices tự lấy giá kim loại/chất liệu/đá từ cache TTL sẵn có).
+  private async attachLivePrices(items: any[]) {
+    const inputs: LivePriceItem[] = [];
+    for (const item of items) {
+      const categoryVat =
+        item.category?.vatRate != null ? Number(item.category.vatRate) : null;
+      for (const opt of item.options || []) {
+        if (opt.quotedPrice == null) continue;
+        inputs.push({
+          key: opt.id,
+          materials: (opt.materials || []).map((m: any) => ({
+            materialId: m.materialId,
+            weightChi: Number(m.weightChi) || 0,
+          })),
+          laborCost: Number(opt.laborCost) || 0,
+          vatRate: categoryVat ?? (opt.vat != null ? Number(opt.vat) : 10),
+          stones:
+            (opt.stones || []).length > 0
+              ? opt.stones.map((s: any) => ({
+                  stoneId: s.stoneId,
+                  quantity: s.quantity,
+                }))
+              : undefined,
+          manualStoneCost: Number(opt.stoneCost) || 0,
+        });
+      }
+    }
+    if (inputs.length === 0) return;
+    // Batch tính giá sống cho cả trang, tránh query DB nhiều lần (1 option = 1 query) — batchComputeLivePrices
+    const priceMap =
+      await this.quoteOptionsService.batchComputeLivePrices(inputs);
+    for (const item of items) {
+      for (const opt of item.options || []) {
+        if (priceMap.has(opt.id)) opt.livePrice = priceMap.get(opt.id);
+      }
+    }
+  }
+
+  // Cắt field cấu thành giá vốn khỏi từng option — Sale chỉ được xem quotedPrice (giá bán), không
+  // được thấy laborCost/stoneCost/totalMetalCost/metalRawCost/stonePrice. Public vì
+  // QuoteWorkflowService (accept/markClosed/selectOption/resubmit...) cũng trả trực tiếp
+  // mapQuoteRequestDetail() cho các action Sale được phép gọi, cần lọc lại y hệt ở đây.
+  stripCostFieldsForSale(options: any[] | undefined) {
+    if (!options) return options;
+    return options.map((opt: any) => {
+      const {
+        laborCost,
+        stoneCost,
+        totalMetalCost,
+        metalRawCost,
+        stonePrice,
+        ...rest
+      } = opt;
+      return rest;
+    });
+  }
+
   private sanitizeItem(item: any) {
-    const catName = item.category?.name || '';
     const primaryOption = pickPrimaryOption(item);
     const matArr = (primaryOption?.materials || []).map((m: any) => m.material);
-    const matName = matArr
-      .map((m: any) => stripMaterialPercent(m.name))
-      .join(', ');
-    const dynamicProductName =
-      `${catName} ${matName}`.trim() || 'Sản phẩm chế tác';
+    const dynamicProductName = buildProductName(
+      item.category?.name,
+      matArr.map((m: any) => m.name),
+    );
 
     return {
       ...item,
@@ -532,7 +332,7 @@ export class QuoteQueryService {
    * Chặn trần MAX_EXPORT_ROWS để tránh kéo quá nhiều dòng cùng lúc.
    */
   async findAllForExport(filterDto: FilterQuoteRequestDto, user: User) {
-    const where = this.buildWhereClause(filterDto, user);
+    const where = buildQuoteWhereClause(filterDto, user);
 
     const items = await this.prisma.quoteRequest.findMany({
       where,
@@ -590,7 +390,7 @@ export class QuoteQueryService {
     return items.map((item: any) => this.sanitizeItem(item));
   }
 
-  async findOne(idOrCode: string) {
+  async findOne(idOrCode: string, role?: Role) {
     const quote = await this.prisma.quoteRequest.findFirst({
       where: {
         OR: [{ id: idOrCode }, { code: idOrCode }],
@@ -603,15 +403,17 @@ export class QuoteQueryService {
     }
 
     const mapped = mapQuoteRequestDetail(quote);
+    // Sale chỉ được xem Giá bán — không được thấy cấu thành giá vốn (xem thêm comment ở findAll).
+    if (role === Role.SALE) {
+      mapped.options = this.stripCostFieldsForSale(mapped.options);
+    }
 
-    const catName = mapped.category?.name || '';
     const primaryOption = pickPrimaryOption(mapped);
     const matArr = primaryOption?.materials || [];
-    const matNames = matArr
-      .map((m: any) => stripMaterialPercent(m.materialName))
-      .join(', ');
-    const dynamicProductName =
-      `${catName} ${matNames}`.trim() || 'Sản phẩm chế tác';
+    const dynamicProductName = buildProductName(
+      mapped.category?.name,
+      matArr.map((m: any) => m.materialName),
+    );
 
     return {
       ...mapped,

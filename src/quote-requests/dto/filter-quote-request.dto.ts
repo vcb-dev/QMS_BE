@@ -63,6 +63,12 @@ export class FilterQuoteRequestDto {
   @IsString()
   includeLocked?: string;
 
+  // Trang Quản Lý Sản Phẩm bật để mỗi option có thêm field `livePrice` — giá tính LẠI theo config
+  // hiện tại (giá kim loại/đá/tỷ lệ/VAT hôm nay), không phải giá đã đóng băng lúc báo giá.
+  @IsOptional()
+  @IsString()
+  withLivePrice?: string;
+
   @IsOptional()
   @Type(() => Number)
   @IsInt()

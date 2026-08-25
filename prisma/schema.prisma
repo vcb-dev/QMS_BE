@@ -65,7 +65,7 @@ model User {
   assignedQuotes  QuoteRequest[] @relation("Assignee")
   chatMessages    QuoteChatMessage[]
   chatReads       QuoteChatRead[]
-  metalPriceUpdates     MetalPrice[]
+  baseMetalPriceUpdates BaseMetalPriceHistory[]
   pricingFormulaUpdates PricingFormula[]
   auditLogs             AuditLog[]
 
@@ -89,7 +89,47 @@ model Department {
 }
 
 // ==========================
-// 3. MATERIALS (lookup)
+// 3. BASE METALS (kim loại gốc — giá thị trường hàng ngày, Material FK trỏ vào đây)
+// ==========================
+
+model BaseMetal {
+  id       String @id @default(cuid())
+  name     String @unique // "Vàng 24K", "Bạc", "Bạch kim", "Titanium"...
+  // false = ngừng dùng, ẩn khỏi dropdown chọn — không xóa cứng để không vỡ FK từ Material cũ
+  isActive Boolean @default(true) @map("is_active")
+  // true = kim loại mặc định khi không xác định được yêu cầu là kim loại nào (VD Sale để trống
+  // ô chất liệu lúc dùng máy tính giá nhanh) — CHỈ 1 dòng được true tại 1 thời điểm, thay cho
+  // hành vi cũ "không rõ kim loại thì mặc định coi là Vàng"
+  isDefault Boolean @default(false) @map("is_default")
+  materials Material[]
+  priceHistory BaseMetalPriceHistory[]
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("base_metals")
+}
+
+model BaseMetalPriceHistory {
+  id          String    @id @default(cuid())
+  baseMetalId String    @map("base_metal_id")
+  baseMetal   BaseMetal @relation(fields: [baseMetalId], references: [id], onDelete: Cascade)
+  priceVnd    Decimal   @db.Decimal(14, 2)
+  // % biến động so với dòng active TRƯỚC ĐÓ của CHÍNH kim loại này — null nếu là lần đầu có giá
+  changePct   Decimal?  @db.Decimal(6, 2)
+  source      String?
+  // true = dòng đang dùng để tính giá CỦA KIM LOẠI NÀY — xét theo (baseMetalId, isActive), không
+  // toàn cục như MetalPrice cũ (sửa giá Vàng không đụng dòng active của Bạc)
+  isActive    Boolean   @default(true)
+  updatedBy   User?     @relation(fields: [updatedById], references: [id], onDelete: SetNull)
+  updatedById String?   @map("updated_by_id")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  @@index([baseMetalId, isActive])
+  @@index([createdAt])
+  @@map("base_metal_price_history")
+}
+
+// ==========================
+// 3a. MATERIALS (lookup)
 // ==========================
 
 model Material {
@@ -97,6 +137,10 @@ model Material {
   name          String                @unique
   // false = ngừng dùng, ẩn khỏi danh sách chọn — không xóa cứng để không vỡ FK từ QuoteOption cũ
   isActive      Boolean               @default(true) @map("is_active")
+  // Kim loại gốc dùng để tra giá thị trường — NULL = phi kim loại (đá/phụ kiện, không tính theo
+  // giá kim loại gốc). Thêm kim loại mới = thêm 1 dòng BaseMetal, không sửa code.
+  baseMetalId   String?               @map("base_metal_id")
+  baseMetal     BaseMetal?            @relation(fields: [baseMetalId], references: [id], onDelete: SetNull)
   // % dùng nhân với giá kim loại gốc lúc tính giá (vàng theo tuổi: vd 18K=75; Bạc/Bạch kim luôn 100
   // vì giá gốc của 2 kim loại này đã là giá bán thẳng, không pha theo tuổi như vàng)
   priceRatioPct Decimal               @default(100) @map("price_ratio_pct") @db.Decimal(6, 2)
@@ -167,13 +211,12 @@ model ProductCategory {
 // ==========================
 
 model Province {
-  id                String     @id @default(cuid())
-  name              String     @unique
-  code              String?    @unique
-  wards             Ward[]
-  customers         Customer[]
-  customersById     Customer[] @relation("CustomerProvinceById")
-  createdAt         DateTime   @default(now()) @map("created_at")
+  id        String     @id @default(cuid())
+  name      String     @unique
+  code      String?    @unique
+  wards     Ward[]
+  customers Customer[]
+  createdAt DateTime   @default(now()) @map("created_at")
 
   @@map("provinces")
 }
@@ -197,21 +240,17 @@ model Ward {
 // ==========================
 
 model Customer {
-  id          String    @id @default(cuid())
-  name        String
-  phone       String?
-  address     String?   @db.Text
-  // CŨ — giữ song song để không mất dữ liệu, sẽ bỏ sau khi backfill xong provinceId/wardId
-  province    String?
-  provinceRel Province? @relation(fields: [province], references: [name], onDelete: SetNull)
-  ward        String?
-  // MỚI — khóa ngoại thật thay cho tên tỉnh/phường dạng string tự do, tránh vỡ khi sáp nhập/đổi
-  // tên hành chính. NULL = chưa backfill hoặc customer không chọn qua danh mục.
-  provinceId  String?   @map("province_id")
-  provinceById Province? @relation("CustomerProvinceById", fields: [provinceId], references: [id], onDelete: SetNull)
-  wardId      String?   @map("ward_id")
-  wardRel     Ward?     @relation(fields: [wardId], references: [id], onDelete: SetNull)
-  note        String?   @db.Text
+  id         String    @id @default(cuid())
+  name       String
+  phone      String?
+  address    String?   @db.Text
+  // Khóa ngoại thật thay cho tên tỉnh/phường dạng string tự do — tránh vỡ khi sáp nhập/đổi tên
+  // hành chính. NULL = customer không chọn qua danh mục (tạo trước khi có FK, hoặc bỏ trống).
+  provinceId String?   @map("province_id")
+  province   Province? @relation(fields: [provinceId], references: [id], onDelete: SetNull)
+  wardId     String?   @map("ward_id")
+  ward       Ward?     @relation(fields: [wardId], references: [id], onDelete: SetNull)
+  note       String?   @db.Text
 
   quoteRequests QuoteRequest[]
 
@@ -302,34 +341,6 @@ model QuoteRequestImage {
 
   @@index([quoteRequestId])
   @@map("quote_request_images")
-}
-
-// ==========================
-// 8. METAL PRICES (Lịch sử các lần cập nhật giá vàng/bạc/bạch kim — append-only,
-// không sửa lên bản ghi cũ. Mỗi lần Order/Admin cập nhật giá tạo 1 dòng mới.)
-// ==========================
-
-model MetalPrice {
-  id                 String   @id @default(cuid())
-  gold24kVnd         Decimal  @map("gold_24k_vnd") @db.Decimal(14, 2)
-  silverVnd          Decimal  @map("silver_vnd") @db.Decimal(14, 2)
-  platinumVnd        Decimal  @map("platinum_vnd") @db.Decimal(14, 2)
-  // % tăng/giảm của từng kim loại so với lần cập nhật gần nhất trước đó — null nếu là dòng đầu tiên
-  goldChangePct      Decimal? @map("gold_change_pct") @db.Decimal(6, 2)
-  silverChangePct    Decimal? @map("silver_change_pct") @db.Decimal(6, 2)
-  platinumChangePct  Decimal? @map("platinum_change_pct") @db.Decimal(6, 2)
-  source             String?
-  // true = giá đang được dùng để tính giá hiện tại — dòng mới nhất set true, các dòng cũ tự set false
-  isActive           Boolean  @default(true) @map("is_active")
-  // FK thật tới User — lấy tên qua quan hệ thay vì lưu trùng; NULL nếu tài khoản đã bị xóa (giữ lịch sử giá)
-  updatedBy          User?    @relation(fields: [updatedById], references: [id], onDelete: SetNull)
-  updatedById        String?  @map("updated_by_id")
-  createdAt          DateTime @default(now()) @map("created_at")
-
-  @@index([isActive])
-  @@index([createdAt])
-  @@index([updatedById])
-  @@map("metal_prices")
 }
 
 // ==========================

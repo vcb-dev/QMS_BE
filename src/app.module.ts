@@ -13,7 +13,6 @@ import { ProductCategoriesModule } from './product-categories/product-categories
 import { CustomersModule } from './customers/customers.module';
 import { QuoteRequestsModule } from './quote-requests/quote-requests.module';
 import { MetalPricesModule } from './metal-prices/metal-prices.module';
-import { PricingConfigModule } from './pricing-config/pricing-config.module';
 import { VnGoldPriceModule } from './vn-gold-price/vn-gold-price.module';
 import { CloudinaryModule } from './cloudinary/cloudinary.module';
 import { MailModule } from './mail/mail.module';
@@ -41,7 +40,6 @@ import { RealtimeModule } from './realtime/realtime.module';
     CustomersModule,
     QuoteRequestsModule,
     MetalPricesModule,
-    PricingConfigModule,
     VnGoldPriceModule,
     CloudinaryModule,
     MailModule,

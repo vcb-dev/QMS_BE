@@ -13,13 +13,13 @@ import { AuditLogService } from '../audit-log/audit-log.service';
 import { ExcelService } from '../excel/excel.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
 import { LarkNotificationService } from '../lark/lark-notification.service';
+import { QuoteOptionsService } from './quote-options.service';
 import { EXPORT_FIELD_DEFS } from './dto/export-field-defs';
 import {
   REQUEST_DETAIL_INCLUDE,
   buildOptionCreateInput,
-  buildStonePriceMap,
   mapQuoteRequestDetail,
-} from './utils/option-mapper.util';
+} from '../utils/option-mapper.util';
 
 @Injectable()
 export class QuoteRequestsService {
@@ -32,6 +32,7 @@ export class QuoteRequestsService {
     private excelService: ExcelService,
     private realtimeGateway: RealtimeGateway,
     private larkService: LarkNotificationService,
+    private quoteOptionsService: QuoteOptionsService,
   ) {}
 
   private generateCode(): string {
@@ -67,47 +68,6 @@ export class QuoteRequestsService {
       quantity: 1,
     }));
 
-    const effectiveOptions: any[] =
-      options && options.length > 0
-        ? options.map((opt) => ({
-            ...opt,
-            materials:
-              opt.materials && opt.materials.length > 0
-                ? opt.materials
-                : fallbackMaterials.length > 0
-                  ? fallbackMaterials
-                  : undefined,
-            stones:
-              opt.stones && opt.stones.length > 0
-                ? opt.stones
-                : fallbackStones.length > 0
-                  ? fallbackStones
-                  : undefined,
-          }))
-        : fallbackMaterials.length > 0 || fallbackStones.length > 0
-          ? [
-              {
-                optionName: 'Yêu cầu ban đầu',
-                materials:
-                  fallbackMaterials.length > 0 ? fallbackMaterials : undefined,
-                stones: fallbackStones.length > 0 ? fallbackStones : undefined,
-              },
-            ]
-          : [];
-
-    const stonePriceMap = await buildStonePriceMap(
-      this.prisma,
-      effectiveOptions,
-    );
-    const optionsCreate =
-      effectiveOptions.length > 0
-        ? {
-            create: effectiveOptions.map((opt, idx) =>
-              buildOptionCreateInput(opt, idx, stonePriceMap),
-            ),
-          }
-        : undefined;
-
     let finalCategoryId = data.categoryId;
     if (newCategoryName && newCategoryName.trim()) {
       const existing = await this.prisma.productCategory.findFirst({
@@ -124,6 +84,68 @@ export class QuoteRequestsService {
         finalCategoryId = createdCat.id;
       }
     }
+
+    const hasRealOptions = options && options.length > 0;
+    // Sale không tự nhập tiền công/VAT (quote-options.controller.ts CHỦ ĐỘNG ẩn 2 field này khỏi
+    // response trả về cho Sale — Sale chỉ được xem Giá bán). Nên dù Sale tạo yêu cầu qua máy tính
+    // giá (gửi kèm `options`) hay tạo nhanh không qua máy tính (không gửi `options`), option lưu
+    // xuống DB đều có thể thiếu laborCost/vat — luôn tra sẵn danh mục sản phẩm để bù vào chỗ thiếu.
+    const categoryDefaults = finalCategoryId
+      ? await this.prisma.productCategory.findUnique({
+          where: { id: finalCategoryId },
+          select: { laborCost: true, vatRate: true },
+        })
+      : null;
+    const defaultLaborCost =
+      categoryDefaults?.laborCost != null
+        ? Number(categoryDefaults.laborCost)
+        : undefined;
+    const defaultVat =
+      categoryDefaults?.vatRate != null
+        ? Number(categoryDefaults.vatRate)
+        : undefined;
+
+    const effectiveOptions: any[] = hasRealOptions
+      ? options.map((opt) => ({
+          ...opt,
+          laborCost: opt.laborCost != null ? opt.laborCost : defaultLaborCost,
+          vat: opt.vat != null ? opt.vat : defaultVat,
+          materials:
+            opt.materials && opt.materials.length > 0
+              ? opt.materials
+              : fallbackMaterials.length > 0
+                ? fallbackMaterials
+                : undefined,
+          stones:
+            opt.stones && opt.stones.length > 0
+              ? opt.stones
+              : fallbackStones.length > 0
+                ? fallbackStones
+                : undefined,
+        }))
+      : fallbackMaterials.length > 0 || fallbackStones.length > 0
+        ? [
+            {
+              optionName: 'Yêu cầu ban đầu',
+              laborCost: defaultLaborCost,
+              vat: defaultVat,
+              materials:
+                fallbackMaterials.length > 0 ? fallbackMaterials : undefined,
+              stones: fallbackStones.length > 0 ? fallbackStones : undefined,
+            },
+          ]
+        : [];
+
+    const stonePriceMap =
+      await this.quoteOptionsService.buildStonePriceMap(effectiveOptions);
+    const optionsCreate =
+      effectiveOptions.length > 0
+        ? {
+            create: effectiveOptions.map((opt, idx) =>
+              buildOptionCreateInput(opt, idx, stonePriceMap),
+            ),
+          }
+        : undefined;
 
     const finalCloudinaryUrls: string[] = [];
     if (files && files.length > 0) {
@@ -166,18 +188,6 @@ export class QuoteRequestsService {
       created.id,
     );
     return detail;
-  }
-
-  async findAll(filterDto: FilterQuoteRequestDto, user: User) {
-    return this.queryService.findAll(filterDto, user);
-  }
-
-  async getStats(filterDto: FilterQuoteRequestDto, user: User) {
-    return this.queryService.getStats(filterDto, user);
-  }
-
-  async findOne(id: string) {
-    return this.queryService.findOne(id);
   }
 
   async update(

@@ -7,7 +7,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { StoneType } from '@prisma/client';
 import { CreateStoneDto, UpdateStoneDto } from './dto/stone.dto';
 import { APP_CONSTANTS } from '../common/constants';
-import { ExcelService } from 'src/excel/excel.service';
+import { ExcelService } from '../excel/excel.service';
 import { CacheWithTtl } from '../common/cache-with-ttl.util';
 import { Stone } from '@prisma/client';
 

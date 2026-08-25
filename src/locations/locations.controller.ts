@@ -1,7 +1,10 @@
 import { Controller, Get, Query } from '@nestjs/common';
 import { ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { LocationsService } from './locations.service';
+import { Public } from '../auth/decorators/public.decorator';
 
+// Dữ liệu tra cứu công khai (danh mục hành chính Việt Nam) — cố ý không gắn JwtAuthGuard.
+@Public()
 @ApiTags('Locations - Tỉnh / Xã Phường Việt Nam')
 @Controller('locations')
 export class LocationsController {
@@ -14,9 +17,20 @@ export class LocationsController {
   }
 
   @Get('wards')
-  @ApiOperation({ summary: 'Lấy danh sách Xã / Phường theo Tỉnh / Thành phố (truyền provinceId hoặc provinceName)' })
-  @ApiQuery({ name: 'provinceId', required: false, type: String, description: 'ID hoặc Tên của Tỉnh/Thành phố' })
-  async getWards(@Query('provinceId') provinceId?: string, @Query('provinceName') provinceName?: string) {
+  @ApiOperation({
+    summary:
+      'Lấy danh sách Xã / Phường theo Tỉnh / Thành phố (truyền provinceId hoặc provinceName)',
+  })
+  @ApiQuery({
+    name: 'provinceId',
+    required: false,
+    type: String,
+    description: 'ID hoặc Tên của Tỉnh/Thành phố',
+  })
+  async getWards(
+    @Query('provinceId') provinceId?: string,
+    @Query('provinceName') provinceName?: string,
+  ) {
     const queryParam = provinceId || provinceName;
     return this.locationsService.getWardsByProvince(queryParam);
   }

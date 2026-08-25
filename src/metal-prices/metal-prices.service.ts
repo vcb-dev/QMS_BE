@@ -1,20 +1,28 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { MetalPrices } from './dto/metal-prices.dto';
+import {
+  BaseMetalDto,
+  BaseMetalPriceHistoryItem,
+} from './dto/metal-prices.dto';
 import { APP_CONSTANTS } from '../common/constants';
 
-// % biến động so với giá active trước đó — 0 nếu không đổi (có dữ liệu cũ để so), null nếu chưa từng có dữ liệu cũ
+// % biến động so với giá active trước đó — 0 nếu không đổi, null nếu chưa từng có dữ liệu cũ.
+// Kẹp trong ±9999.99 cho khớp cột DB Decimal(6,2).
+const MAX_CHANGE_PCT = 9999.99;
 function computeChangePct(next: number, prev: number): number | null {
   if (!prev || prev <= 0) return null;
   if (next === prev) return 0;
-  return Math.round(((next - prev) / prev) * 10000) / 100;
+  const pct = Math.round(((next - prev) / prev) * 10000) / 100;
+  return Math.max(-MAX_CHANGE_PCT, Math.min(MAX_CHANGE_PCT, pct));
 }
 
 @Injectable()
 export class MetalPricesService implements OnModuleInit {
   private readonly logger = new Logger(MetalPricesService.name);
-  private cached: MetalPrices | null = null;
-  private lastDbLoadAt = 0;
+  // baseMetalId -> giá đang active, cache RAM 1 phút (giá kim loại ít đổi trong ngày, hàm tính
+  // giá gọi getLatestAsync nhiều lần liên tiếp không nên query DB mỗi lần)
+  private cached: Map<string, number> | null = null;
+  private lastLoadAt = 0;
 
   constructor(private readonly prisma: PrismaService) {}
 
@@ -22,150 +30,155 @@ export class MetalPricesService implements OnModuleInit {
     await this.loadFromDb();
   }
 
-  // Giá kim loại ít đổi trong ngày — cache 1 phút để khỏi query DB mỗi lần tính giá
-  // (calculate/generate-options gọi hàm này nhiều lần liên tiếp).
-  async getLatestAsync(): Promise<MetalPrices> {
+  async getLatestAsync(): Promise<Map<string, number>> {
     if (
       this.cached &&
-      Date.now() - this.lastDbLoadAt < APP_CONSTANTS.REFERENCE_DATA_TTL
+      Date.now() - this.lastLoadAt < APP_CONSTANTS.REFERENCE_DATA_TTL
     ) {
       return this.cached;
     }
-    const dbPrice = await this.loadFromDb();
-    if (dbPrice) return dbPrice;
-    return this.getLatest();
+    return this.loadFromDb();
   }
 
-  getLatest(): MetalPrices {
-    if (!this.cached) {
-      return {
-        gold24kVnd: 13_900_000,
-        silverVnd: 1_200_000,
-        platinumVnd: 6_000_000,
-        updatedAt: new Date().toISOString(),
-        source: 'giá tham khảo thị trường (Vàng 24K & Bạc)',
-      };
-    }
+  private async loadFromDb(): Promise<Map<string, number>> {
+    const rows = await this.prisma.baseMetalPriceHistory.findMany({
+      where: { isActive: true },
+      select: { baseMetalId: true, priceVnd: true },
+    });
+    this.cached = new Map(rows.map((r) => [r.baseMetalId, Number(r.priceVnd)]));
+    this.lastLoadAt = Date.now();
     return this.cached;
   }
 
-  // Mỗi lần cập nhật giá tạo 1 DÒNG LỊCH SỬ MỚI — không sửa lên dòng cũ. Dòng mới set isActive=true,
-  // dòng đang active trước đó tự set isActive=false. % biến động tính riêng cho từng kim loại so
-  // với giá đang active ngay trước khi ghi dòng này (null nếu đây là lần đầu tiên có giá).
-  async updatePrices(
-    prices: Partial<
-      Pick<MetalPrices, 'gold24kVnd' | 'silverVnd' | 'platinumVnd'>
-    >,
+  // Danh mục kim loại gốc kèm giá hiện tại — dùng cho tab "Nguồn giá gốc" (PricingConfigPage) và
+  // dropdown "Kim loại gốc" lúc tạo/sửa Material.
+  async listBaseMetals(): Promise<BaseMetalDto[]> {
+    const metals = await this.prisma.baseMetal.findMany({
+      orderBy: { createdAt: 'asc' },
+      include: {
+        priceHistory: {
+          where: { isActive: true },
+          take: 1,
+          include: { updatedBy: { select: { name: true } } },
+        },
+      },
+    });
+    return metals.map((m) => {
+      const active = m.priceHistory[0];
+      return {
+        id: m.id,
+        name: m.name,
+        isActive: m.isActive,
+        isDefault: m.isDefault,
+        priceVnd: active ? Number(active.priceVnd) : 0,
+        changePct: active?.changePct != null ? Number(active.changePct) : null,
+        updatedAt: active ? active.createdAt.toISOString() : null,
+        updatedByName: active?.updatedBy?.name ?? null,
+      };
+    });
+  }
+
+  async createBaseMetal(name: string): Promise<BaseMetalDto> {
+    const created = await this.prisma.baseMetal.create({ data: { name } });
+    return {
+      id: created.id,
+      name: created.name,
+      isActive: created.isActive,
+      isDefault: created.isDefault,
+      priceVnd: 0,
+      changePct: null,
+      updatedAt: null,
+      updatedByName: null,
+    };
+  }
+
+  async setBaseMetalActive(id: string, isActive: boolean): Promise<void> {
+    await this.prisma.baseMetal.update({ where: { id }, data: { isActive } });
+  }
+
+  // Mỗi lần cập nhật giá 1 kim loại tạo 1 DÒNG LỊCH SỬ MỚI CỦA CHÍNH KIM LOẠI ĐÓ — không sửa lên
+  // dòng cũ, không đụng dòng active của kim loại khác (khác MetalPrice cũ set isActive=false toàn bảng).
+  async updatePrice(
+    baseMetalId: string,
+    priceVnd: number,
     updatedBy?: { id?: string },
-  ): Promise<MetalPrices> {
-    const current = this.getLatest();
-    const hasPreviousRecord = !!this.cached;
-
-    const nextGold = prices.gold24kVnd ?? current.gold24kVnd;
-    const nextSilver = prices.silverVnd ?? current.silverVnd;
-    const nextPlatinum = prices.platinumVnd ?? current.platinumVnd;
-
-    const goldChangePct = hasPreviousRecord
-      ? computeChangePct(nextGold, current.gold24kVnd)
-      : null;
-    const silverChangePct = hasPreviousRecord
-      ? computeChangePct(nextSilver, current.silverVnd)
-      : null;
-    const platinumChangePct = hasPreviousRecord
-      ? computeChangePct(nextPlatinum, current.platinumVnd)
+  ): Promise<BaseMetalPriceHistoryItem> {
+    const prevRows = await this.prisma.baseMetalPriceHistory.findMany({
+      where: { baseMetalId, isActive: true },
+      take: 1,
+    });
+    const prev = prevRows[0];
+    const changePct = prev
+      ? computeChangePct(priceVnd, Number(prev.priceVnd))
       : null;
 
     const [, created] = await this.prisma.$transaction([
-      this.prisma.metalPrice.updateMany({
-        where: { isActive: true },
+      this.prisma.baseMetalPriceHistory.updateMany({
+        where: { baseMetalId, isActive: true },
         data: { isActive: false },
       }),
-      this.prisma.metalPrice.create({
+      this.prisma.baseMetalPriceHistory.create({
         data: {
-          gold24kVnd: nextGold,
-          silverVnd: nextSilver,
-          platinumVnd: nextPlatinum,
-          goldChangePct,
-          silverChangePct,
-          platinumChangePct,
+          baseMetalId,
+          priceVnd,
+          changePct,
           source: 'cập nhật thủ công',
           isActive: true,
           updatedById: updatedBy?.id,
         },
-        include: { updatedBy: { select: { name: true } } },
+        include: {
+          updatedBy: { select: { name: true } },
+          baseMetal: { select: { name: true } },
+        },
       }),
     ]);
 
-    const updated = this.toDto(created);
-    this.cached = updated;
-    this.lastDbLoadAt = Date.now();
+    this.cached = null; // ép loadFromDb() lại lần đọc tiếp theo thay vì chờ hết TTL
     this.logger.log(
-      'Đã lưu thành công giá vàng/bạc/bạch kim vào Database (PostgreSQL) — tạo dòng lịch sử mới',
+      `Đã cập nhật giá ${created.baseMetal.name} — tạo dòng lịch sử mới`,
     );
-    return updated;
+    return this.toHistoryItem(created);
   }
 
-  // Lịch sử các lần đổi giá, mới nhất trước — biết được thứ tự biến động giá qua thời gian
-  async getHistory(limit = 50): Promise<MetalPrices[]> {
-    const records = await this.prisma.metalPrice.findMany({
+  async getHistory(
+    baseMetalId?: string,
+    limit = 50,
+  ): Promise<BaseMetalPriceHistoryItem[]> {
+    const rows = await this.prisma.baseMetalPriceHistory.findMany({
+      where: baseMetalId ? { baseMetalId } : undefined,
       orderBy: { createdAt: 'desc' },
       take: limit,
-      include: { updatedBy: { select: { name: true } } },
+      include: {
+        updatedBy: { select: { name: true } },
+        baseMetal: { select: { name: true } },
+      },
     });
-    return records.map((r) => this.toDto(r));
+    return rows.map((r) => this.toHistoryItem(r));
   }
 
-  private toDto(record: {
+  private toHistoryItem(record: {
     id: string;
-    gold24kVnd: unknown;
-    silverVnd: unknown;
-    platinumVnd: unknown;
-    goldChangePct: unknown;
-    silverChangePct: unknown;
-    platinumChangePct: unknown;
+    baseMetalId: string;
+    baseMetal: { name: string };
+    priceVnd: unknown;
+    changePct: unknown;
     isActive: boolean;
     updatedById: string | null;
     updatedBy: { name: string } | null;
     createdAt: Date;
     source: string | null;
-  }): MetalPrices {
+  }): BaseMetalPriceHistoryItem {
     return {
       id: record.id,
-      gold24kVnd: Number(record.gold24kVnd),
-      silverVnd: Number(record.silverVnd),
-      platinumVnd: Number(record.platinumVnd),
-      goldChangePct:
-        record.goldChangePct !== null ? Number(record.goldChangePct) : null,
-      silverChangePct:
-        record.silverChangePct !== null ? Number(record.silverChangePct) : null,
-      platinumChangePct:
-        record.platinumChangePct !== null
-          ? Number(record.platinumChangePct)
-          : null,
+      baseMetalId: record.baseMetalId,
+      baseMetalName: record.baseMetal.name,
+      priceVnd: Number(record.priceVnd),
+      changePct: record.changePct != null ? Number(record.changePct) : null,
       isActive: record.isActive,
       updatedById: record.updatedById,
       updatedByName: record.updatedBy?.name ?? null,
-      updatedAt: record.createdAt.toISOString(),
-      source: record.source || 'Database PostgreSQL',
+      createdAt: record.createdAt.toISOString(),
+      source: record.source,
     };
-  }
-
-  private async loadFromDb(): Promise<MetalPrices | null> {
-    try {
-      const record = await this.prisma.metalPrice.findFirst({
-        where: { isActive: true },
-        orderBy: { createdAt: 'desc' },
-        include: { updatedBy: { select: { name: true } } },
-      });
-      if (record) {
-        this.cached = this.toDto(record);
-        this.lastDbLoadAt = Date.now();
-        return this.cached;
-      }
-    } catch (err) {
-      this.logger.error('Lỗi khi nạp giá vàng từ DB', err);
-    }
-
-    return this.cached;
   }
 }

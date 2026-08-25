@@ -3,7 +3,6 @@
 // trả QuoteOption/QuoteRequest ra ngoài, để tránh mỗi service tự viết include khác nhau.
 
 import { OptionSelectionStatus } from '@prisma/client';
-import { PrismaService } from '../../prisma/prisma.service';
 
 export const OPTION_DETAIL_INCLUDE = {
   materials: { include: { material: true } },
@@ -24,26 +23,52 @@ export const REQUEST_DETAIL_INCLUDE = {
   },
 } as const;
 
-// Giá/viên đá TẠI THỜI ĐIỂM báo giá — gọi 1 lần trước khi build nhiều option, tránh N+1 query.
-// Không snapshot thì xem lại đơn cũ sẽ ra giá đá SAI (giá hôm nay) dù QuoteOption.stonePrice đã
-// đóng băng đúng tổng tiền.
-export async function buildStonePriceMap(
-  prisma: PrismaService,
-  effectiveOptions: any[],
-): Promise<Map<string, number>> {
-  const stoneIds = [
-    ...new Set(
-      effectiveOptions.flatMap((opt) =>
-        (opt.stones || []).map((s: any) => s.stoneId),
-      ),
-    ),
-  ].filter(Boolean);
-  if (stoneIds.length === 0) return new Map();
-  const stones = await prisma.stone.findMany({
-    where: { id: { in: stoneIds } },
-    select: { id: true, price: true },
-  });
-  return new Map(stones.map((s) => [s.id, Number(s.price)]));
+// Select rút gọn cho 1 QuoteOption khi liệt kê nhiều request (findAll) — đủ dữ liệu để tính
+// productName/livePrice mà không kéo nguyên OPTION_DETAIL_INCLUDE (nặng hơn, dùng cho trang chi tiết).
+export const OPTION_SUMMARY_SELECT = {
+  id: true,
+  optionName: true,
+  quotedPrice: true,
+  vat: true,
+  quotedDate: true,
+  weightChi: true,
+  laborCost: true,
+  stoneCost: true,
+  totalMetalCost: true,
+  metalRawCost: true,
+  stonePrice: true,
+  selectionStatus: true,
+  materials: {
+    select: {
+      materialId: true,
+      weightChi: true,
+      material: { select: { id: true, name: true } },
+    },
+  },
+  stones: {
+    select: {
+      stoneId: true,
+      quantity: true,
+      unitPriceAtQuote: true,
+      stone: { select: { id: true, name: true, stoneType: true } },
+    },
+  },
+} as const;
+
+// Tên chất liệu trong DB nhúng sẵn tỉ lệ vàng (VD: "Vàng 14K (58.5%)") để hiển thị ở dropdown chọn
+// chất liệu — nhưng ghép vào productName tự sinh thì thừa/rối, nên cắt phần "(xx.x%)" ra ở đây.
+export function stripMaterialPercent(name: string): string {
+  return name.replace(/\s*\(\d+(\.\d+)?%\)/g, '').trim();
+}
+
+// Tên sản phẩm tự sinh dùng chung cho findAll/findOne — "<Danh mục> <chất liệu, chất liệu>",
+// fallback "Sản phẩm chế tác" nếu thiếu cả 2 (request không có category/material nào có giá).
+export function buildProductName(
+  categoryName: string | undefined,
+  materialNames: string[],
+): string {
+  const matName = materialNames.map(stripMaterialPercent).join(', ');
+  return `${categoryName || ''} ${matName}`.trim() || 'Sản phẩm chế tác';
 }
 
 // Build nested-create payload cho 1 QuoteOption từ QuoteOptionItemDto — dùng ở mọi chỗ

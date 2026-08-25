@@ -33,13 +33,19 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Role, User } from '@prisma/client';
+import { QuoteQueryService } from './quote-query.service';
+import { QuoteWorkflowService } from './quote-workflow.service';
 
 @ApiTags('Quote Requests - Quản lý Báo giá')
 @ApiBearerAuth('JWT-auth')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('quote-requests')
 export class QuoteRequestsController {
-  constructor(private readonly quoteRequestsService: QuoteRequestsService) {}
+  constructor(
+    private readonly quoteRequestsService: QuoteRequestsService,
+    private readonly quoteQueryService: QuoteQueryService,
+    private readonly quoteWorkflowService: QuoteWorkflowService,
+  ) {}
 
   @ApiOperation({
     summary: 'Tạo mới yêu cầu báo giá (SALE / ADMIN)',
@@ -65,7 +71,7 @@ export class QuoteRequestsController {
     @Query() filterDto: FilterQuoteRequestDto,
     @CurrentUser() user: any,
   ) {
-    return this.quoteRequestsService.findAll(filterDto, user);
+    return this.quoteQueryService.findAll(filterDto, user);
   }
 
   @ApiOperation({
@@ -77,7 +83,7 @@ export class QuoteRequestsController {
     @Query() filterDto: FilterQuoteRequestDto,
     @CurrentUser() user: any,
   ) {
-    return this.quoteRequestsService.getStats(filterDto, user);
+    return this.quoteQueryService.getStats(filterDto, user);
   }
 
   @ApiOperation({
@@ -103,8 +109,8 @@ export class QuoteRequestsController {
 
   @ApiOperation({ summary: 'Lấy chi tiết yêu cầu báo giá theo ID' })
   @Get(':id')
-  async findOne(@Param('id') id: string) {
-    return this.quoteRequestsService.findOne(id);
+  async findOne(@Param('id') id: string, @CurrentUser('role') role: Role) {
+    return this.quoteQueryService.findOne(id, role);
   }
 
   @ApiOperation({ summary: 'Cập nhật yêu cầu báo giá (SALE / ADMIN)' })
