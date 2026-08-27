@@ -1,12 +1,43 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { Role } from '@prisma/client';
+
+// Chỉ dọn log "ồn" nhất, giá trị lưu trữ thấp nhất — mặc định LOGIN quá 90 ngày. Log nghiệp vụ
+// (ACCEPT_QUOTE, CREATE_QUOTE, APPROVE_USER...) KHÔNG bị đụng. Chỉnh qua env.
+const PRUNE_ACTIONS = (process.env.AUDIT_LOG_PRUNE_ACTIONS || 'LOGIN')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+const PRUNE_AFTER_DAYS = Number(process.env.AUDIT_LOG_PRUNE_AFTER_DAYS) || 90;
 
 @Injectable()
 export class AuditLogService {
   private readonly logger = new Logger(AuditLogService.name);
 
   constructor(private prisma: PrismaService) {}
+
+  // audit_logs là bảng tăng nhanh nhất (mỗi lần đăng nhập + mọi hành động). Không dọn thì vài năm
+  // nó chiếm phần lớn DB và làm chậm getActionStatsByRole (groupBy toàn bảng). Chạy 03:00 hằng ngày.
+  @Cron(CronExpression.EVERY_DAY_AT_3AM)
+  async pruneOldLogs() {
+    if (PRUNE_ACTIONS.length === 0) return;
+    const cutoff = new Date(Date.now() - PRUNE_AFTER_DAYS * 86_400_000);
+    try {
+      const { count } = await this.prisma.auditLog.deleteMany({
+        where: { action: { in: PRUNE_ACTIONS }, createdAt: { lt: cutoff } },
+      });
+      if (count > 0) {
+        this.logger.log(
+          `Đã dọn ${count} audit log (${PRUNE_ACTIONS.join(', ')}) cũ hơn ${PRUNE_AFTER_DAYS} ngày`,
+        );
+      }
+    } catch (err) {
+      this.logger.warn(
+        `Dọn audit log thất bại: ${err instanceof Error ? err.message : err}`,
+      );
+    }
+  }
 
   // Ghi log không được làm hỏng luồng nghiệp vụ chính — lỗi ghi log chỉ log ra console, không throw
   async log(params: {

@@ -1,7 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHmac } from 'crypto';
-import { LarkLink } from './lark.types';
+export interface LarkLink {
+  text: string;
+  href: string;
+}
+
 
 @Injectable()
 export class LarkNotificationService {

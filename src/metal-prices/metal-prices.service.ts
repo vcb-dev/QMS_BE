@@ -103,35 +103,40 @@ export class MetalPricesService implements OnModuleInit {
     priceVnd: number,
     updatedBy?: { id?: string },
   ): Promise<BaseMetalPriceHistoryItem> {
-    const prevRows = await this.prisma.baseMetalPriceHistory.findMany({
-      where: { baseMetalId, isActive: true },
-      take: 1,
-    });
-    const prev = prevRows[0];
-    const changePct = prev
-      ? computeChangePct(priceVnd, Number(prev.priceVnd))
-      : null;
+    // Serializable + đọc prev TRONG transaction: 2 request cập nhật cùng 1 kim loại đồng thời sẽ
+    // không cùng tạo dòng active thứ 2 (đọc-tắt-tạo là chuỗi read-modify-write, isolation mặc định
+    // Read Committed vẫn lách được). Partial unique "base_metal_price_history_one_active" là chốt
+    // chặn cuối; request thua sẽ nhận lỗi transaction thay vì ghi giá sai.
+    const created = await this.prisma.$transaction(
+      async (tx) => {
+        const prev = await tx.baseMetalPriceHistory.findFirst({
+          where: { baseMetalId, isActive: true },
+        });
+        const changePct = prev
+          ? computeChangePct(priceVnd, Number(prev.priceVnd))
+          : null;
 
-    const [, created] = await this.prisma.$transaction([
-      this.prisma.baseMetalPriceHistory.updateMany({
-        where: { baseMetalId, isActive: true },
-        data: { isActive: false },
-      }),
-      this.prisma.baseMetalPriceHistory.create({
-        data: {
-          baseMetalId,
-          priceVnd,
-          changePct,
-          source: 'cập nhật thủ công',
-          isActive: true,
-          updatedById: updatedBy?.id,
-        },
-        include: {
-          updatedBy: { select: { name: true } },
-          baseMetal: { select: { name: true } },
-        },
-      }),
-    ]);
+        await tx.baseMetalPriceHistory.updateMany({
+          where: { baseMetalId, isActive: true },
+          data: { isActive: false },
+        });
+        return tx.baseMetalPriceHistory.create({
+          data: {
+            baseMetalId,
+            priceVnd,
+            changePct,
+            source: 'cập nhật thủ công',
+            isActive: true,
+            updatedById: updatedBy?.id,
+          },
+          include: {
+            updatedBy: { select: { name: true } },
+            baseMetal: { select: { name: true } },
+          },
+        });
+      },
+      { isolationLevel: 'Serializable' },
+    );
 
     this.cached = null; // ép loadFromDb() lại lần đọc tiếp theo thay vì chờ hết TTL
     this.logger.log(
@@ -140,12 +145,20 @@ export class MetalPricesService implements OnModuleInit {
     return this.toHistoryItem(created);
   }
 
+  // Bỏ dòng "lưu lại giá y hệt" (changePct = 0, vd Lưu tất cả nhưng chỉ đổi 1 kim loại) —
+  // chỉ giữ dòng đầu tiên của mỗi kim loại (changePct null, chưa có gì để so) và dòng có
+  // giá thực sự đổi, đúng ý "lịch sử THAY ĐỔI giá" chứ không phải lịch sử mọi lần bấm Lưu.
   async getHistory(
     baseMetalId?: string,
     limit = 50,
   ): Promise<BaseMetalPriceHistoryItem[]> {
     const rows = await this.prisma.baseMetalPriceHistory.findMany({
-      where: baseMetalId ? { baseMetalId } : undefined,
+      where: {
+        AND: [
+          baseMetalId ? { baseMetalId } : {},
+          { OR: [{ changePct: null }, { changePct: { not: 0 } }] },
+        ],
+      },
       orderBy: { createdAt: 'desc' },
       take: limit,
       include: {

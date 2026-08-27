@@ -135,6 +135,84 @@ export class CalculateMultiInput {
   stones?: CalculateMultiStoneItem[];
 }
 
+export class GenerateOptionsInput {
+  @IsOptional()
+  @IsString()
+  requestedMatName?: string;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0, { message: 'Trọng lượng chỉ không được là số âm' })
+  weightChi?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0, { message: 'Tiền công không được là số âm' })
+  laborCost?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0, { message: 'Tiền đá không được là số âm' })
+  stoneCost?: number;
+
+  @IsOptional()
+  @IsString()
+  stoneDesc?: string;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0, { message: 'Thuế VAT không được là số âm' })
+  vatRate?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  includeVat?: boolean;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0, { message: 'Giá gốc không được là số âm' })
+  manualBasePrice?: number;
+
+  @IsOptional()
+  @IsString()
+  categoryId?: string;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0, { message: 'Hệ số nhân Bạc không được là số âm' })
+  silverMultiplier?: number;
+}
+
+export class GenerateOptionsResultItem {
+  optionName: string;
+  materialName: string;
+  weightChi: number;
+  laborCost: number;
+  stoneCost: number;
+  stoneDescription: string;
+  totalMetalCost?: number;
+  metalRawCost?: number;
+  stonePrice?: number;
+  vat: number;
+  quotedPrice: number;
+  isSelected: boolean;
+  note: string;
+}
+
+// Đầu vào tính giá "sống" cho 1 phương án báo giá đã lưu — dữ liệu lấy thẳng từ QuoteOption đã
+// query sẵn (không query thêm), chỉ đổi phần TRA CỨU config (giá kim loại/đá/tỷ lệ/VAT) sang bản
+// mới nhất thay vì giá đã đóng băng lúc báo giá.
+export interface LivePriceItem {
+  key: string;
+  materials: { materialId: string; weightChi: number }[];
+  laborCost: number;
+  vatRate: number;
+  // Có `stones` (đá chọn từ danh mục) thì lấy giá đá HIỆN TẠI; không có thì dùng thẳng
+  // manualStoneCost (đá nhập tay, không có nguồn nào để tra giá "sống").
+  stones?: { stoneId: string; quantity: number }[];
+  manualStoneCost?: number;
+}
+
 export class CalculateMultiMaterialBreakdownItem {
   materialId: string;
   materialName: string;

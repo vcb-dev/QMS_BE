@@ -21,10 +21,7 @@ export class LocationsService {
 
     const province = await this.prisma.province.findFirst({
       where: {
-        OR: [
-          { id: provinceIdOrName },
-          { name: provinceIdOrName },
-        ],
+        OR: [{ id: provinceIdOrName }, { name: provinceIdOrName }],
       },
     });
 
@@ -32,12 +29,11 @@ export class LocationsService {
 
     return this.prisma.ward.findMany({
       where: { provinceId: province.id },
-      orderBy: [{ districtName: 'asc' }, { name: 'asc' }],
+      orderBy: { name: 'asc' },
       select: {
         id: true,
         name: true,
         code: true,
-        districtName: true,
         provinceId: true,
       },
     });

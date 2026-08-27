@@ -7,13 +7,13 @@ import { UpdateQuoteStatusDto } from './dto/update-quote-status.dto';
 import { ExportQuoteRequestDto } from './dto/export-quote-request.dto';
 import { QuoteStatus, User, Role } from '@prisma/client';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
-import { QuoteQueryService } from './quote-query.service';
-import { QuoteWorkflowService } from './quote-workflow.service';
+import { QuoteQueryService } from './quote/quote-query.service';
+import { QuoteWorkflowService } from './quote/quote-workflow.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { ExcelService } from '../excel/excel.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
 import { LarkNotificationService } from '../lark/lark-notification.service';
-import { QuoteOptionsService } from './quote-options.service';
+import { QuoteOptionsService } from './quote-option/quote-options.service';
 import { EXPORT_FIELD_DEFS } from './dto/export-field-defs';
 import {
   REQUEST_DETAIL_INCLUDE,
@@ -45,10 +45,12 @@ export class QuoteRequestsService {
     userId: string,
     dto: CreateQuoteRequestDto,
     files?: Express.Multer.File[],
+    videoFile?: Express.Multer.File,
   ) {
     this.queryService.clearCache();
     const {
       imageUrls,
+      videoUrl,
       materialIds,
       materialId,
       stoneIds,
@@ -136,13 +138,21 @@ export class QuoteRequestsService {
           ]
         : [];
 
-    const stonePriceMap =
-      await this.quoteOptionsService.buildStonePriceMap(effectiveOptions);
+    const [stonePriceMap, keyMaps] = await Promise.all([
+      this.quoteOptionsService.buildStonePriceMap(effectiveOptions),
+      this.quoteOptionsService.buildLibraryKeyMaps(effectiveOptions),
+    ]);
     const optionsCreate =
       effectiveOptions.length > 0
         ? {
             create: effectiveOptions.map((opt, idx) =>
-              buildOptionCreateInput(opt, idx, dto.categoryId, stonePriceMap),
+              buildOptionCreateInput(
+                opt,
+                idx,
+                dto.categoryId,
+                stonePriceMap,
+                keyMaps,
+              ),
             ),
           }
         : undefined;
@@ -161,6 +171,14 @@ export class QuoteRequestsService {
       finalCloudinaryUrls.push(...uploadedFromDto.filter(Boolean));
     }
 
+    let finalVideoUrl: string | undefined;
+    if (videoFile) {
+      const uploadedVideo = await this.cloudinaryService.uploadVideo(videoFile);
+      finalVideoUrl = uploadedVideo.url;
+    } else if (videoUrl && videoUrl.startsWith('http')) {
+      finalVideoUrl = videoUrl;
+    }
+
     const created = await this.prisma.quoteRequest.create({
       data: {
         ...data,
@@ -169,6 +187,7 @@ export class QuoteRequestsService {
         status: QuoteStatus.PENDING,
         version: 1,
         requesterId: userId,
+        videoUrl: finalVideoUrl,
         images:
           finalCloudinaryUrls.length > 0
             ? {
@@ -193,13 +212,36 @@ export class QuoteRequestsService {
   async update(
     id: string,
     userId: string,
+    role: Role,
     dto: UpdateQuoteRequestDto,
     files?: Express.Multer.File[],
+    videoFile?: Express.Multer.File,
   ) {
     this.queryService.clearCache();
+    const existing = await this.prisma.quoteRequest.findUnique({
+      where: { id },
+      include: { requester: true },
+    });
+    if (!existing) {
+      throw new BadRequestException('Yêu cầu báo giá không tồn tại');
+    }
+    if (userId !== existing.requesterId && role !== Role.ADMIN) {
+      throw new BadRequestException(
+        'Bạn không có quyền chỉnh sửa yêu cầu báo giá này',
+      );
+    }
+    if (
+      existing.status === QuoteStatus.CLOSED ||
+      existing.status === QuoteStatus.REJECTED
+    ) {
+      throw new BadRequestException(
+        'Yêu cầu báo giá đã đóng hoặc bị từ chối, không thể chỉnh sửa',
+      );
+    }
     // materialIds/materialId/options không còn map trực tiếp vào QuoteRequest — chất liệu/option
     // sửa qua action riêng (QUOTE/QUICK_QUOTE) ở QuoteWorkflowService, không qua update() chung này.
-    const { imageUrls, materialIds, materialId, options, ...data } = dto;
+    const { imageUrls, videoUrl, materialIds, materialId, options, ...data } =
+      dto;
 
     const finalCloudinaryUrls: string[] = [];
     if (files && files.length > 0) {
@@ -215,10 +257,23 @@ export class QuoteRequestsService {
       finalCloudinaryUrls.push(...uploadedFromDto.filter(Boolean));
     }
 
+    // Video: file mới chọn -> upload thật; không có file nhưng có videoUrl (giữ video cũ) -> giữ
+    // nguyên; cả 2 đều không có (Sale xóa video) -> gán null để xóa hẳn video cũ khỏi request.
+    let finalVideoUrl: string | null | undefined;
+    if (videoFile) {
+      const uploadedVideo = await this.cloudinaryService.uploadVideo(videoFile);
+      finalVideoUrl = uploadedVideo.url;
+    } else if (videoUrl && videoUrl.startsWith('http')) {
+      finalVideoUrl = videoUrl;
+    } else {
+      finalVideoUrl = null;
+    }
+
     const updated = await this.prisma.quoteRequest.update({
       where: { id },
       data: {
         ...data,
+        videoUrl: finalVideoUrl,
         images:
           finalCloudinaryUrls.length > 0
             ? {

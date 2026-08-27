@@ -13,7 +13,7 @@ import {
   UseInterceptors,
   UploadedFiles,
 } from '@nestjs/common';
-import { FilesInterceptor } from '@nestjs/platform-express';
+import { FileFieldsInterceptor } from '@nestjs/platform-express';
 import type { Response } from 'express';
 import {
   ApiTags,
@@ -26,7 +26,10 @@ import { QuoteRequestsService } from './quote-requests.service';
 import { CreateQuoteRequestDto } from './dto/create-quote-request.dto';
 import { UpdateQuoteRequestDto } from './dto/update-quote-request.dto';
 import { FilterQuoteRequestDto } from './dto/filter-quote-request.dto';
-import { LibraryProductsQueryDto } from './dto/library-products-query.dto';
+import {
+  LibraryProductsQueryDto,
+  LibraryHistoryQueryDto,
+} from './dto/library-products-query.dto';
 import { UpdateQuoteStatusDto } from './dto/update-quote-status.dto';
 import { ExportQuoteRequestDto } from './dto/export-quote-request.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -34,8 +37,9 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Role, User } from '@prisma/client';
-import { QuoteQueryService } from './quote-query.service';
-import { QuoteWorkflowService } from './quote-workflow.service';
+import { QuoteQueryService } from './quote/quote-query.service';
+import { QuoteAnalyticsService } from './quote/quote-analytics.service';
+import { QuoteWorkflowService } from './quote/quote-workflow.service';
 
 @ApiTags('Quote Requests - Quản lý Báo giá')
 @ApiBearerAuth('JWT-auth')
@@ -45,6 +49,7 @@ export class QuoteRequestsController {
   constructor(
     private readonly quoteRequestsService: QuoteRequestsService,
     private readonly quoteQueryService: QuoteQueryService,
+    private readonly quoteAnalyticsService: QuoteAnalyticsService,
     private readonly quoteWorkflowService: QuoteWorkflowService,
   ) {}
 
@@ -55,13 +60,24 @@ export class QuoteRequestsController {
   @ApiConsumes('multipart/form-data', 'application/json')
   @Roles(Role.SALE, Role.ADMIN)
   @Post()
-  @UseInterceptors(FilesInterceptor('files', 5))
+  @UseInterceptors(
+    FileFieldsInterceptor([
+      { name: 'files', maxCount: 5 },
+      { name: 'video', maxCount: 1 },
+    ]),
+  )
   async create(
     @CurrentUser('id') userId: string,
     @Body() dto: CreateQuoteRequestDto,
-    @UploadedFiles() files?: Express.Multer.File[],
+    @UploadedFiles()
+    uploaded?: { files?: Express.Multer.File[]; video?: Express.Multer.File[] },
   ) {
-    return this.quoteRequestsService.create(userId, dto, files);
+    return this.quoteRequestsService.create(
+      userId,
+      dto,
+      uploaded?.files,
+      uploaded?.video?.[0],
+    );
   }
 
   @ApiOperation({
@@ -84,7 +100,7 @@ export class QuoteRequestsController {
     @Query() filterDto: FilterQuoteRequestDto,
     @CurrentUser() user: any,
   ) {
-    return this.quoteQueryService.getStats(filterDto, user);
+    return this.quoteAnalyticsService.getStats(filterDto, user);
   }
 
   @ApiOperation({
@@ -96,7 +112,7 @@ export class QuoteRequestsController {
     @Query() filterDto: FilterQuoteRequestDto,
     @CurrentUser() user: any,
   ) {
-    return this.quoteQueryService.getDashboardCharts(filterDto, user);
+    return this.quoteAnalyticsService.getDashboardCharts(filterDto, user);
   }
 
   @ApiOperation({
@@ -105,7 +121,7 @@ export class QuoteRequestsController {
   })
   @Get('staff-performance')
   async getStaffPerformance() {
-    return this.quoteQueryService.getStaffPerformance();
+    return this.quoteAnalyticsService.getStaffPerformance();
   }
 
   @ApiOperation({
@@ -115,6 +131,15 @@ export class QuoteRequestsController {
   @Get('library-products')
   async getLibraryProducts(@Query() dto: LibraryProductsQueryDto) {
     return this.quoteQueryService.getLibraryProducts(dto);
+  }
+
+  @ApiOperation({
+    summary:
+      'Lịch sử báo giá của 1 sản phẩm Thư Viện (lazy load khi mở modal) — phân trang theo đơn',
+  })
+  @Get('library-history')
+  async getLibraryProductHistory(@Query() dto: LibraryHistoryQueryDto) {
+    return this.quoteQueryService.getLibraryProductHistory(dto);
   }
 
   @ApiOperation({
@@ -148,14 +173,28 @@ export class QuoteRequestsController {
   @ApiConsumes('multipart/form-data', 'application/json')
   @Roles(Role.SALE, Role.ADMIN)
   @Patch(':id')
-  @UseInterceptors(FilesInterceptor('files', 5))
+  @UseInterceptors(
+    FileFieldsInterceptor([
+      { name: 'files', maxCount: 5 },
+      { name: 'video', maxCount: 1 },
+    ]),
+  )
   async update(
     @Param('id') id: string,
     @CurrentUser('id') userId: string,
+    @CurrentUser('role') role: Role,
     @Body() dto: UpdateQuoteRequestDto,
-    @UploadedFiles() files?: Express.Multer.File[],
+    @UploadedFiles()
+    uploaded?: { files?: Express.Multer.File[]; video?: Express.Multer.File[] },
   ) {
-    return this.quoteRequestsService.update(id, userId, dto, files);
+    return this.quoteRequestsService.update(
+      id,
+      userId,
+      role,
+      dto,
+      uploaded?.files,
+      uploaded?.video?.[0],
+    );
   }
 
   @ApiOperation({ summary: 'Hủy yêu cầu báo giá (SALE / ADMIN)' })

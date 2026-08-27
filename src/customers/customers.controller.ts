@@ -40,6 +40,18 @@ export class CustomersController {
     return this.customersService.getStats(dto);
   }
 
+  @ApiOperation({
+    summary:
+      'So sánh KPI tháng này với tháng trước (số khách hoạt động + giá trị đã chốt) cho card đầu trang',
+  })
+  @Get('stats/month-comparison')
+  async getMonthComparison(
+    @Query('provinceId') provinceId?: string,
+    @Query('requesterId') requesterId?: string,
+  ) {
+    return this.customersService.getMonthComparison(provinceId, requesterId);
+  }
+
   @ApiOperation({ summary: 'Lấy chi tiết khách hàng theo ID' })
   @Get(':id')
   async findOne(@Param('id') id: string) {

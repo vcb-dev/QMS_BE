@@ -71,6 +71,63 @@ export function buildProductName(
   return `${categoryName || ''} ${matName}`.trim() || 'Sản phẩm chế tác';
 }
 
+// Tên sản phẩm cho Thư Viện Sản Phẩm (gộp thô theo danh mục + kim loại gốc) — ghép thẳng 3 khóa
+// nhóm: "<Danh mục> <tên kim loại gốc> <tên đá, ...>". Không nêu tuổi vàng/khối lượng vì nhóm gộp
+// mọi biến thể đó. Chỉ có phần đá khi nhóm có đá cấu trúc (tách đá).
+export function buildLibraryProductName(
+  categoryName: string | undefined,
+  baseMetalName: string | undefined,
+  stoneNames: string[],
+): string {
+  const stones = stoneNames.filter(Boolean).join(', ');
+  return (
+    [categoryName || '', baseMetalName || '', stones]
+      .filter(Boolean)
+      .join(' ')
+      .trim() || 'Sản phẩm chế tác'
+  );
+}
+
+// Khóa gộp nhóm THÔ cho Thư Viện Sản Phẩm — nguồn sự thật DUY NHẤT, dùng chung cho:
+//   - write path (buildOptionCreateInput) ghi vào QuoteOption.libraryGroupKey
+//   - script backfill row cũ
+//   - (thay cho hàm libraryGroupKey() tính-lúc-đọc cũ trong quote-query.service.ts)
+// Format: "<categoryId> | <baseMetalId của chất liệu NẶNG NHẤT có kim loại gốc> | <tập tên đá
+// MAIN đã lowercase + distinct + sort, nối '~'>". Chất liệu phi kim loại (baseMetalId null),
+// tuổi vàng, khối lượng, size/giác cắt/số lượng đá, đá SIDE — KHÔNG vào khóa.
+export function computeLibraryGroupKey(
+  opt: { materials?: any[]; stones?: any[]; weightChi?: unknown },
+  categoryId: string | undefined,
+  materialBaseMetal: Map<string, string | null | undefined>,
+  stoneMeta: Map<string, { name?: string | null; stoneType?: string | null }>,
+): string {
+  const mats = (opt.materials || [])
+    .map((m: any) => ({
+      baseMetalId: materialBaseMetal.get(m.materialId) ?? null,
+      weightChi: Number(m.weightChi ?? opt.weightChi ?? 0) || 0,
+    }))
+    .filter((m) => !!m.baseMetalId);
+  mats.sort((a, b) => b.weightChi - a.weightChi);
+  const baseMetalId = mats[0]?.baseMetalId || 'none';
+
+  const stoneKey = [
+    ...new Set(
+      (opt.stones || [])
+        .map((s: any) => stoneMeta.get(s.stoneId))
+        .filter(
+          (m): m is { name: string; stoneType: string } =>
+            !!m && m.stoneType === 'MAIN' && !!m.name,
+        )
+        .map((m) => String(m.name).trim().toLowerCase())
+        .filter(Boolean),
+    ),
+  ]
+    .sort()
+    .join('~');
+
+  return `${categoryId || ''}|${baseMetalId}|${stoneKey}`;
+}
+
 // Build nested-create payload cho 1 QuoteOption từ QuoteOptionItemDto — dùng ở mọi chỗ
 // tạo/ghi-đè option (create request, quick-quote, complete quote, quick-approve).
 export function buildOptionCreateInput(
@@ -78,6 +135,10 @@ export function buildOptionCreateInput(
   idx: number,
   categoryId?: string,
   stonePriceMap?: Map<string, number>,
+  keyMaps?: {
+    materialBaseMetal: Map<string, string | null | undefined>;
+    stoneMeta: Map<string, { name?: string | null; stoneType?: string | null }>;
+  },
 ) {
   const matKey =
     opt.materials?.length > 0
@@ -98,6 +159,16 @@ export function buildOptionCreateInput(
       : opt.stoneDescription ||
         (opt.stoneCost ? `cost:${opt.stoneCost}` : 'none');
   const dedupKey = `${categoryId || ''}|${matKey}|${stoneKey}`;
+  // Khóa gộp nhóm Thư Viện — chỉ tính khi caller cấp keyMaps (luồng ghi option). Thiếu keyMaps
+  // (test cũ, hoặc caller chưa cập nhật) thì để undefined, row đó chờ script backfill.
+  const libraryGroupKey = keyMaps
+    ? computeLibraryGroupKey(
+        opt,
+        categoryId,
+        keyMaps.materialBaseMetal,
+        keyMaps.stoneMeta,
+      )
+    : undefined;
 
   return {
     optionName: opt.optionName || `Phương án ${idx + 1}`,
@@ -114,6 +185,7 @@ export function buildOptionCreateInput(
     note: opt.note,
     stoneDescription: opt.stoneDescription,
     dedupKey,
+    libraryGroupKey,
     // FE đánh dấu phương án nào là giá chính (radio) — ghi thẳng vào selectionStatus, nguồn sự
     // thật duy nhất cho "phương án nào đang dùng để báo giá" (thay QuoteRequest.selectedOptionId cũ).
     selectionStatus: opt.isSelected

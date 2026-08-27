@@ -336,7 +336,6 @@ async function main() {
         ward_code: string;
         name: string;
         province_code?: string;
-        district_name?: string;
       }>;
     }> = JSON.parse(rawData);
 
@@ -377,7 +376,6 @@ async function main() {
           .map((w) => ({
             name: w.name,
             code: w.ward_code || null,
-            districtName: w.district_name || null,
             provinceId: province.id,
           }));
 

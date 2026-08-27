@@ -54,6 +54,14 @@ export const APP_CONSTANTS = {
     'image/heif',
     'image/svg+xml',
   ],
+  MAX_VIDEO_FILE_SIZE: 100 * 1024 * 1024, // 100MB
+  ALLOWED_VIDEO_MIME_TYPES: [
+    'video/mp4',
+    'video/quicktime',
+    'video/webm',
+    'video/x-msvideo',
+    'video/3gpp',
+  ],
   MATERIAL_TTL: 60_000,
   // Dữ liệu tham chiếu ít đổi (giá kim loại, danh mục đá, cấu hình tính giá) — cache 1 phút
   // để giảm truy vấn DB lặp lại (mỗi lần tính giá gọi getConfig()/getLatestAsync() nhiều lần).
@@ -68,13 +76,12 @@ export const APP_CONSTANTS = {
     CLOSED: 'Đã chốt',
     REJECTED: 'Bị từ chối',
   },
-VANG_TODAY_SOURCES : [
+  VANG_TODAY_SOURCES: [
     { code: 'SJL1L10', label: 'SJC 9999' },
     { code: 'BT9999NTT', label: 'Bảo Tín 9999' },
     { code: 'DOHNL', label: 'DOJI Hà Nội' },
     { code: 'PQHN24NTT', label: 'PNJ 24K' },
   ],
-  
-  VANG_TODAY_PATH : '/vi/'
-  
+
+  VANG_TODAY_PATH: '/vi/',
 };

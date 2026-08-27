@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ConflictException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { StoneType } from '@prisma/client';
@@ -54,7 +55,57 @@ export class StonesService {
     return stoneType ? all.filter((s) => s.stoneType === stoneType) : all;
   }
 
+  // "Cùng đá" = cùng loại (chủ/tấm) + cùng tên + cùng giác cắt + cùng size, so sánh không phân
+  // biệt hoa/thường và bỏ khoảng trắng thừa — tránh thêm trùng 1 viên đá thành nhiều dòng khác giá.
+  private normalizeStoneField(v?: string | null): string {
+    return (v || '').trim().toLowerCase();
+  }
+
+  private stoneDedupKey(
+    stoneType: StoneType,
+    name: string,
+    cut?: string | null,
+    size?: string | null,
+  ): string {
+    return [
+      stoneType,
+      this.normalizeStoneField(name),
+      this.normalizeStoneField(cut),
+      this.normalizeStoneField(size),
+    ].join('|');
+  }
+
+  private async findDuplicateStone(
+    stoneType: StoneType,
+    name: string,
+    cut?: string | null,
+    size?: string | null,
+    excludeId?: string,
+  ) {
+    const candidates = await this.prisma.stone.findMany({
+      where: { stoneType },
+      select: { id: true, name: true, cut: true, size: true, price: true },
+    });
+    const key = this.stoneDedupKey(stoneType, name, cut, size);
+    return candidates.find(
+      (s) =>
+        s.id !== excludeId &&
+        this.stoneDedupKey(stoneType, s.name, s.cut, s.size) === key,
+    );
+  }
+
   async create(dto: CreateStoneDto) {
+    const dup = await this.findDuplicateStone(
+      dto.stoneType,
+      dto.name,
+      dto.cut,
+      dto.size,
+    );
+    if (dup) {
+      throw new ConflictException(
+        `Đá "${dto.name}"${dto.cut ? ` - ${dto.cut}` : ''}${dto.size ? ` - ${dto.size}` : ''} đã tồn tại trong danh mục, vui lòng sửa giá đá cũ thay vì thêm trùng`,
+      );
+    }
     this.cache.clear();
     return this.prisma.stone.create({ data: dto });
   }
@@ -62,9 +113,29 @@ export class StonesService {
   async update(id: string, dto: UpdateStoneDto) {
     const existing = await this.prisma.stone.findUnique({
       where: { id },
-      select: { id: true },
+      select: { id: true, stoneType: true, name: true, cut: true, size: true },
     });
     if (!existing) throw new NotFoundException('Không tìm thấy đá');
+
+    // Sửa tên/cut/size mà trùng với 1 viên đá KHÁC (loại trừ chính nó qua excludeId) thì chặn lại
+    // — trùng với chính giá trị cũ của nó (không đổi gì) thì dĩ nhiên không tính là trùng.
+    const mergedStoneType = dto.stoneType ?? existing.stoneType;
+    const mergedName = dto.name ?? existing.name;
+    const mergedCut = dto.cut ?? existing.cut;
+    const mergedSize = dto.size ?? existing.size;
+    const dup = await this.findDuplicateStone(
+      mergedStoneType,
+      mergedName,
+      mergedCut,
+      mergedSize,
+      id,
+    );
+    if (dup) {
+      throw new ConflictException(
+        `Đá "${mergedName}"${mergedCut ? ` - ${mergedCut}` : ''}${mergedSize ? ` - ${mergedSize}` : ''} đã tồn tại trong danh mục, vui lòng sửa giá đá đó thay vì tạo trùng`,
+      );
+    }
+
     this.cache.clear();
     return this.prisma.stone.update({ where: { id }, data: dto });
   }
@@ -118,10 +189,40 @@ export class StonesService {
     return { deleted: result.count };
   }
 
+  // Bỏ qua dòng trùng (cùng loại + tên + cut + size) với đá đã có sẵn HOẶC trùng với dòng khác
+  // ngay trong cùng file Excel đang import — không lưu bất kỳ dòng trùng nào.
   async importMany(rows: CreateStoneDto[]) {
-    const created = await this.prisma.stone.createMany({ data: rows });
+    const existing = await this.prisma.stone.findMany({
+      select: { stoneType: true, name: true, cut: true, size: true },
+    });
+    const seenKeys = new Set(
+      existing.map((s) =>
+        this.stoneDedupKey(s.stoneType, s.name, s.cut, s.size),
+      ),
+    );
+    const uniqueRows: CreateStoneDto[] = [];
+    let skipped = 0;
+    for (const row of rows) {
+      const key = this.stoneDedupKey(
+        row.stoneType,
+        row.name,
+        row.cut,
+        row.size,
+      );
+      if (seenKeys.has(key)) {
+        skipped++;
+        continue;
+      }
+      seenKeys.add(key);
+      uniqueRows.push(row);
+    }
+
+    const created =
+      uniqueRows.length > 0
+        ? await this.prisma.stone.createMany({ data: uniqueRows })
+        : { count: 0 };
     this.cache.clear();
-    return { imported: created.count };
+    return { imported: created.count, skipped };
   }
 
   async importFromExcel(file?: Express.Multer.File) {

@@ -1,9 +1,10 @@
 import { Module } from '@nestjs/common';
 import { QuoteRequestsService } from './quote-requests.service';
-import { QuoteQueryService } from './quote-query.service';
-import { QuoteWorkflowService } from './quote-workflow.service';
-import { QuoteOptionsService } from './quote-options.service';
-import { QuoteOptionsController } from './quote-options.controller';
+import { QuoteQueryService } from './quote/quote-query.service';
+import { QuoteAnalyticsService } from './quote/quote-analytics.service';
+import { QuoteWorkflowService } from './quote/quote-workflow.service';
+import { QuoteOptionsService } from './quote-option/quote-options.service';
+import { QuoteOptionsController } from './quote-option/quote-options.controller';
 import { QuoteRequestsController } from './quote-requests.controller';
 import { CloudinaryModule } from '../cloudinary/cloudinary.module';
 import { MailModule } from '../mail/mail.module';
@@ -33,9 +34,15 @@ import { StonesModule } from '../stones/stones.module';
   providers: [
     QuoteRequestsService,
     QuoteQueryService,
+    QuoteAnalyticsService,
     QuoteWorkflowService,
     QuoteOptionsService,
   ],
-  exports: [QuoteRequestsService, QuoteQueryService, QuoteWorkflowService],
+  exports: [
+    QuoteRequestsService,
+    QuoteQueryService,
+    QuoteAnalyticsService,
+    QuoteWorkflowService,
+  ],
 })
 export class QuoteRequestsModule {}
