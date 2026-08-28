@@ -5,7 +5,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { JwtStrategy } from './strategies/jwt.strategy';
-import { CookieAuthService } from './cookie-auth.service';
+import { CookieAuthService } from './cookie/cookie-auth.service';
 
 import { MailModule } from '../mail/mail.module';
 

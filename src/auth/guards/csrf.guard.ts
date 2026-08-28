@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { Request } from 'express';
-import { COOKIE_CSRF } from '../cookie.constants';
+import { COOKIE_CSRF } from '../cookie/cookie.constants';
 import { SKIP_CSRF_KEY } from '../decorators/skip-csrf.decorator';
 
 @Injectable()

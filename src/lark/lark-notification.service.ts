@@ -6,7 +6,6 @@ export interface LarkLink {
   href: string;
 }
 
-
 @Injectable()
 export class LarkNotificationService {
   private readonly logger = new Logger(LarkNotificationService.name);
@@ -32,60 +31,44 @@ export class LarkNotificationService {
     };
   }
 
-  // Báo bot ORDER — dùng khi Sale tạo/gửi lại yêu cầu, cần Order xử lý.
-  async notifyOrder(text: string, requestId?: string): Promise<void> {
-    return this.send('LARK_WEBHOOK_URL', 'LARK_SECRET', text, requestId);
+  // Báo bot SALE dạng "post" nhiều dòng — dùng khi Order báo giá thành công, Sale cần xem đầy đủ
+  // thông tin yêu cầu kèm giá. Mỗi phần tử `lines` là 1 dòng; dòng cuối tự chèn link "Xem chi tiết".
+  // Đây là thông báo Lark DUY NHẤT của luồng báo giá — mọi mốc khác (tạo yêu cầu, từ chối, trả lại,
+  // gửi lại) không bắn Lark nữa.
+  async notifySaleDetail(lines: string[], requestId?: string): Promise<void> {
+    const webhookUrl = this.config.get<string>('LARK_SALE_WEBHOOK_URL');
+    if (!webhookUrl) return;
+
+    const link = requestId ? this.buildRequestLink(requestId) : undefined;
+    const content: unknown[][] = lines
+      .filter((l) => l != null)
+      .map((line) => [{ tag: 'text', text: line }]);
+    if (link) {
+      content.push([{ tag: 'a', text: link.text, href: link.href }]);
+    }
+
+    const body: Record<string, unknown> = {
+      msg_type: 'post',
+      content: { post: { vi: { title: '', content } } },
+    };
+    this.attachSign(body, 'LARK_SALE_SECRET');
+    await this.deliver('LARK_SALE_WEBHOOK_URL', webhookUrl, body);
   }
 
-  // Báo bot SALE — dùng khi Order hoàn tất báo giá/từ chối/trả lại, cần Sale biết kết quả.
-  async notifySale(text: string, requestId?: string): Promise<void> {
-    return this.send(
-      'LARK_SALE_WEBHOOK_URL',
-      'LARK_SALE_SECRET',
-      text,
-      requestId,
-    );
+  private attachSign(body: Record<string, unknown>, secretKey: string): void {
+    const secret = this.config.get<string>(secretKey);
+    if (!secret) return;
+    const timestamp = String(Math.floor(Date.now() / 1000));
+    body.timestamp = timestamp;
+    body.sign = this.sign(timestamp, secret);
   }
 
   // Bắn thông báo không được làm hỏng luồng nghiệp vụ chính — lỗi chỉ log, không throw.
-  private async send(
+  private async deliver(
     urlKey: string,
-    secretKey: string,
-    text: string,
-    requestId?: string,
+    webhookUrl: string,
+    body: Record<string, unknown>,
   ): Promise<void> {
-    const webhookUrl = this.config.get<string>(urlKey);
-    if (!webhookUrl) return;
-
-    const secret = this.config.get<string>(secretKey);
-    const link = requestId ? this.buildRequestLink(requestId) : undefined;
-    const body: Record<string, unknown> = link
-      ? {
-          msg_type: 'post',
-          content: {
-            post: {
-              vi: {
-                title: '',
-                content: [
-                  [
-                    { tag: 'text', text: `${text} ` },
-                    { tag: 'a', text: link.text, href: link.href },
-                  ],
-                ],
-              },
-            },
-          },
-        }
-      : {
-          msg_type: 'text',
-          content: { text },
-        };
-    if (secret) {
-      const timestamp = String(Math.floor(Date.now() / 1000));
-      body.timestamp = timestamp;
-      body.sign = this.sign(timestamp, secret);
-    }
-
     try {
       const res = await fetch(webhookUrl, {
         method: 'POST',

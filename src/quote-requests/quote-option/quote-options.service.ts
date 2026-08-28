@@ -63,30 +63,15 @@ export class QuoteOptionsService {
     return ((defaultFormula.config as any)?.tiers || []) as MarginTier[];
   }
 
-  // Giá/viên đá TẠI THỜI ĐIỂM báo giá — gọi 1 lần trước khi build nhiều option, tránh N+1 query.
-  // Không snapshot thì xem lại đơn cũ sẽ ra giá đá SAI (giá hôm nay) dù QuoteOption.stonePrice đã
-  // đóng băng đúng tổng tiền.
-  async buildStonePriceMap(
-    effectiveOptions: any[],
-  ): Promise<Map<string, number>> {
-    const stoneIds = [
-      ...new Set(
-        effectiveOptions.flatMap((opt) =>
-          (opt.stones || []).map((s: any) => s.stoneId),
-        ),
-      ),
-    ].filter(Boolean);
-    if (stoneIds.length === 0) return new Map();
-    const stones = await this.prisma.stone.findMany({
-      where: { id: { in: stoneIds } },
-      select: { id: true, price: true },
-    });
-    return new Map(stones.map((s) => [s.id, Number(s.price)]));
-  }
-
-  // Tra dữ liệu cần cho computeLibraryGroupKey (khóa gộp nhóm Thư Viện Sản Phẩm) — gọi 1 lần
-  // trước khi build nhiều option, tránh N+1. Chỉ khi GHI option; đọc dùng cột libraryGroupKey sẵn.
-  async buildLibraryKeyMaps(effectiveOptions: any[]): Promise<{
+  // Tra 1 lượt mọi dữ liệu material/stone cần cho luồng GHI option, bằng 1 câu material + 1 câu
+  // stone chạy song song (trước tách làm buildStonePriceMap + buildLibraryKeyMaps, query bảng
+  // stones 2 lần cùng bộ id). Trả về 3 Map:
+  //   - stonePriceMap: giá/viên đá TẠI THỜI ĐIỂM báo giá — không snapshot thì xem lại đơn cũ ra
+  //     giá đá SAI (giá hôm nay) dù QuoteOption.stonePrice đã đóng băng đúng tổng tiền.
+  //   - materialBaseMetal + stoneMeta: đầu vào cho computeLibraryGroupKey (khóa gộp nhóm Thư Viện
+  //     Sản Phẩm). Chỉ dùng khi GHI option; đọc thì dùng cột libraryGroupKey sẵn.
+  async buildOptionLookupMaps(effectiveOptions: any[]): Promise<{
+    stonePriceMap: Map<string, number>;
     materialBaseMetal: Map<string, string | null>;
     stoneMeta: Map<string, { name: string; stoneType: string }>;
   }> {
@@ -115,14 +100,20 @@ export class QuoteOptionsService {
       stoneIds.length
         ? this.prisma.stone.findMany({
             where: { id: { in: stoneIds } },
-            select: { id: true, name: true, stoneType: true },
+            select: { id: true, price: true, name: true, stoneType: true },
           })
         : Promise.resolve(
-            [] as { id: string; name: string; stoneType: string }[],
+            [] as {
+              id: string;
+              price: any;
+              name: string;
+              stoneType: string;
+            }[],
           ),
     ]);
 
     return {
+      stonePriceMap: new Map(stones.map((s) => [s.id, Number(s.price)])),
       materialBaseMetal: new Map(
         mats.map((m): [string, string | null] => [m.id, m.baseMetalId]),
       ),

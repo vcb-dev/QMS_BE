@@ -99,7 +99,83 @@ export class QuoteWorkflowService {
   }
 
   private pickProductName(quote: any): string {
-    return quote.category?.name || 'Sản phẩm chế tác';
+    return quote.productName || quote.category?.name || 'Sản phẩm chế tác';
+  }
+
+  // Định dạng tiền VNĐ cho nội dung thông báo (dấu chấm ngăn nghìn + "đ") — khớp cách FE hiển thị
+  // (qms_fe/src/utils/currency.ts) và bản export Excel (dto/export-field-defs.ts).
+  private formatVnd(v: unknown): string {
+    if (v === null || v === undefined) return 'Chưa có';
+    return `${Math.round(Number(v)).toLocaleString('vi-VN')} đ`;
+  }
+
+  // Nội dung thông báo Lark khi báo giá thành công — mỗi phần tử là 1 dòng. Bám theo trang chi tiết
+  // yêu cầu phía Sale: thông tin đơn + từng phương án (chất liệu/khối lượng/đá) + giá bán (giá chất
+  // liệu = quotedPrice - stonePrice, giá đá = stonePrice, không lộ giá vốn), chốt bằng tổng báo giá
+  // của phương án đại diện.
+  private buildQuoteCompletedLines(quote: any): string[] {
+    const lines: string[] = [];
+    lines.push(`✅ Đã báo giá: ${quote.code}`);
+    lines.push(`Danh mục: ${quote.category?.name || 'Chưa phân loại'}`);
+    lines.push(`Sản phẩm: ${this.pickProductName(quote)}`);
+
+    const customer =
+      quote.customer?.name || quote.customerName || 'Khách hàng lẻ';
+    const phone = quote.customer?.phone ? ` — ${quote.customer.phone}` : '';
+    lines.push(`Khách hàng: ${customer}${phone}`);
+    lines.push(`Sale: ${quote.requester?.name || 'Chưa rõ'}`);
+    lines.push(`Order: ${quote.assignee?.name || 'Chưa phân công'}`);
+
+    const priced = (Array.isArray(quote.options) ? quote.options : []).filter(
+      (o: any) => o.quotedPrice != null,
+    );
+    priced.forEach((opt: any, idx: number) => {
+      lines.push('———');
+      lines.push(opt.optionName || `Phương án ${idx + 1}`);
+
+      const mats = Array.isArray(opt.materials) ? opt.materials : [];
+      if (mats.length > 0) {
+        lines.push(
+          `  Chất liệu: ${mats
+            .map((m: any) => {
+              const name = m.materialName || m.material?.name || 'Kim loại';
+              const w = m.weightChi ?? opt.weightChi;
+              return w != null ? `${name} (${w} chỉ)` : name;
+            })
+            .join(', ')}`,
+        );
+      } else if (opt.weightChi != null) {
+        lines.push(`  Khối lượng chất liệu: ${opt.weightChi} chỉ`);
+      }
+
+      const stone = Number(opt.priceBreakdown?.stone ?? opt.stonePrice ?? 0);
+      const material = Number(
+        opt.priceBreakdown?.material ?? Number(opt.quotedPrice) - stone,
+      );
+      lines.push(`  Giá chất liệu: ${this.formatVnd(material)}`);
+
+      const stones = Array.isArray(opt.stones) ? opt.stones : [];
+      if (stones.length > 0) {
+        lines.push(
+          `  Đá: ${stones
+            .map(
+              (s: any) =>
+                `${s.quantity ?? 1}v ${s.stoneName || s.stone?.name || 'đá'}`,
+            )
+            .join(', ')}`,
+        );
+        lines.push(`  Giá đá: ${this.formatVnd(stone)}`);
+      } else {
+        lines.push('  Đá: Không đính đá');
+      }
+
+      lines.push(`  Giá báo: ${this.formatVnd(opt.quotedPrice)}`);
+    });
+
+    const primary = pickPrimaryOption(quote);
+    lines.push('———');
+    lines.push(`Tổng báo giá: ${this.formatVnd(primary?.quotedPrice)}`);
+    return lines;
   }
 
   private notifySale(
@@ -129,8 +205,10 @@ export class QuoteWorkflowService {
       price,
       this.pickProductName(quote),
     );
-    this.larkService.notifySale(
-      `✅ Đơn ${quote.code} (${this.pickProductName(quote)}) đã có giá: ${price.toLocaleString('vi-VN')}đ`,
+    // Lark: thông báo DUY NHẤT của luồng báo giá — bắn khi (và chỉ khi) yêu cầu đã có giá thành công,
+    // gửi bot Sale với đầy đủ thông tin đơn + giá như trang chi tiết phía Sale.
+    void this.larkService.notifySaleDetail(
+      this.buildQuoteCompletedLines(quote),
       quote.id,
     );
   }
@@ -142,10 +220,6 @@ export class QuoteWorkflowService {
       this.pickProductName(quote),
       reason,
     );
-    this.larkService.notifySale(
-      `❌ Đơn ${quote.code} (${this.pickProductName(quote)}) bị từ chối: ${reason}`,
-      quote.id,
-    );
   }
 
   private notifySaleNeedMoreInfo(quote: any, reason: string) {
@@ -154,10 +228,6 @@ export class QuoteWorkflowService {
       this.mailService.sendNeedMoreInfo.bind(this.mailService),
       this.pickProductName(quote),
       reason,
-    );
-    this.larkService.notifySale(
-      `⚠️ Đơn ${quote.code} (${this.pickProductName(quote)}) cần bổ sung thông tin: ${reason}`,
-      quote.id,
     );
   }
 
@@ -174,20 +244,21 @@ export class QuoteWorkflowService {
     this.queryService.clearCache();
 
     // FE luôn gửi kèm options đầy đủ (mỗi phương án tự mang materials/stones riêng) —
-    const existing = await this.prisma.quoteRequest.findUnique({
-      where: { id },
-      select: { categoryId: true },
-    });
-
+    // categoryId + tra cứu material/stone gộp chung 1 nhịp Promise.all thay vì chờ nối tiếp.
     const opts = dto.options ?? [];
 
-    const [stonePriceMap, keyMaps] =
+    const [existing, lookups] = await Promise.all([
+      this.prisma.quoteRequest.findUnique({
+        where: { id },
+        select: { categoryId: true },
+      }),
       opts.length > 0
-        ? await Promise.all([
-            this.quoteOptionsService.buildStonePriceMap(opts),
-            this.quoteOptionsService.buildLibraryKeyMaps(opts),
-          ])
-        : [new Map<string, number>(), undefined];
+        ? this.quoteOptionsService.buildOptionLookupMaps(opts)
+        : Promise.resolve(null),
+    ]);
+
+    const stonePriceMap = lookups?.stonePriceMap ?? new Map<string, number>();
+    const keyMaps = lookups ?? undefined;
 
     if (opts.length === 0) {
       const updatedNoOpts = await this.prisma.quoteRequest.update({
@@ -489,10 +560,6 @@ export class QuoteWorkflowService {
       include: REQUEST_DETAIL_INCLUDE,
     });
     const mapped = mapQuoteRequestDetail(updated);
-    this.larkService.notifyOrder(
-      ` Đơn ${mapped.code} (${this.pickProductName(mapped)}) đã được gửi lại, cần xử lý`,
-      mapped.id,
-    );
     // Sale gọi được action này — không được thấy cấu thành giá vốn trong response trả về.
     if (role === Role.SALE) {
       mapped.options = this.queryService.stripCostFieldsForSale(mapped.options);
@@ -561,7 +628,7 @@ export class QuoteWorkflowService {
           select: { categoryId: true },
         });
         const quickQuoteKeyMaps = dto.options?.length
-          ? await this.quoteOptionsService.buildLibraryKeyMaps(dto.options)
+          ? await this.quoteOptionsService.buildOptionLookupMaps(dto.options)
           : undefined;
         const updated = await this.prisma.quoteRequest.update({
           where: { id },
@@ -620,7 +687,7 @@ export class QuoteWorkflowService {
         }
 
         const quickApproveKeyMaps = dto.options?.length
-          ? await this.quoteOptionsService.buildLibraryKeyMaps(dto.options)
+          ? await this.quoteOptionsService.buildOptionLookupMaps(dto.options)
           : undefined;
         const approved = await this.prisma.quoteRequest.update({
           where: { id },

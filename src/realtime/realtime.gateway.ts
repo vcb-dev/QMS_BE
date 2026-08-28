@@ -12,7 +12,7 @@ import { ForbiddenException, BadRequestException, Logger } from '@nestjs/common'
 import { Server, Socket } from 'socket.io';
 import { JwtService } from '@nestjs/jwt';
 import { JwtPayload } from '../auth/strategies/jwt.strategy';
-import { COOKIE_ACCESS } from '../auth/cookie.constants';
+import { COOKIE_ACCESS } from '../auth/cookie/cookie.constants';
 import { QuoteChatService } from 'src/quote-chat/quote-chat.service';
 
 interface AuthedSocket extends Socket {

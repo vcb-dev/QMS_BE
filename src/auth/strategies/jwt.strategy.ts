@@ -4,7 +4,7 @@ import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { Request } from 'express';
 import { Role } from '@prisma/client';
-import { COOKIE_ACCESS } from '../cookie.constants';
+import { COOKIE_ACCESS } from '../cookie/cookie.constants';
 import { PrismaService } from '../../prisma/prisma.service';
 
 export interface JwtPayload {

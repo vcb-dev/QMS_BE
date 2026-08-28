@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { CookieOptions, Response } from 'express';
 import { randomBytes } from 'crypto';
-import {APP_CONSTANTS} from '../common/constants';
+import {APP_CONSTANTS} from '../../common/constants';
 import {
   COOKIE_ACCESS,
   COOKIE_CSRF,

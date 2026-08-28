@@ -38,6 +38,13 @@ export const APP_CONSTANTS = {
   COOKIE_SECURE: process.env['COOKIE_SECURE'] === 'true',
   THROTTLE_TTL: requiredNumberEnv('LOGIN_THROTTLE_TTL'),
   THROTTLE_LIMIT: requiredNumberEnv('LOGIN_THROTTLE_LIMIT'),
+  // Lark OAuth (đăng nhập bằng tài khoản Lark) — flow v2, không cần app_access_token
+  LARK_OAUTH_AUTHORIZE_URL:
+    'https://open.larksuite.com/open-apis/authen/v1/authorize',
+  LARK_OAUTH_TOKEN_URL:
+    'https://open.larksuite.com/open-apis/authen/v2/oauth/token',
+  LARK_USER_INFO_URL:
+    'https://open.larksuite.com/open-apis/authen/v1/user_info',
   VNAPPMOB_API_KEY: requiredEnv('VNAPPMOB_API_KEY'),
   VNAPPMOB_GOLD_URL: requiredEnv('VNAPPMOB_GOLD_URL'),
   VANG_TODAY_URL: requiredEnv('VANG_TODAY_URL'),

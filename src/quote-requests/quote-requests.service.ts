@@ -12,7 +12,6 @@ import { QuoteWorkflowService } from './quote/quote-workflow.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { ExcelService } from '../excel/excel.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
-import { LarkNotificationService } from '../lark/lark-notification.service';
 import { QuoteOptionsService } from './quote-option/quote-options.service';
 import { EXPORT_FIELD_DEFS } from './dto/export-field-defs';
 import {
@@ -31,7 +30,6 @@ export class QuoteRequestsService {
     private auditLog: AuditLogService,
     private excelService: ExcelService,
     private realtimeGateway: RealtimeGateway,
-    private larkService: LarkNotificationService,
     private quoteOptionsService: QuoteOptionsService,
   ) {}
 
@@ -138,10 +136,8 @@ export class QuoteRequestsService {
           ]
         : [];
 
-    const [stonePriceMap, keyMaps] = await Promise.all([
-      this.quoteOptionsService.buildStonePriceMap(effectiveOptions),
-      this.quoteOptionsService.buildLibraryKeyMaps(effectiveOptions),
-    ]);
+    const lookups =
+      await this.quoteOptionsService.buildOptionLookupMaps(effectiveOptions);
     const optionsCreate =
       effectiveOptions.length > 0
         ? {
@@ -150,8 +146,8 @@ export class QuoteRequestsService {
                 opt,
                 idx,
                 dto.categoryId,
-                stonePriceMap,
-                keyMaps,
+                lookups.stonePriceMap,
+                lookups,
               ),
             ),
           }
@@ -202,10 +198,6 @@ export class QuoteRequestsService {
     await this.auditLog.logActionByUserId(userId, 'CREATE_QUOTE', created.id);
     const detail = mapQuoteRequestDetail(created);
     this.realtimeGateway.broadcastStatusChanged(created.id, created.status);
-    this.larkService.notifyOrder(
-      `📋 Yêu cầu báo giá mới: ${created.code} (${(created as any).category?.name || 'Sản phẩm chế tác'}) — người tạo: ${(created as any).requester?.name || 'Sale'}`,
-      created.id,
-    );
     return detail;
   }
 
