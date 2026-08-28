@@ -211,10 +211,26 @@ export function buildOptionCreateInput(
   };
 }
 
+// Hai thành phần giá BÁN hiển thị của 1 option. `material` lấy bằng hiệu (quotedPrice - stonePrice)
+// — KHÔNG dùng thẳng totalMetalCost — để 2 dòng phụ trên UI luôn cộng đúng bằng con số tổng đang
+// hiển thị. null khi option chưa có giá; stone = 0 khi không đính đá.
+export function computePriceBreakdown(
+  quotedPrice: unknown,
+  stonePrice: unknown,
+): { material: number; stone: number } | null {
+  if (quotedPrice === null || quotedPrice === undefined) return null;
+  const total = Number(quotedPrice);
+  if (!Number.isFinite(total)) return null;
+  const stone = Number(stonePrice) || 0;
+  return { material: Math.round(total - stone), stone: Math.round(stone) };
+}
+
 export function mapOptionDetail(opt: any) {
   if (!opt) return opt;
+  const priceBreakdown = computePriceBreakdown(opt.quotedPrice, opt.stonePrice);
   return {
     ...opt,
+    ...(priceBreakdown ? { priceBreakdown } : {}),
     materials: Array.isArray(opt.materials)
       ? opt.materials.map((m: any) => ({
           materialId: m.materialId,

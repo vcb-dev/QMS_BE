@@ -11,6 +11,7 @@ import {
   QuoteAction,
 } from '../dto/update-quote-status.dto';
 import { CompleteQuoteInput } from '../dto/quote-complete.dto';
+import { randomUUID } from 'node:crypto';
 import { QuoteStatus, Role, OptionSelectionStatus } from '@prisma/client';
 import { QuoteQueryService } from './quote-query.service';
 import { MailService } from '../../mail/mail.service';
@@ -178,35 +179,86 @@ export class QuoteWorkflowService {
       select: { categoryId: true },
     });
 
-    const [stonePriceMap, keyMaps] = dto.options
-      ? await Promise.all([
-          this.quoteOptionsService.buildStonePriceMap(dto.options),
-          this.quoteOptionsService.buildLibraryKeyMaps(dto.options),
-        ])
-      : [new Map<string, number>(), undefined];
-    const optionsCreate =
-      dto.options && dto.options.length > 0
-        ? {
-            deleteMany: {},
-            create: dto.options.map((opt, idx) =>
-              buildOptionCreateInput(
-                opt,
-                idx,
-                existing?.categoryId,
-                stonePriceMap,
-                keyMaps,
-              ),
-            ),
-          }
-        : undefined;
+    const opts = dto.options ?? [];
 
-    const updated = await this.prisma.quoteRequest.update({
+    const [stonePriceMap, keyMaps] =
+      opts.length > 0
+        ? await Promise.all([
+            this.quoteOptionsService.buildStonePriceMap(opts),
+            this.quoteOptionsService.buildLibraryKeyMaps(opts),
+          ])
+        : [new Map<string, number>(), undefined];
+
+    if (opts.length === 0) {
+      const updatedNoOpts = await this.prisma.quoteRequest.update({
+        where: { id },
+        data: { status: QuoteStatus.QUOTED, assigneeId: userId },
+        include: REQUEST_DETAIL_INCLUDE,
+      });
+      const mappedNoOpts = mapQuoteRequestDetail(updatedNoOpts);
+      this.notifySaleQuoteCompleted(mappedNoOpts);
+      return mappedNoOpts;
+    }
+
+    // Ghi options bằng createMany PHẲNG (tối đa 3 câu INSERT cho cả lô) thay vì nested-create của
+    // Prisma — nested-create bắn 1 INSERT cho MỖI option + MỖI material/stone, chậm rõ khi qua
+    // pooler (mỗi statement kèm BEGIN/DEALLOCATE ALL/COMMIT). Tự sinh id để gắn material/stone vào
+    // đúng option mà không phải chờ từng INSERT trả id về.
+    const base = Date.now();
+    const optionWrites = opts.map((opt, idx) => {
+      const built: any = buildOptionCreateInput(
+        opt,
+        idx,
+        existing?.categoryId,
+        stonePriceMap,
+        keyMaps,
+      );
+      delete built.materials;
+      delete built.stones;
+      const optionId = randomUUID();
+      built.id = optionId;
+      built.quoteRequestId = id;
+      // createdAt cách nhau 1ms theo idx — REQUEST_DETAIL_INCLUDE orderBy createdAt asc, giữ đúng
+      // thứ tự "Phương án 1/2/3..." (createMany để now() giống nhau cho mọi row nếu không set).
+      built.createdAt = new Date(base + idx);
+      return { id: optionId, row: built, opt };
+    });
+
+    const materialRows = optionWrites.flatMap(({ id: optionId, opt }) =>
+      (opt.materials ?? []).map((m: any) => ({
+        optionId,
+        materialId: m.materialId,
+        weightChi: m.weightChi != null ? m.weightChi : opt.weightChi,
+      })),
+    );
+    const stoneRows = optionWrites.flatMap(({ id: optionId, opt }) =>
+      (opt.stones ?? []).map((s: any) => ({
+        optionId,
+        stoneId: s.stoneId,
+        quantity: s.quantity,
+        unitPriceAtQuote: stonePriceMap.get(s.stoneId),
+      })),
+    );
+
+    await this.prisma.$transaction([
+      this.prisma.quoteOption.deleteMany({ where: { quoteRequestId: id } }),
+      this.prisma.quoteRequest.update({
+        where: { id },
+        data: { status: QuoteStatus.QUOTED, assigneeId: userId },
+      }),
+      this.prisma.quoteOption.createMany({
+        data: optionWrites.map((w) => w.row),
+      }),
+      ...(materialRows.length > 0
+        ? [this.prisma.quoteOptionMaterial.createMany({ data: materialRows })]
+        : []),
+      ...(stoneRows.length > 0
+        ? [this.prisma.quoteOptionStone.createMany({ data: stoneRows })]
+        : []),
+    ]);
+
+    const updated = await this.prisma.quoteRequest.findUniqueOrThrow({
       where: { id },
-      data: {
-        status: QuoteStatus.QUOTED,
-        assigneeId: userId,
-        options: optionsCreate,
-      },
       include: REQUEST_DETAIL_INCLUDE,
     });
 
@@ -483,7 +535,9 @@ export class QuoteWorkflowService {
           );
         }
         await this.assertPricingCanProcess(id, userId, role);
-        await this.auditLog.logAction(
+        // Fire-and-forget — không chặn phản hồi bằng 1 INSERT audit_logs qua pooler (~0.8s cộng
+        // thẳng vào thời gian bấm "Xác Nhận & Gửi Báo Giá"). logAction tự nuốt lỗi.
+        void this.auditLog.logAction(
           userId,
           role,
           'QUOTE_PRICE',

@@ -146,9 +146,11 @@ export class QuoteRequestsController {
     summary: 'Export danh sách yêu cầu báo giá ra Excel (Có lọc & chọn cột)',
   })
   @Get('export')
+  @Roles(Role.ORDER, Role.ADMIN)
   async exportToExcel(
     @Query() dto: ExportQuoteRequestDto,
     @CurrentUser() user: any,
+    
     @Res({ passthrough: true }) res: Response,
   ) {
     const buffer = await this.quoteRequestsService.exportToExcel(dto, user);

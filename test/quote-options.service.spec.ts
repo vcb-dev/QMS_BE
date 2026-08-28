@@ -77,6 +77,32 @@ describe('QuoteOptionsService', () => {
       });
       // 10.000.000 * 0.75 = 7.500.000 giá vốn kim loại
       expect(result.metalPricePerChi).toBe(7_500_000);
+      // Bất biến tách giá: materialPrice + stonePrice == quotedPrice
+      expect(result.materialPrice + result.stonePrice).toBe(result.quotedPrice);
+    });
+
+    it('materialPrice + stonePrice == quotedPrice khi có tiền đá', async () => {
+      const result = await service.calculate5StepPrice({
+        materialNameOrKey: 'Vàng 18K',
+        weightChi: 2,
+        laborCost: 500_000,
+        stoneCost: 1_200_000,
+        vatRate: 10,
+      });
+      expect(result.materialPrice + result.stonePrice).toBe(result.quotedPrice);
+    });
+
+    it('calculateBatch: mỗi phương án hợp lệ giữ bất biến materialPrice + stonePrice == quotedPrice', async () => {
+      const results = await service.calculateBatch({
+        items: [
+          { materialNameOrKey: 'Vàng 18K', weightChi: 1, stoneCost: 800_000 },
+          { materialNameOrKey: 'Vàng 24K', weightChi: 1, stoneCost: 0 },
+        ],
+      });
+      for (const r of results) {
+        expect(r.error).toBeUndefined();
+        expect(r.materialPrice! + r.stonePrice!).toBe(r.quotedPrice);
+      }
     });
 
     it('ném BadRequestException khi tên không khớp material nào', async () => {

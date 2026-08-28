@@ -23,8 +23,8 @@ import {
   PricingCalculationResult,
   CalculateMultiInput,
   CalculateMultiResult,
-  GenerateOptionsInput,
-  GenerateOptionsResultItem,
+  CalculateBatchInput,
+  CalculateBatchResultItem,
   LivePriceItem,
 } from '../dto/calculate-price.dto';
 
@@ -238,167 +238,88 @@ export class QuoteOptionsService {
       vatRate,
       vatAmount: Math.round(result.vatAmount),
       quotedPrice: result.quotedPrice,
+      materialPrice:
+        result.quotedPrice - Math.round(result.stoneResult.stonePrice),
     };
   }
 
   /**
-   * Máy tính giá nhanh (Bulk Generate).
-   * Dựa vào 1 cấu hình ban đầu (1 mức trọng lượng, 1 tiền công, 1 tiền đá),
-   * tự động quét qua toàn bộ chất liệu trong Database (Vàng 10K, 14K, 18K, Bạc...)
-   * để sinh ra bảng so sánh giá bán của tất cả các chất liệu cùng lúc.
+   * Tính giá cho NHIỀU phương án độc lập trong 1 request (mỗi phương án = 1 chất liệu + 1 khối
+   * lượng riêng) — dùng cho máy tính báo giá khi Order/Sale so sánh phương án chính + các "loại
+   * vàng khác". KHÁC calculateMulti (cộng dồn nhiều chất liệu thành 1 sản phẩm).
+   *
+   * Giá kim loại / danh mục chất liệu / bậc lợi nhuận mặc định tra ĐÚNG 1 LẦN cho cả lô rồi tính
+   * thuần trong RAM — trước đây FE gọi N request /calculate riêng, mỗi request ~1–5s vì mỗi query
+   * qua pooler kèm BEGIN/DEALLOCATE ALL/COMMIT.
+   *
+   * 1 phương án lỗi (chất liệu không tra được cấu hình / thiếu giá kim loại) chỉ trả { error } cho
+   * riêng nó, không làm hỏng cả lô — FE bỏ qua phương án đó.
    */
-  async generateOptions(
-    input: GenerateOptionsInput,
-  ): Promise<GenerateOptionsResultItem[]> {
-    const metalPrices = await this.metalPricesService.getLatestAsync();
-    const allMaterials = await this.materialsService.findAll();
-    const defaultStoneTiers = await this.getDefaultStoneTiers();
-
-    const w = Math.max(0, input.weightChi || 0);
-    const l = Math.max(0, input.laborCost || 0);
-    const s = Math.max(0, input.stoneCost || 0);
-    const vatVal = input.includeVat ? Math.max(0, input.vatRate ?? 10) : 0;
-    const stoneDesc = input.stoneDesc || '';
-    const requestedMatName = input.requestedMatName || '';
-    const reqLower = requestedMatName.toLowerCase();
-    // Khớp CHÍNH XÁC theo tên (materialName luôn từ <select> thật, xem resolveMaterial) — resolve
-    // 1 lần, dùng lại baseMetal của nó cho mọi nhánh bên dưới thay vì đoán lại qua regex.
-    const requestedMaterial = requestedMatName
-      ? allMaterials.find((m) => m.name === requestedMatName)
-      : undefined;
-    const requestedBaseMetal = (requestedMaterial as any)?.baseMetal as
-      { id: string; name: string } | undefined;
-
-    // Không tìm được material khớp NHƯNG có nhập tên (VD Sale gõ mô tả tự do, không phải chọn từ
-    // danh mục) → coi là phi kim loại, y hệt hành vi cũ (metalType 'OTHER'). Không nhập gì cả thì
-    // KHÔNG coi là phi kim loại — rơi xuống nhánh mặc định (kim loại isDefault=true) bên dưới.
-    const isNonPrecious = !!requestedMatName && !requestedMaterial;
-    if (isNonPrecious) {
-      const baseP = input.manualBasePrice || 0;
-      const finalPrice = input.includeVat
-        ? roundToThousand(baseP * (1 + vatVal / 100))
-        : roundToThousand(baseP);
-      return [
-        {
-          optionName: `Phương án 1 (${requestedMatName} - SALE YÊU CẦU)`,
-          materialName: requestedMatName,
-          weightChi: 0,
-          laborCost: baseP,
-          stoneCost: 0,
-          stoneDescription: '',
-          vat: vatVal,
-          quotedPrice: finalPrice,
-          isSelected: true,
-          note: input.includeVat
-            ? `Giá gốc ${baseP.toLocaleString('vi-VN')}₫ + VAT ${vatVal}%`
-            : `Giá gốc ${baseP.toLocaleString('vi-VN')}₫ (Không VAT)`,
-        },
-      ];
+  async calculateBatch(
+    input: CalculateBatchInput,
+  ): Promise<CalculateBatchResultItem[]> {
+    if (!input.items || input.items.length === 0) {
+      throw new BadRequestException('Cần ít nhất 1 phương án để tính');
     }
 
-    // Vàng (hoặc yêu cầu chung chung không rõ kim loại, mặc định theo BaseMetal.isDefault=true)
-    // — tính TRƯỚC để nhánh "kim loại khác Vàng" bên dưới biết baseMetal đang xét có PHẢI nhóm
-    // Vàng không (isGoldFamily), tránh 2 nhánh xử lý trùng nhau.
-    const defaultBaseMetal = allMaterials.find(
-      (m) => (m as any).baseMetal?.isDefault,
-    )?.baseMetal as { id: string; name: string } | undefined;
-    const targetGoldBaseMetalId =
-      requestedBaseMetal?.id || defaultBaseMetal?.id;
-    const goldMaterials = allMaterials.filter(
-      (m) => (m as any).baseMetalId === targetGoldBaseMetalId,
-    );
-    const isGoldReq =
-      !!requestedMaterial && requestedBaseMetal?.id === targetGoldBaseMetalId;
-    const isGoldFamily =
-      requestedBaseMetal &&
-      goldMaterials.some(
-        (m) => (m as any).baseMetalId === requestedBaseMetal.id,
-      );
+    const [metalPrices, materials, defaultStoneTiers] = await Promise.all([
+      this.metalPricesService.getLatestAsync(),
+      this.materialsService.findAll(),
+      this.getDefaultStoneTiers(),
+    ]);
+    const materialByName = new Map(materials.map((m) => [m.name, m]));
 
-    // Kim loại khác Vàng (Bạc/Bạch kim/kim loại mới thêm sau) — chỉ 1 phương án, không sinh nhiều
-    // lựa chọn so sánh như Vàng.
-    if (requestedMaterial && requestedBaseMetal && !isGoldFamily) {
-      const resolved = { material: requestedMaterial };
-      const result = computeMetalQuote(
-        requestedBaseMetal.name,
-        resolved.material,
-        w,
-        l,
-        s,
-        vatVal,
-        metalPrices,
-        input.silverMultiplier,
-        defaultStoneTiers,
-      );
-      return [
-        {
-          optionName: `Phương án ${resolved.material.name} (SALE YÊU CẦU)`,
-          materialName: resolved.material.name,
-          weightChi: w,
-          laborCost: l,
-          stoneCost: s,
-          stoneDescription: stoneDesc,
+    return input.items.map((item): CalculateBatchResultItem => {
+      const name = (item.materialNameOrKey || '').trim();
+      const material = materialByName.get(name);
+      if (!material) {
+        return {
+          materialNameOrKey: item.materialNameOrKey,
+          error: `Không tìm thấy cấu hình tỷ lệ áp dụng cho chất liệu "${item.materialNameOrKey}" trong Database.`,
+        };
+      }
+
+      const weightChi = Math.max(0, item.weightChi || 0);
+      const laborCost = Math.max(0, item.laborCost || 0);
+      const stoneCost = Math.max(0, item.stoneCost || 0);
+      const vatRate = Math.max(0, item.vatRate || 0);
+
+      try {
+        const result = computeMetalQuote(
+          (material as any).baseMetal?.name || 'kim loại',
+          material,
+          weightChi,
+          laborCost,
+          stoneCost,
+          vatRate,
+          metalPrices,
+          item.silverMultiplier,
+          defaultStoneTiers,
+        );
+        return {
+          materialNameOrKey: name,
+          metalPricePerChi: Math.round(result.metalPricePerChi),
           totalMetalCost: Math.round(result.raw),
           metalRawCost: Math.round(result.metalRawCost),
+          laborCost,
+          stoneCost,
           stonePrice: Math.round(result.stoneResult.stonePrice),
-          vat: vatVal,
+          totalProductionCost: Math.round(result.totalProductionCost),
+          profitMarginDivisor: result.divisor,
+          profitMarginLabel: result.marginLabel,
+          vatRate,
+          vatAmount: Math.round(result.vatAmount),
           quotedPrice: result.quotedPrice,
-          isSelected: true,
-          note: result.marginLabel,
-        },
-      ];
-    }
-
-    const allGenerated = goldMaterials.map((mat) => {
-      const isSaleTarget =
-        isGoldReq && reqLower.includes(mat.name.toLowerCase());
-      const result = computeMetalQuote(
-        (mat as any).baseMetal?.name || 'Vàng',
-        mat,
-        w,
-        l,
-        s,
-        vatVal,
-        metalPrices,
-        undefined,
-        defaultStoneTiers,
-      );
-
-      return {
-        isSaleTarget,
-        option: {
-          optionName: isSaleTarget
-            ? `Phương án chính (${mat.name} - SALE YÊU CẦU)`
-            : `Phương đề xuất (${mat.name} - So sánh thêm)`,
-          materialName: mat.name,
-          weightChi: w,
-          laborCost: l,
-          stoneCost: s,
-          stoneDescription: stoneDesc,
-          totalMetalCost: Math.round(result.raw),
-          metalRawCost: Math.round(result.metalRawCost),
-          stonePrice: Math.round(result.stoneResult.stonePrice),
-          vat: vatVal,
-          quotedPrice: result.quotedPrice,
-          isSelected: isSaleTarget,
-          note: isSaleTarget
-            ? `Đúng chất liệu Sale yêu cầu`
-            : `Phương đề xuất để Sale tư vấn so sánh`,
-        },
-      };
+          materialPrice:
+            result.quotedPrice - Math.round(result.stoneResult.stonePrice),
+        };
+      } catch (err) {
+        return {
+          materialNameOrKey: item.materialNameOrKey,
+          error: err instanceof Error ? err.message : 'Lỗi tính giá',
+        };
+      }
     });
-
-    allGenerated.sort(
-      (a, b) => (b.isSaleTarget ? 1 : 0) - (a.isSaleTarget ? 1 : 0),
-    );
-
-    return allGenerated.map((item, idx) => ({
-      ...item.option,
-      isSelected: idx === 0,
-      optionName: item.isSaleTarget
-        ? `Phương án ${idx + 1} (${item.option.materialName} - SALE YÊU CẦU)`
-        : `Phương án ${idx + 1} (${item.option.materialName} - So sánh thêm)`,
-    }));
   }
 
   /**
@@ -535,6 +456,7 @@ export class QuoteOptionsService {
       laborCost,
       vatAmount: Math.round(vatAmount),
       quotedPrice,
+      materialPrice: quotedPrice - Math.round(stoneResult.stonePrice),
       breakdown,
     };
   }
@@ -546,8 +468,13 @@ export class QuoteOptionsService {
   // làm hỏng cả mảng — FE fallback về giá đã báo (quotedPrice) khi gặp null.
   async batchComputeLivePrices(
     itemsInput: LivePriceItem[],
-  ): Promise<Map<string, number | null>> {
-    const result = new Map<string, number | null>();
+  ): Promise<
+    Map<string, { total: number; material: number; stone: number } | null>
+  > {
+    const result = new Map<
+      string,
+      { total: number; material: number; stone: number } | null
+    >();
     if (itemsInput.length === 0) return result;
 
     const [metalPrices, materials, defaultStoneTiers, stones] =
@@ -601,7 +528,12 @@ export class QuoteOptionsService {
             undefined,
             defaultStoneTiers,
           );
-          result.set(item.key, r.quotedPrice);
+          const stone = Math.round(r.stoneResult.stonePrice);
+          result.set(item.key, {
+            total: r.quotedPrice,
+            material: r.quotedPrice - stone,
+            stone,
+          });
           continue;
         }
 
@@ -661,7 +593,9 @@ export class QuoteOptionsService {
           item.vatRate,
           defaultStoneTiers,
         );
-        result.set(item.key, roundToThousand(raw + stoneResult.stonePrice));
+        const total = roundToThousand(raw + stoneResult.stonePrice);
+        const stone = Math.round(stoneResult.stonePrice);
+        result.set(item.key, { total, material: total - stone, stone });
       } catch {
         result.set(item.key, null);
       }

@@ -3,7 +3,56 @@ import {
   buildOptionCreateInput,
   buildLibraryProductName,
   computeLibraryGroupKey,
+  computePriceBreakdown,
+  mapOptionDetail,
 } from '../src/utils/option-mapper.util';
+
+describe('computePriceBreakdown', () => {
+  it('tách material = quotedPrice - stonePrice, stone = stonePrice', () => {
+    expect(computePriceBreakdown(10_000_000, 3_000_000)).toEqual({
+      material: 7_000_000,
+      stone: 3_000_000,
+    });
+  });
+  it('stone = 0 khi option không đính đá', () => {
+    expect(computePriceBreakdown(5_000_000, 0)).toEqual({
+      material: 5_000_000,
+      stone: 0,
+    });
+    expect(computePriceBreakdown(5_000_000, null)).toEqual({
+      material: 5_000_000,
+      stone: 0,
+    });
+  });
+  it('null khi chưa có giá', () => {
+    expect(computePriceBreakdown(null, 0)).toBeNull();
+    expect(computePriceBreakdown(undefined, 1000)).toBeNull();
+  });
+  it('ép Prisma Decimal (string) về number', () => {
+    expect(computePriceBreakdown('10000000', '3000000')).toEqual({
+      material: 7_000_000,
+      stone: 3_000_000,
+    });
+  });
+  it('mapOptionDetail gắn priceBreakdown khi có giá, bỏ khi chưa có', () => {
+    expect(
+      mapOptionDetail({
+        quotedPrice: 8_000_000,
+        stonePrice: 1_000_000,
+        materials: [],
+        stones: [],
+      }).priceBreakdown,
+    ).toEqual({ material: 7_000_000, stone: 1_000_000 });
+    expect(
+      mapOptionDetail({
+        quotedPrice: null,
+        stonePrice: null,
+        materials: [],
+        stones: [],
+      }).priceBreakdown,
+    ).toBeUndefined();
+  });
+});
 
 describe('computeLibraryGroupKey', () => {
   const matBM = new Map<string, string | null>([

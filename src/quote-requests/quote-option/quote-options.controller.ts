@@ -3,7 +3,7 @@ import { QuoteOptionsService } from './quote-options.service';
 import {
   CalculateMultiInput,
   CalculatePriceInput,
-  GenerateOptionsInput,
+  CalculateBatchInput,
 } from '../dto/calculate-price.dto';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
@@ -65,6 +65,8 @@ export class QuoteOptionsController {
       return {
         materialNameOrKey: result.materialNameOrKey,
         quotedPrice: result.quotedPrice,
+        materialPrice: result.materialPrice,
+        stonePrice: result.stonePrice,
       };
     }
 
@@ -99,46 +101,57 @@ export class QuoteOptionsController {
     if (actorRole === Role.SALE) {
       return {
         quotedPrice: result.quotedPrice,
+        materialPrice: result.materialPrice,
+        stonePrice: result.stonePrice,
       };
     }
     return result;
   }
 
-  @Post('generate-options')
-  async generateOptions(
-    @Body() dto: GenerateOptionsInput,
+  // Tính NHIỀU phương án (chính + các "loại vàng khác") trong 1 request — thay N request /calculate
+  // riêng vốn mỗi cái ~1–5s qua pooler. 1 audit log cho cả lô.
+  @Post('calculate-batch')
+  async calculateBatch(
+    @Body() dto: CalculateBatchInput,
     @CurrentUser('id') actorId: string,
     @CurrentUser('role') actorRole: Role,
   ) {
-    // Fire-and-forget như calculate() — không await INSERT audit_logs qua pooler.
     void this.auditLog.logAction(
       actorId,
       actorRole,
-      'GENERATE_PRICING_OPTIONS',
+      'CALCULATE_PRICE_BATCH',
       'QuoteOption',
     );
 
-    // Sale không tự nhập tiền công/mức VAT. Cả hai lấy theo danh mục sản phẩm đã chọn.
-    // Sale chỉ chọn CÓ/KHÔNG cộng VAT (dto.includeVat do Sale gửi lên).
+    // Sale không tự nhập tiền công/mức VAT, không chọn hệ số nhân Bạc — ép cho MỌI phương án theo
+    // danh mục sản phẩm đã chọn (giống /calculate).
     if (actorRole === Role.SALE) {
       const { laborCost, vatRate } =
         await this.quoteOptionsService.resolveSaleDefaults(
           dto.categoryId,
           dto.includeVat,
         );
-      dto.laborCost = laborCost;
-      dto.vatRate = vatRate;
-      // Hệ số nhân Bạc chỉ ORDER/ADMIN được chọn — Sale luôn dùng mặc định
-      dto.silverMultiplier = undefined;
+      dto.items = (dto.items || []).map((item) => ({
+        ...item,
+        laborCost,
+        vatRate,
+        silverMultiplier: undefined,
+      }));
     }
 
-    const options = await this.quoteOptionsService.generateOptions(dto);
+    const results = await this.quoteOptionsService.calculateBatch(dto);
 
-    // Sale không xem Tiền công/VAT trong từng phương án — chỉ xem Giá bán
+    // Sale chỉ xem Giá bán — ẩn cấu thành giá của từng phương án
     if (actorRole === Role.SALE) {
-      return options.map(({ laborCost, vat, ...rest }) => rest);
+      return results.map((r) => ({
+        materialNameOrKey: r.materialNameOrKey,
+        quotedPrice: r.quotedPrice,
+        materialPrice: r.materialPrice,
+        stonePrice: r.stonePrice,
+        error: r.error,
+      }));
     }
 
-    return options;
+    return results;
   }
 }

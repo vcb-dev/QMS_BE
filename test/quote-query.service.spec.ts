@@ -100,6 +100,10 @@ describe('QuoteQueryService.getLibraryProducts — gộp nhóm + phân trang ph�
         const qs = arr
           .map((o) => Number(o.quotedPrice) || 0)
           .filter((x) => x > 0);
+        const stoneVals = arr.map((o) => Number(o.stonePrice) || 0);
+        const matVals = arr.map(
+          (o) => (Number(o.quotedPrice) || 0) - (Number(o.stonePrice) || 0),
+        );
         const ws = arr
           .map((o) => Number(o.weightChi) || 0)
           .filter((x) => x > 0);
@@ -111,6 +115,10 @@ describe('QuoteQueryService.getLibraryProducts — gộp nhóm + phân trang ph�
           dup_count: BigInt(new Set(arr.map((o) => o.quoteRequest.id)).size),
           q_min: Math.min(...qs),
           q_max: Math.max(...qs),
+          mat_min: Math.min(...matVals),
+          mat_max: Math.max(...matVals),
+          stone_min: Math.min(...stoneVals),
+          stone_max: Math.max(...stoneVals),
           w_min: ws.length ? Math.min(...ws) : null,
           w_max: ws.length ? Math.max(...ws) : null,
           last_at: new Date(
@@ -129,6 +137,15 @@ describe('QuoteQueryService.getLibraryProducts — gộp nhóm + phân trang ph�
       grpRows.flatMap((r) => [r.rep_id, r.min_opt_id, r.max_opt_id]),
     );
     prisma.$queryRaw.mockResolvedValueOnce(grpRows);
+    // Query 2 (repRows) — 1 dòng/khóa nhóm: id option đại diện + giá min + giá max.
+    prisma.$queryRaw.mockResolvedValueOnce(
+      grpRows.map((r) => ({
+        gkey: r.gkey,
+        rep_id: r.rep_id,
+        min_opt_id: r.min_opt_id,
+        max_opt_id: r.max_opt_id,
+      })),
+    );
     prisma.quoteOption.findMany.mockResolvedValue(
       withKeys.filter((o) => wantIds.has(o.id)),
     );
@@ -149,9 +166,17 @@ describe('QuoteQueryService.getLibraryProducts — gộp nhóm + phân trang ph�
           useValue: {
             batchComputeLivePrices: jest.fn(
               async (inputs: { key: string }[]) => {
-                const m = new Map<string, number | null>();
-                for (const i of inputs)
-                  m.set(i.key, livePrices.get(i.key) ?? null);
+                const m = new Map<
+                  string,
+                  { total: number; material: number; stone: number } | null
+                >();
+                for (const i of inputs) {
+                  const n = livePrices.get(i.key);
+                  m.set(
+                    i.key,
+                    n == null ? null : { total: n, material: n, stone: 0 },
+                  );
+                }
                 return m;
               },
             ),
@@ -220,6 +245,43 @@ describe('QuoteQueryService.getLibraryProducts — gộp nhóm + phân trang ph�
     expect(card.priceMax).toBe(10_000_000);
     expect(card.livePriceMin).toBe(5_000_000);
     expect(card.livePriceMax).toBe(10_200_000);
+  });
+
+  it('thẻ trả range chất liệu / đá tách (đã báo) + range live tách', async () => {
+    setup(
+      [
+        opt({
+          id: 'o1',
+          reqId: 'r1',
+          quotedPrice: 8_000_000,
+          stonePrice: 2_000_000,
+        }),
+        opt({
+          id: 'o2',
+          reqId: 'r2',
+          quotedPrice: 12_000_000,
+          stonePrice: 3_000_000,
+        }),
+      ],
+      { o1: 9_000_000, o2: 13_000_000 },
+    );
+
+    const res = await service.getLibraryProducts({
+      page: 1,
+      limit: 8,
+      sortMode: 'PRICE_DESC',
+    } as any);
+    const card = res.data[0] as any;
+    // material = quoted - stone; stone = stone_price
+    expect(card.priceMaterialMin).toBe(6_000_000);
+    expect(card.priceMaterialMax).toBe(9_000_000);
+    expect(card.priceStoneMin).toBe(2_000_000);
+    expect(card.priceStoneMax).toBe(3_000_000);
+    // mock batchComputeLivePrices trả stone = 0 → live material = live total, live stone = 0
+    expect(card.livePriceMaterialMin).toBe(9_000_000);
+    expect(card.livePriceMaterialMax).toBe(13_000_000);
+    expect(card.livePriceStoneMin).toBe(0);
+    expect(card.livePriceStoneMax).toBe(0);
   });
 
   it('đá chủ khác nhau → tách thẻ; đá tấm (SIDE) không tách nhóm', async () => {
@@ -339,9 +401,17 @@ describe('QuoteQueryService.getLibraryProductHistory — lịch sử báo giá 1
           useValue: {
             batchComputeLivePrices: jest.fn(
               async (inputs: { key: string }[]) => {
-                const m = new Map<string, number | null>();
-                for (const i of inputs)
-                  m.set(i.key, livePrices.get(i.key) ?? null);
+                const m = new Map<
+                  string,
+                  { total: number; material: number; stone: number } | null
+                >();
+                for (const i of inputs) {
+                  const n = livePrices.get(i.key);
+                  m.set(
+                    i.key,
+                    n == null ? null : { total: n, material: n, stone: 0 },
+                  );
+                }
                 return m;
               },
             ),
@@ -415,5 +485,55 @@ describe('QuoteQueryService.getLibraryProductHistory — lịch sử báo giá 1
     expect(res.data[0].priceMin).toBe(5_000_000);
     expect(res.data[0].priceMax).toBe(8_000_000);
     expect(res.data[1].requestId).toBe('r2');
+  });
+});
+
+describe('QuoteQueryService — priceBreakdown tách giá chất liệu / giá đá', () => {
+  it('stripCostFieldsForSale giữ priceBreakdown, bỏ giá vốn', () => {
+    const svc = new QuoteQueryService({} as any, {} as any);
+    const out = (svc.stripCostFieldsForSale([
+      {
+        quotedPrice: 10_000_000,
+        stonePrice: 3_000_000,
+        totalMetalCost: 7_000_000,
+        metalRawCost: 5_000_000,
+        laborCost: 500_000,
+        stoneCost: 2_000_000,
+        priceBreakdown: { material: 7_000_000, stone: 3_000_000 },
+      },
+    ]) ?? [])[0];
+    expect(out.priceBreakdown).toEqual({
+      material: 7_000_000,
+      stone: 3_000_000,
+    });
+    expect(out.stonePrice).toBeUndefined();
+    expect(out.totalMetalCost).toBeUndefined();
+    expect(out.metalRawCost).toBeUndefined();
+    expect(out.laborCost).toBeUndefined();
+    expect(out.stoneCost).toBeUndefined();
+  });
+
+  it('buildHistoryEntry gắn priceBreakdown mỗi option', () => {
+    const svc = new QuoteQueryService({} as any, {} as any);
+    const entry = svc['buildHistoryEntry']([
+      {
+        quoteRequest: {
+          id: 'r1',
+          code: 'C1',
+          requester: {},
+          assignee: null,
+          createdAt: new Date(),
+        },
+        optionName: 'PA1',
+        quotedPrice: 10_000_000,
+        stonePrice: 3_000_000,
+        weightChi: 2,
+        quotedDate: new Date(),
+      },
+    ]);
+    expect(entry.options[0].priceBreakdown).toEqual({
+      material: 7_000_000,
+      stone: 3_000_000,
+    });
   });
 });

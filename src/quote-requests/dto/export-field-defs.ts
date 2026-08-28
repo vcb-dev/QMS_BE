@@ -81,6 +81,20 @@ export const EXPORT_FIELD_DEFS: {
     header: 'Giá báo',
     value: (i) => formatVndOrNone(i.quotedPrice),
   },
+  {
+    key: 'materialPrice',
+    header: 'Giá chất liệu',
+    value: (i) =>
+      i.quotedPrice == null
+        ? NONE
+        : formatVndOrNone(Number(i.quotedPrice) - Number(i.stonePrice || 0)),
+  },
+  {
+    key: 'stonePrice',
+    header: 'Giá đá',
+    value: (i) =>
+      i.quotedPrice == null ? NONE : formatVndOrNone(i.stonePrice ?? 0),
+  },
   { key: 'vat', header: 'VAT (%)', value: (i) => decimalOrNone(i.vat) },
   {
     key: 'quotedDate',

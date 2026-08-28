@@ -50,6 +50,7 @@ describe('QuoteAnalyticsService.getDashboardCharts', () => {
     {
       id: 'o2',
       quotedPrice: 20_000_000,
+      stonePrice: 3_000_000,
       quoteRequest: {
         id: 'r2',
         category: { name: 'Dây chuyền' },
@@ -60,6 +61,7 @@ describe('QuoteAnalyticsService.getDashboardCharts', () => {
     {
       id: 'o1',
       quotedPrice: 6_000_000,
+      stonePrice: null,
       quoteRequest: {
         id: 'r1',
         category: { name: 'Nhẫn' },
@@ -188,6 +190,8 @@ describe('QuoteAnalyticsService.getDashboardCharts', () => {
       key: 'r2:o2',
       productName: 'Dây chuyền Vàng 24K',
       price: 20_000_000,
+      materialPrice: 17_000_000,
+      stonePrice: 3_000_000,
       images: [{ id: 'img1', imageUrl: 'https://example.com/a.png' }],
     });
   });

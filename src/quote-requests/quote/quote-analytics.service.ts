@@ -186,6 +186,7 @@ export class QuoteAnalyticsService {
             select: {
               id: true,
               quotedPrice: true,
+              stonePrice: true,
               quoteRequest: {
                 select: {
                   id: true,
@@ -234,6 +235,10 @@ export class QuoteAnalyticsService {
         productName:
           `${catName} ${matNames.join(', ')}`.trim() || 'Sản phẩm chế tác',
         price: Number(o.quotedPrice || 0),
+        stonePrice: Math.round(Number(o.stonePrice || 0)),
+        materialPrice: Math.round(
+          Number(o.quotedPrice || 0) - Number(o.stonePrice || 0),
+        ),
         images: o.quoteRequest.images,
       };
     });
