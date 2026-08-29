@@ -649,6 +649,11 @@ export class QuoteQueryService {
       pricerName: req.assignee?.name || null,
       priceMin: paid.length ? Math.min(...paid) : 0,
       priceMax: paid.length ? Math.max(...paid) : 0,
+      // Ảnh của chính đơn này — modal chi tiết đổi ảnh nền theo đơn đang chọn ở cột lịch sử.
+      images: (req.images || []).map((i: any) => ({
+        id: i.id,
+        imageUrl: i.imageUrl,
+      })),
       options,
     };
   }

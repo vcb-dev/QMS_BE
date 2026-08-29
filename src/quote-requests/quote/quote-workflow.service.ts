@@ -16,7 +16,8 @@ import { QuoteStatus, Role, OptionSelectionStatus } from '@prisma/client';
 import { QuoteQueryService } from './quote-query.service';
 import { MailService } from '../../mail/mail.service';
 import { AuditLogService } from '../../audit-log/audit-log.service';
-import { LarkNotificationService } from '../../lark/lark-notification.service';
+import { LarkService } from '../../lark/lark.service';
+import { QuoteCardData } from '../../lark/lark.types';
 import { QuoteOptionsService } from '../quote-option/quote-options.service';
 import {
   REQUEST_DETAIL_INCLUDE,
@@ -32,7 +33,7 @@ export class QuoteWorkflowService {
     private queryService: QuoteQueryService,
     private mailService: MailService,
     private auditLog: AuditLogService,
-    private larkService: LarkNotificationService,
+    private larkService: LarkService,
     private quoteOptionsService: QuoteOptionsService,
   ) {}
 
@@ -102,80 +103,77 @@ export class QuoteWorkflowService {
     return quote.productName || quote.category?.name || 'Sản phẩm chế tác';
   }
 
-  // Định dạng tiền VNĐ cho nội dung thông báo (dấu chấm ngăn nghìn + "đ") — khớp cách FE hiển thị
-  // (qms_fe/src/utils/currency.ts) và bản export Excel (dto/export-field-defs.ts).
-  private formatVnd(v: unknown): string {
-    if (v === null || v === undefined) return 'Chưa có';
-    return `${Math.round(Number(v)).toLocaleString('vi-VN')} đ`;
-  }
-
-  // Nội dung thông báo Lark khi báo giá thành công — mỗi phần tử là 1 dòng. Bám theo trang chi tiết
-  // yêu cầu phía Sale: thông tin đơn + từng phương án (chất liệu/khối lượng/đá) + giá bán (giá chất
-  // liệu = quotedPrice - stonePrice, giá đá = stonePrice, không lộ giá vốn), chốt bằng tổng báo giá
-  // của phương án đại diện.
-  private buildQuoteCompletedLines(quote: any): string[] {
-    const lines: string[] = [];
-    lines.push(`✅ Đã báo giá: ${quote.code}`);
-    lines.push(`Danh mục: ${quote.category?.name || 'Chưa phân loại'}`);
-    lines.push(`Sản phẩm: ${this.pickProductName(quote)}`);
-
-    const customer =
-      quote.customer?.name || quote.customerName || 'Khách hàng lẻ';
-    const phone = quote.customer?.phone ? ` — ${quote.customer.phone}` : '';
-    lines.push(`Khách hàng: ${customer}${phone}`);
-    lines.push(`Sale: ${quote.requester?.name || 'Chưa rõ'}`);
-    lines.push(`Order: ${quote.assignee?.name || 'Chưa phân công'}`);
-
+  // Gói dữ liệu cho Lark message card khi báo giá thành công. Bám theo trang chi tiết yêu cầu phía
+  // Sale: thông tin đơn + ảnh sản phẩm + từng phương án (chất liệu/khối lượng/đá) + giá bán (giá chất
+  // liệu = quotedPrice - stonePrice, giá đá = stonePrice, KHÔNG lộ giá vốn), tổng = phương án đại diện.
+  private buildQuoteCardData(quote: any): QuoteCardData {
     const priced = (Array.isArray(quote.options) ? quote.options : []).filter(
       (o: any) => o.quotedPrice != null,
     );
-    priced.forEach((opt: any, idx: number) => {
-      lines.push('———');
-      lines.push(opt.optionName || `Phương án ${idx + 1}`);
 
+    const options = priced.map((opt: any, idx: number) => {
       const mats = Array.isArray(opt.materials) ? opt.materials : [];
-      if (mats.length > 0) {
-        lines.push(
-          `  Chất liệu: ${mats
-            .map((m: any) => {
-              const name = m.materialName || m.material?.name || 'Kim loại';
-              const w = m.weightChi ?? opt.weightChi;
-              return w != null ? `${name} (${w} chỉ)` : name;
-            })
-            .join(', ')}`,
-        );
-      } else if (opt.weightChi != null) {
-        lines.push(`  Khối lượng chất liệu: ${opt.weightChi} chỉ`);
-      }
+      const materialText =
+        mats.length > 0
+          ? mats
+              .map((m: any) => {
+                const name = m.materialName || m.material?.name || 'Kim loại';
+                const w = m.weightChi ?? opt.weightChi;
+                return w != null ? `${name} (${w} chỉ)` : name;
+              })
+              .join(', ')
+          : opt.weightChi != null
+            ? `${opt.weightChi} chỉ`
+            : '';
 
-      const stone = Number(opt.priceBreakdown?.stone ?? opt.stonePrice ?? 0);
-      const material = Number(
-        opt.priceBreakdown?.material ?? Number(opt.quotedPrice) - stone,
+      const stonePrice = Number(
+        opt.priceBreakdown?.stone ?? opt.stonePrice ?? 0,
       );
-      lines.push(`  Giá chất liệu: ${this.formatVnd(material)}`);
+      const materialPrice = Number(
+        opt.priceBreakdown?.material ?? Number(opt.quotedPrice) - stonePrice,
+      );
 
       const stones = Array.isArray(opt.stones) ? opt.stones : [];
-      if (stones.length > 0) {
-        lines.push(
-          `  Đá: ${stones
-            .map(
-              (s: any) =>
-                `${s.quantity ?? 1}v ${s.stoneName || s.stone?.name || 'đá'}`,
-            )
-            .join(', ')}`,
-        );
-        lines.push(`  Giá đá: ${this.formatVnd(stone)}`);
-      } else {
-        lines.push('  Đá: Không đính đá');
-      }
+      const stoneText =
+        stones.length > 0
+          ? stones
+              .map(
+                (s: any) =>
+                  `${s.quantity ?? 1}v ${s.stoneName || s.stone?.name || 'đá'}`,
+              )
+              .join(', ')
+          : 'Không đính đá';
 
-      lines.push(`  Giá báo: ${this.formatVnd(opt.quotedPrice)}`);
+      return {
+        name: opt.optionName || `Phương án ${idx + 1}`,
+        materialText,
+        materialPrice,
+        stoneText,
+        stonePrice,
+        quotedPrice: Number(opt.quotedPrice),
+      };
     });
 
+    const firstImage = Array.isArray(quote.images)
+      ? quote.images.find((i: any) => !!i?.imageUrl)?.imageUrl
+      : undefined;
     const primary = pickPrimaryOption(quote);
-    lines.push('———');
-    lines.push(`Tổng báo giá: ${this.formatVnd(primary?.quotedPrice)}`);
-    return lines;
+
+    return {
+      code: quote.code,
+      categoryName: quote.category?.name || 'Chưa phân loại',
+      productName: this.pickProductName(quote),
+      customerName:
+        quote.customer?.name || quote.customerName || 'Khách hàng lẻ',
+      customerPhone: quote.customer?.phone || null,
+      saleName: quote.requester?.name || 'Chưa rõ',
+      orderName: quote.assignee?.name || 'Chưa phân công',
+      imageUrl: firstImage || null,
+      options,
+      totalPrice:
+        primary?.quotedPrice != null ? Number(primary.quotedPrice) : null,
+      requestId: quote.id,
+    };
   }
 
   private notifySale(
@@ -198,37 +196,41 @@ export class QuoteWorkflowService {
   }
 
   private notifySaleQuoteCompleted(quote: any) {
-    const price = Number(pickPrimaryOption(quote)?.quotedPrice || 0);
-    this.notifySale(
-      quote,
-      this.mailService.sendQuoteCompleted.bind(this.mailService),
-      price,
-      this.pickProductName(quote),
-    );
+    // Tạm tắt gửi email — chỉ dùng Lark. Bỏ comment để bật lại.
+    // const price = Number(pickPrimaryOption(quote)?.quotedPrice || 0);
+    // this.notifySale(
+    //   quote,
+    //   this.mailService.sendQuoteCompleted.bind(this.mailService),
+    //   price,
+    //   this.pickProductName(quote),
+    // );
     // Lark: thông báo DUY NHẤT của luồng báo giá — bắn khi (và chỉ khi) yêu cầu đã có giá thành công,
-    // gửi bot Sale với đầy đủ thông tin đơn + giá như trang chi tiết phía Sale.
-    void this.larkService.notifySaleDetail(
-      this.buildQuoteCompletedLines(quote),
-      quote.id,
-    );
+    // gửi bot dạng message card (thông tin đơn + ảnh sản phẩm + giá) như trang chi tiết phía Sale.
+    void this.larkService.notifySaleQuoteCard(this.buildQuoteCardData(quote));
   }
 
   private notifySaleQuoteRejected(quote: any, reason: string) {
-    this.notifySale(
-      quote,
-      this.mailService.sendQuoteRejected.bind(this.mailService),
-      this.pickProductName(quote),
-      reason,
-    );
+    void quote;
+    void reason;
+    // Tạm tắt gửi email — bỏ comment để bật lại.
+    // this.notifySale(
+    //   quote,
+    //   this.mailService.sendQuoteRejected.bind(this.mailService),
+    //   this.pickProductName(quote),
+    //   reason,
+    // );
   }
 
   private notifySaleNeedMoreInfo(quote: any, reason: string) {
-    this.notifySale(
-      quote,
-      this.mailService.sendNeedMoreInfo.bind(this.mailService),
-      this.pickProductName(quote),
-      reason,
-    );
+    void quote;
+    void reason;
+    // Tạm tắt gửi email — bỏ comment để bật lại.
+    // this.notifySale(
+    //   quote,
+    //   this.mailService.sendNeedMoreInfo.bind(this.mailService),
+    //   this.pickProductName(quote),
+    //   reason,
+    // );
   }
 
   /**

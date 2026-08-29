@@ -8,6 +8,18 @@ import { Role, Prisma } from '@prisma/client';
 
 const CUSTOMER_INCLUDE = { province: true, ward: true } as const;
 
+// Chỉ các cột cần cho nhánh merge-update khi phát hiện khách trùng phone/tên — KHÔNG kéo
+// province/ward (2 LATERAL join thừa cho việc so trùng).
+const CUSTOMER_DEDUPE_SELECT = {
+  id: true,
+  name: true,
+  phone: true,
+  address: true,
+  provinceId: true,
+  wardId: true,
+  note: true,
+} as const;
+
 interface CustomerStatRow {
   id: string;
   name: string;
@@ -200,7 +212,7 @@ export class CustomersService {
     if (cleanPhone) {
       const existingByPhone = await this.prisma.customer.findFirst({
         where: { phone: cleanPhone },
-        include: CUSTOMER_INCLUDE,
+        select: CUSTOMER_DEDUPE_SELECT,
       });
       if (existingByPhone) {
         const updated = await this.prisma.customer.update({
@@ -214,7 +226,7 @@ export class CustomersService {
           },
           include: CUSTOMER_INCLUDE,
         });
-        await this.auditLog.logAction(
+        void this.auditLog.logAction(
           actorId,
           actorRole,
           'UPDATE_CUSTOMER',
@@ -227,7 +239,7 @@ export class CustomersService {
 
     const existingByName = await this.prisma.customer.findFirst({
       where: { name: { equals: cleanName, mode: 'insensitive' } },
-      include: CUSTOMER_INCLUDE,
+      select: CUSTOMER_DEDUPE_SELECT,
     });
     if (existingByName) {
       const updated = await this.prisma.customer.update({
@@ -241,7 +253,7 @@ export class CustomersService {
         },
         include: CUSTOMER_INCLUDE,
       });
-      await this.auditLog.logAction(
+      void this.auditLog.logAction(
         actorId,
         actorRole,
         'UPDATE_CUSTOMER',
@@ -251,6 +263,9 @@ export class CustomersService {
       return updated;
     }
 
+    // Không include province/ward: Prisma sẽ phải INSERT rồi SELECT lại (2 round-trip) và bọc
+    // BEGIN/COMMIT quanh cặp đó. FE (CreateModal) chỉ dùng id của khách vừa tạo. Create trơn =
+    // 1 câu INSERT RETURNING *, không transaction.
     const created = await this.prisma.customer.create({
       data: {
         name: cleanName,
@@ -260,9 +275,8 @@ export class CustomersService {
         wardId: dto.wardId || null,
         note: dto.note || null,
       },
-      include: CUSTOMER_INCLUDE,
     });
-    await this.auditLog.logAction(
+    void this.auditLog.logAction(
       actorId,
       actorRole,
       'CREATE_CUSTOMER',

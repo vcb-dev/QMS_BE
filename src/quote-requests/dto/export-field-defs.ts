@@ -1,4 +1,5 @@
 import { APP_CONSTANTS } from '../../common/constants';
+import { formatVnd } from '../../utils/currency.util';
 
 const NONE = 'Chưa có';
 
@@ -13,13 +14,6 @@ function orNone(v: string | null | undefined): string {
 function decimalOrNone(v: unknown): number | string {
   if (v === null || v === undefined) return NONE;
   return Number(v);
-}
-
-// Số tiền in ra Excel phải là chuỗi định dạng VNĐ (dấu chấm ngăn cách hàng nghìn + "đ") —
-// khớp format FE dùng ở qms_fe/src/utils/currency.ts (formatCurrency/formatNumberVN).
-function formatVndOrNone(v: unknown): string {
-  if (v === null || v === undefined) return NONE;
-  return `${Math.round(Number(v)).toLocaleString('vi-VN')} đ`;
 }
 
 // Whitelist cột export Excel — key dùng trong query ?fields=, header là tên cột hiển thị,
@@ -79,7 +73,7 @@ export const EXPORT_FIELD_DEFS: {
   {
     key: 'quotedPrice',
     header: 'Giá báo',
-    value: (i) => formatVndOrNone(i.quotedPrice),
+    value: (i) => formatVnd(i.quotedPrice),
   },
   {
     key: 'materialPrice',
@@ -87,13 +81,13 @@ export const EXPORT_FIELD_DEFS: {
     value: (i) =>
       i.quotedPrice == null
         ? NONE
-        : formatVndOrNone(Number(i.quotedPrice) - Number(i.stonePrice || 0)),
+        : formatVnd(Number(i.quotedPrice) - Number(i.stonePrice || 0)),
   },
   {
     key: 'stonePrice',
     header: 'Giá đá',
     value: (i) =>
-      i.quotedPrice == null ? NONE : formatVndOrNone(i.stonePrice ?? 0),
+      i.quotedPrice == null ? NONE : formatVnd(i.stonePrice ?? 0),
   },
   { key: 'vat', header: 'VAT (%)', value: (i) => decimalOrNone(i.vat) },
   {

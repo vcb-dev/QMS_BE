@@ -1,10 +1,10 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import { LarkNotificationService } from './lark-notification.service';
+import { LarkService } from './lark.service';
 
 @Module({
   imports: [ConfigModule],
-  providers: [LarkNotificationService],
-  exports: [LarkNotificationService],
+  providers: [LarkService],
+  exports: [LarkService],
 })
 export class LarkModule {}

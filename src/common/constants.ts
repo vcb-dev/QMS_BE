@@ -45,6 +45,11 @@ export const APP_CONSTANTS = {
     'https://open.larksuite.com/open-apis/authen/v2/oauth/token',
   LARK_USER_INFO_URL:
     'https://open.larksuite.com/open-apis/authen/v1/user_info',
+  // Lark app (bot) — dùng cho thông báo báo giá: lấy tenant_access_token rồi upload ảnh sản phẩm
+  // để nhúng vào message card (webhook custom bot không nhận URL ảnh, phải có image_key).
+  LARK_TENANT_TOKEN_URL:
+    'https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal',
+  LARK_IMAGE_UPLOAD_URL: 'https://open.larksuite.com/open-apis/im/v1/images',
   VNAPPMOB_API_KEY: requiredEnv('VNAPPMOB_API_KEY'),
   VNAPPMOB_GOLD_URL: requiredEnv('VNAPPMOB_GOLD_URL'),
   VANG_TODAY_URL: requiredEnv('VANG_TODAY_URL'),
