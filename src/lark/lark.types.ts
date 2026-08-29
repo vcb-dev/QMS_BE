@@ -16,6 +16,7 @@ export interface QuoteCardData {
   productName: string;
   customerName: string;
   saleName: string;
+  saleLarkOpenId: string | null; // có -> field "Sale" trong card là @mention, không -> tên thường
   orderName: string;
   imageUrl: string | null;
   options: QuoteCardOption[];

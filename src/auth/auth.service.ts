@@ -27,6 +27,17 @@ export class AuthService {
   ) {}
 
   /**
+   * Dedupe đổi authorization code của Lark: 1 code chỉ dùng được 1 lần, nhưng
+   * callback hay bị browser gọi 2 lần (refresh/back/prefetch) → lần 2 báo
+   * "authorization code has been used". Cache theo code trong 120s để hit trùng
+   * nhận lại đúng session của lần đầu thay vì lỗi.
+   */
+  private readonly larkCodeCache = new Map<
+    string,
+    { promise: Promise<any>; ts: number }
+  >();
+
+  /**
    * Tạo chuỗi băm SHA-256 bảo mật cao cho Token/Data
    */
   hashSha256(data: string): string {
@@ -103,6 +114,19 @@ export class AuthService {
   }
 
   async loginWithLark(code: string) {
+    const now = Date.now();
+    for (const [key, entry] of this.larkCodeCache) {
+      if (now - entry.ts > 120_000) this.larkCodeCache.delete(key);
+    }
+    const cached = this.larkCodeCache.get(code);
+    if (cached) return cached.promise;
+
+    const promise = this.exchangeLarkCode(code);
+    this.larkCodeCache.set(code, { promise, ts: now });
+    return promise;
+  }
+
+  private async exchangeLarkCode(code: string) {
     const clientId = this.config.get<string>('LARK_APP_ID');
     const clientSecret = this.config.get<string>('LARK_APP_SECRET');
     const redirectUri = this.config.get<string>('LARK_REDIRECT_URI');

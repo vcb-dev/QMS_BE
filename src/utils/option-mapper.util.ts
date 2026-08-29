@@ -13,7 +13,13 @@ export const REQUEST_DETAIL_INCLUDE = {
   customer: true,
   category: true,
   requester: {
-    select: { id: true, name: true, email: true, department: true },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      department: true,
+      larkOpenId: true,
+    },
   },
   assignee: { select: { id: true, name: true, email: true } },
   images: true,

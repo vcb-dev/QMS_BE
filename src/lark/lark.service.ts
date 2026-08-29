@@ -99,6 +99,15 @@ export class LarkService {
     };
   }
 
+  // Field "Sale": có open_id -> @mention (Lark ping đúng người trong nhóm), không -> tên thường.
+  // open_id lấy từ OAuth "Pricing App", cùng tenant nên custom bot vẫn resolve; nếu Lark hiện
+  // text trơ thì đổi <at id="..."> sang <at email="...">.
+  private saleMention(data: QuoteCardData): string {
+    return data.saleLarkOpenId
+      ? `<at id="${data.saleLarkOpenId}"></at>`
+      : data.saleName;
+  }
+
   // card v1 cho custom bot (msg_type: interactive). Nhúng ảnh chỉ khi có imgKey (upload thành công).
   private buildQuoteCard(
     data: QuoteCardData,
@@ -112,7 +121,7 @@ export class LarkService {
           this.field('Danh mục', data.categoryName),
           this.field('Sản phẩm', data.productName),
           this.field('Khách hàng', data.customerName),
-          this.field('Sale', data.saleName),
+          this.field('Sale', this.saleMention(data)),
           this.field('Order', data.orderName),
         ],
       },

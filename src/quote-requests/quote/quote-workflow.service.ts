@@ -145,7 +145,6 @@ export class QuoteWorkflowService {
           : 'Không đính đá';
 
       return {
-
         name: (opt.optionName || `Phương án ${idx + 1}`)
           .split(/\s*·\s*Công/i)[0]
           .trim(),
@@ -169,6 +168,7 @@ export class QuoteWorkflowService {
       customerName:
         quote.customer?.name || quote.customerName || 'Khách hàng lẻ',
       saleName: quote.requester?.name || 'Chưa rõ',
+      saleLarkOpenId: quote.requester?.larkOpenId ?? null,
       orderName: quote.assignee?.name || 'Chưa phân công',
       imageUrl: firstImage || null,
       options,
