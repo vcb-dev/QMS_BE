@@ -15,7 +15,6 @@ export interface QuoteCardData {
   categoryName: string;
   productName: string;
   customerName: string;
-  customerPhone: string | null;
   saleName: string;
   orderName: string;
   imageUrl: string | null;

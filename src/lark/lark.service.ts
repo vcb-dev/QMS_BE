@@ -112,7 +112,6 @@ export class LarkService {
           this.field('Danh mục', data.categoryName),
           this.field('Sản phẩm', data.productName),
           this.field('Khách hàng', data.customerName),
-          this.field('SĐT', data.customerPhone || '—'),
           this.field('Sale', data.saleName),
           this.field('Order', data.orderName),
         ],

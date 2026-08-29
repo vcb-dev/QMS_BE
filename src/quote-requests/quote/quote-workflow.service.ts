@@ -145,7 +145,10 @@ export class QuoteWorkflowService {
           : 'Không đính đá';
 
       return {
-        name: opt.optionName || `Phương án ${idx + 1}`,
+
+        name: (opt.optionName || `Phương án ${idx + 1}`)
+          .split(/\s*·\s*Công/i)[0]
+          .trim(),
         materialText,
         materialPrice,
         stoneText,
@@ -165,7 +168,6 @@ export class QuoteWorkflowService {
       productName: this.pickProductName(quote),
       customerName:
         quote.customer?.name || quote.customerName || 'Khách hàng lẻ',
-      customerPhone: quote.customer?.phone || null,
       saleName: quote.requester?.name || 'Chưa rõ',
       orderName: quote.assignee?.name || 'Chưa phân công',
       imageUrl: firstImage || null,
