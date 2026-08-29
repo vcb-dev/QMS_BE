@@ -26,9 +26,11 @@ function parseIfJsonString(value: unknown): unknown {
 }
 
 export class CreateQuoteRequestDto {
+  // Bỏ trống = khách không khai báo thông tin → BE tự gán vào khách chung "Khách lẻ"
+  // (quote-requests.service.resolveWalkInCustomerId), KHÔNG tạo bản ghi khách hàng mới mỗi lần.
+  @IsOptional()
   @IsString()
-  @IsNotEmpty({ message: 'Vui lòng chọn khách hàng' })
-  customerId: string;
+  customerId?: string;
 
   @IsOptional()
   @IsString()

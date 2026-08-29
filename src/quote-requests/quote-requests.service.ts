@@ -39,6 +39,26 @@ export class QuoteRequestsService {
     return `QG-${year}-${randomSeq}`;
   }
 
+  // Sale không khai báo khách (bỏ trống ô tìm khách) thì gom hết vào 1 khách chung "Khách lẻ" —
+  // KHÔNG đẻ ra bản ghi khách mới mỗi lần tạo yêu cầu. Bản ghi "Khách lẻ" tạo đúng 1 lần rồi
+  // dùng lại mãi.
+  private static readonly WALK_IN_CUSTOMER_NAME = 'Khách lẻ';
+
+  private async resolveWalkInCustomerId(customerId?: string): Promise<string> {
+    const trimmed = customerId?.trim();
+    if (trimmed) return trimmed;
+
+    const name = QuoteRequestsService.WALK_IN_CUSTOMER_NAME;
+    const existing = await this.prisma.customer.findFirst({
+      where: { name: { equals: name, mode: 'insensitive' } },
+      select: { id: true },
+    });
+    if (existing) return existing.id;
+
+    const created = await this.prisma.customer.create({ data: { name } });
+    return created.id;
+  }
+
   async create(
     userId: string,
     dto: CreateQuoteRequestDto,
@@ -55,9 +75,11 @@ export class QuoteRequestsService {
       newCategoryName,
       productName,
       options,
+      customerId,
       ...data
     } = dto;
     const code = this.generateCode();
+    const finalCustomerId = await this.resolveWalkInCustomerId(customerId);
 
     const fallbackMaterials = (
       materialIds?.length ? materialIds : materialId ? [materialId] : []
@@ -178,6 +200,7 @@ export class QuoteRequestsService {
     const created = await this.prisma.quoteRequest.create({
       data: {
         ...data,
+        customerId: finalCustomerId,
         categoryId: finalCategoryId,
         code,
         status: QuoteStatus.PENDING,

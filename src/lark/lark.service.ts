@@ -29,9 +29,19 @@ export class LarkService {
     if (!webhookUrl) return;
 
     // Upload ảnh trước (nếu có) — hỏng thì card vẫn gửi, chỉ thiếu ảnh.
+    if (!data.imageUrl) {
+      this.logger.warn(
+        'Lark card: đơn không có ảnh sản phẩm (quote.images rỗng)',
+      );
+    }
     const imgKey = data.imageUrl
       ? await this.uploadImageFromUrl(data.imageUrl)
       : null;
+    if (data.imageUrl && !imgKey) {
+      this.logger.warn(
+        `Lark card: có ảnh nhưng không lấy được image_key — ${data.imageUrl.slice(0, 80)}`,
+      );
+    }
 
     const frontendUrl = this.config.get<string>('FRONTEND_URL');
     const detailUrl =
@@ -92,13 +102,6 @@ export class LarkService {
 
   // ============ Dựng message card ============
 
-  private field(label: string, value: string) {
-    return {
-      is_short: true,
-      text: { tag: 'lark_md', content: `**${label}**\n${value || '—'}` },
-    };
-  }
-
   // Field "Sale": có open_id -> @mention (Lark ping đúng người trong nhóm), không -> tên thường.
   // open_id lấy từ OAuth "Pricing App", cùng tenant nên custom bot vẫn resolve; nếu Lark hiện
   // text trơ thì đổi <at id="..."> sang <at email="...">.
@@ -114,27 +117,55 @@ export class LarkService {
     imgKey: string | null,
     detailUrl: string | null,
   ): Record<string, unknown> {
-    const elements: Record<string, unknown>[] = [
-      {
-        tag: 'div',
-        fields: [
-          this.field('Danh mục', data.categoryName),
-          this.field('Sản phẩm', data.productName),
-          this.field('Khách hàng', data.customerName),
-          this.field('Sale', this.saleMention(data)),
-          this.field('Order', data.orderName),
-        ],
+    const elements: Record<string, unknown>[] = [];
+
+    // Thông tin đơn — 1 khối text, mỗi field 1 dòng (để đặt vừa cột hẹp bên phải ảnh).
+    const infoDiv = {
+      tag: 'div',
+      text: {
+        tag: 'lark_md',
+        content: [
+          `**Danh mục:** ${data.categoryName || '—'}`,
+          `**Sản phẩm:** ${data.productName || '—'}`,
+          `**Khách hàng:** ${data.customerName || '—'}`,
+          `**Sale:** ${this.saleMention(data)}`,
+          `**Order:** ${data.orderName || '—'}`,
+        ].join('\n'),
       },
-    ];
+    };
 
     if (imgKey) {
+      // Ảnh trái (cỡ nhỏ, co theo cột, giữ đúng tỉ lệ) — thông tin đơn ở cột phải.
       elements.push({
-        tag: 'img',
-        img_key: imgKey,
-        alt: { tag: 'plain_text', content: 'Ảnh sản phẩm' },
-        mode: 'fit_horizontal',
-        preview: true,
+        tag: 'column_set',
+        flex_mode: 'none',
+        columns: [
+          {
+            tag: 'column',
+            width: 'weighted',
+            weight: 2,
+            vertical_align: 'top',
+            elements: [
+              {
+                tag: 'img',
+                img_key: imgKey,
+                alt: { tag: 'plain_text', content: 'Ảnh sản phẩm' },
+                mode: 'fit_horizontal',
+                preview: true,
+              },
+            ],
+          },
+          {
+            tag: 'column',
+            width: 'weighted',
+            weight: 3,
+            vertical_align: 'top',
+            elements: [infoDiv],
+          },
+        ],
       });
+    } else {
+      elements.push(infoDiv);
     }
 
     data.options.forEach((opt) => {
@@ -198,7 +229,12 @@ export class LarkService {
 
     const appId = this.config.get<string>('LARK_APP_ID');
     const appSecret = this.config.get<string>('LARK_APP_SECRET');
-    if (!appId || !appSecret) return null;
+    if (!appId || !appSecret) {
+      this.logger.warn(
+        'Lark: thiếu LARK_APP_ID / LARK_APP_SECRET — không upload ảnh được',
+      );
+      return null;
+    }
 
     try {
       const res = await fetch(APP_CONSTANTS.LARK_TENANT_TOKEN_URL, {
@@ -230,7 +266,12 @@ export class LarkService {
   // Tải ảnh từ URL (Cloudinary) rồi upload lên Lark, trả image_key để nhúng vào card.
   // null nếu URL không hợp lệ / tải/upload lỗi / ảnh quá lớn.
   private async uploadImageFromUrl(imageUrl: string): Promise<string | null> {
-    if (!/^https?:\/\//i.test(imageUrl)) return null;
+    if (!/^https?:\/\//i.test(imageUrl)) {
+      this.logger.warn(
+        `Lark: ảnh không phải URL http(s) (data URI?), bỏ qua — ${imageUrl.slice(0, 40)}`,
+      );
+      return null;
+    }
 
     const token = await this.getTenantToken();
     if (!token) return null;
@@ -246,6 +287,9 @@ export class LarkService {
         bytes.byteLength === 0 ||
         bytes.byteLength > APP_CONSTANTS.MAX_FILE_SIZE
       ) {
+        this.logger.warn(
+          `Lark: ảnh rỗng hoặc quá lớn (${bytes.byteLength} bytes), bỏ qua`,
+        );
         return null;
       }
       const contentType = imgRes.headers.get('content-type') || 'image/jpeg';
