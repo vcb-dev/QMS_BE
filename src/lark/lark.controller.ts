@@ -21,6 +21,7 @@ import {
   ListLarkWebhookDto,
   UpdateLarkWebhookDto,
 } from './dto/lark-webhook.dto';
+import { UpdateDmBridgeDto } from './dto/lark-dm-bridge.dto';
 
 @ApiTags('Cấu hình thông báo Lark (ADMIN)')
 @ApiBearerAuth('JWT-auth')
@@ -42,6 +43,12 @@ export class LarkController {
     return this.service.listUpdaters();
   }
 
+  @ApiOperation({ summary: 'Trạng thái cầu trả lời qua Lark DM' })
+  @Get('dm-bridge')
+  getDmBridge() {
+    return this.service.getBridgeStatus();
+  }
+
   @ApiOperation({ summary: 'Danh sách webhook Lark (lọc + phân trang ở BE)' })
   @Get()
   list(@Query() query: ListLarkWebhookDto) {
@@ -52,6 +59,15 @@ export class LarkController {
   @Post()
   create(@Body() dto: CreateLarkWebhookDto, @CurrentUser('id') userId: string) {
     return this.service.create(dto, userId);
+  }
+
+  @ApiOperation({ summary: 'Bật/tắt cầu trả lời qua Lark DM' })
+  @Patch('dm-bridge')
+  setDmBridge(
+    @Body() dto: UpdateDmBridgeDto,
+    @CurrentUser('id') userId: string,
+  ) {
+    return this.service.setBridgeEnabled(dto.isEnabled, dto.note, userId);
   }
 
   @ApiOperation({ summary: 'Cập nhật webhook Lark' })

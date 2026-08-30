@@ -5,6 +5,7 @@
 import { FilterQuoteRequestDto } from '../quote-requests/dto/filter-quote-request.dto';
 import { QuoteStatus, User, Role } from '@prisma/client';
 import { APP_CONSTANTS } from '../common/constants';
+import { resolveDateRange } from './date-range.util';
 
 export function buildQuoteWhereClause(
   filterDto: FilterQuoteRequestDto,
@@ -132,78 +133,6 @@ function buildDateRangeCondition(
   startDate: string | undefined,
   endDate: string | undefined,
 ) {
-  if (!timeRange && !startDate && !endDate) return null;
-
-  let start: Date | undefined = startDate ? new Date(startDate) : undefined;
-  let end: Date | undefined = endDate ? new Date(endDate) : undefined;
-
-  if (timeRange && !start) {
-    const now = new Date();
-    switch (timeRange) {
-      case 'TODAY':
-        start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
-        end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
-        break;
-      case 'THIS_WEEK': {
-        const day = now.getDay() || 7;
-        start = new Date(
-          now.getFullYear(),
-          now.getMonth(),
-          now.getDate() - day + 1,
-          0,
-          0,
-          0,
-        );
-        break;
-      }
-      case 'LAST_WEEK': {
-        const day = now.getDay() || 7;
-        const thisMonday = new Date(
-          now.getFullYear(),
-          now.getMonth(),
-          now.getDate() - day + 1,
-          0,
-          0,
-          0,
-        );
-        start = new Date(
-          thisMonday.getFullYear(),
-          thisMonday.getMonth(),
-          thisMonday.getDate() - 7,
-          0,
-          0,
-          0,
-        );
-        end = new Date(
-          thisMonday.getFullYear(),
-          thisMonday.getMonth(),
-          thisMonday.getDate() - 1,
-          23,
-          59,
-          59,
-        );
-        break;
-      }
-      case 'THIS_MONTH':
-        start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0);
-        break;
-      case 'LAST_MONTH':
-        start = new Date(now.getFullYear(), now.getMonth() - 1, 1, 0, 0, 0);
-        end = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59);
-        break;
-      case 'THIS_YEAR':
-        start = new Date(now.getFullYear(), 0, 1, 0, 0, 0);
-        break;
-      case 'ALL':
-      default:
-        break;
-    }
-  }
-
-  const createdAtFilter: any = {};
-  if (start) createdAtFilter.gte = start;
-  if (end) createdAtFilter.lte = end;
-  return Object.keys(createdAtFilter).length > 0
-    ? { createdAt: createdAtFilter }
-    : null;
+  const range = resolveDateRange(timeRange, startDate, endDate);
+  return range ? { createdAt: range } : null;
 }

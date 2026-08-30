@@ -49,3 +49,31 @@ export interface LarkWebhookView {
   updatedByName: string | null;
   updatedAt: string | null;
 }
+
+// ===== Cầu chat web <-> Lark DM =====
+
+// Trạng thái công tắc tổng, trả về client (không có gì nhạy cảm).
+export interface LarkDmBridgeStatus {
+  isEnabled: boolean;
+  changedByName: string | null;
+  changedAt: string | null;
+}
+
+// Lát cắt của event im.message.receive_v1 mà cầu DM cần (SDK trả về nhiều hơn).
+export interface LarkInboundSender {
+  sender_type?: string; // 'user' | 'app' | ...
+  sender_id?: { open_id?: string };
+}
+
+export interface LarkInboundMessage {
+  message_id: string;
+  root_id?: string; // gốc thread khi người dùng bấm Reply
+  parent_id?: string;
+  message_type: string; // 'text' | 'image' | ...
+  content?: string; // JSON string, vd '{"text":"..."}'
+}
+
+export interface LarkInboundEventData {
+  sender?: LarkInboundSender;
+  message?: LarkInboundMessage;
+}

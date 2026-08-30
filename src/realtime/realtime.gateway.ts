@@ -7,13 +7,20 @@ import {
   MessageBody,
   ConnectedSocket,
 } from '@nestjs/websockets';
-import { ForbiddenException, BadRequestException, Logger } from '@nestjs/common';
+import {
+  ForbiddenException,
+  BadRequestException,
+  Logger,
+  OnModuleInit,
+} from '@nestjs/common';
 
 import { Server, Socket } from 'socket.io';
 import { JwtService } from '@nestjs/jwt';
 import { JwtPayload } from '../auth/strategies/jwt.strategy';
 import { COOKIE_ACCESS } from '../auth/cookie/cookie.constants';
-import { QuoteChatService } from 'src/quote-chat/quote-chat.service';
+import { QuoteChatService } from '../quote-chat/quote-chat.service';
+import { LarkService } from '../lark/lark.service';
+import { ChatMessageDto } from '../quote-chat/dto/quote-chat.types';
 
 interface AuthedSocket extends Socket {
   data: { user?: { id: string; email: string; role: string } };
@@ -30,7 +37,9 @@ interface AuthedSocket extends Socket {
     credentials: true,
   },
 })
-export class RealtimeGateway implements OnGatewayInit, OnGatewayDisconnect {
+export class RealtimeGateway
+  implements OnGatewayInit, OnGatewayDisconnect, OnModuleInit
+{
   @WebSocketServer()
   server!: Server;
 
@@ -48,7 +57,15 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayDisconnect {
   constructor(
     private readonly quoteChatService: QuoteChatService,
     private readonly jwtService: JwtService,
+    private readonly lark: LarkService,
   ) {}
+
+  // Reply từ Lark DM -> bắn vào đúng room chat như tin web thường.
+  onModuleInit() {
+    this.lark.reply$.subscribe((dto) => {
+      this.server.to(this.roomName(dto.quoteRequestId)).emit('newMessage', dto);
+    });
+  }
 
   handleDisconnect(client: AuthedSocket) {
     this.messageTimestamps.delete(client.id);
@@ -118,6 +135,7 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayDisconnect {
       if (oldRoom && oldRoom !== newRoom) client.leave(oldRoom);
       client.join(newRoom);
       this.currentChatRoom.set(client.id, newRoom);
+      void this.lark.onRecipientEngaged(data.quoteRequestId, userId);
     } catch {
       client.emit('error', {
         message: 'Bạn không có quyền xem cuộc trò chuyện này',
@@ -163,6 +181,7 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayDisconnect {
       this.server
         .to(this.roomName(data.quoteRequestId))
         .emit('newMessage', { ...message, tempId: data.tempId });
+      void this.maybeBridgeToLark(data.quoteRequestId, userId, message);
     } catch (err: any) {
       // Không lộ nội dung lỗi nội bộ (vd chi tiết query Prisma) ra client — chỉ pass qua
       // message của 2 exception nghiệp vụ đã biết, còn lại thay bằng thông báo chung.
@@ -184,9 +203,38 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayDisconnect {
 
     try {
       await this.quoteChatService.markRead(data.quoteRequestId, userId);
+      void this.lark.onRecipientEngaged(data.quoteRequestId, userId);
     } catch (err: any) {
       this.logger.warn(
         `Lỗi khi đánh dấu đã đọc tin nhắn (quoteRequestId: ${data.quoteRequestId}, userId: ${userId}): ${err.message}`,
+      );
+    }
+  }
+
+  // Sau khi lưu tin web: nếu người còn lại KHÔNG đang mở room này thì bắc cầu DM sang Lark.
+  // Không đặt `private` để test đơn vị gọi trực tiếp. Fire-and-forget: tự nuốt lỗi.
+  async maybeBridgeToLark(
+    quoteRequestId: string,
+    senderId: string,
+    message: ChatMessageDto,
+  ): Promise<void> {
+    try {
+      const { requesterId, assigneeId } =
+        await this.quoteChatService.assertParticipant(quoteRequestId, senderId);
+      const recipientId = senderId === requesterId ? assigneeId : requesterId;
+      if (!recipientId) return;
+
+      const sockets = await this.server
+        .in(this.roomName(quoteRequestId))
+        .fetchSockets();
+      const recipientInRoom = sockets.some(
+        (s) => (s.data as AuthedSocket['data'])?.user?.id === recipientId,
+      );
+
+      await this.lark.onWebMessage(message, recipientId, recipientInRoom);
+    } catch (err: any) {
+      this.logger.warn(
+        `Cầu Lark DM lỗi (quote ${quoteRequestId}): ${err?.message ?? err}`,
       );
     }
   }

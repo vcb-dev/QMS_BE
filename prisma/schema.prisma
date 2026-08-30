@@ -71,6 +71,7 @@ model User {
   pricingFormulaUpdates PricingFormula[]
   auditLogs             AuditLog[]
   larkWebhookUpdates    LarkWebhook[]
+  larkDmBridgeChanges   LarkDmBridgeConfig[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -513,6 +514,12 @@ model QuoteChatRead {
   user           User         @relation(fields: [userId], references: [id])
   lastReadAt     DateTime     @map("last_read_at")
 
+  // Cầu chat web <-> Lark DM: anchor = tin bot đã gửi mà người dùng bấm Reply vào;
+  // pendingCount/lastDmAt để gộp tin nhắc (xem lark-dm-bridge.service.ts).
+  larkAnchorMsgId  String?   @unique @map("lark_anchor_msg_id")
+  larkPendingCount Int       @default(0) @map("lark_pending_count")
+  larkLastDmAt     DateTime? @map("lark_last_dm_at")
+
   @@id([quoteRequestId, userId])
   @@map("quote_chat_reads")
 }
@@ -554,4 +561,19 @@ model LarkWebhookSubscription {
   @@unique([webhookId, action])
   @@index([action])
   @@map("lark_webhook_subscription")
+}
+
+// LARK DM BRIDGE — công tắc tổng cho cầu chat web <-> Lark DM. Append-only: mỗi lần
+// ADMIN bật/tắt ghi thêm 1 dòng (giữ lịch sử, không phải bảng 1-dòng-singleton).
+// Trạng thái hiện tại = dòng created_at mới nhất.
+model LarkDmBridgeConfig {
+  id          String   @id @default(cuid())
+  isEnabled   Boolean  @map("is_enabled")
+  note        String?
+  changedBy   User?    @relation(fields: [changedById], references: [id], onDelete: SetNull)
+  changedById String?  @map("changed_by_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([createdAt(sort: Desc)])
+  @@map("lark_dm_bridge_config")
 }

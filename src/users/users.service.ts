@@ -6,6 +6,8 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { Prisma, Role } from '@prisma/client';
 import { AuditLogService } from '../audit-log/audit-log.service';
+import { resolveDateRange } from '../utils/date-range.util';
+import { TimeRangeQueryDto } from '../common/time-range-query.dto';
 
 const USER_BASE_FIELDS = {
   id: true,
@@ -28,23 +30,41 @@ export class UsersService {
     private auditLog: AuditLogService,
   ) {}
 
-  async findAll() {
+  async findAll(query?: TimeRangeQueryDto) {
     return this.prisma.user.findMany({
+      where: this.dateWhere(query),
       select: USER_LIST_SELECT,
       orderBy: { createdAt: 'desc' },
     });
   }
 
-  async getStats() {
+  // Lọc theo user.createdAt — nút lọc nhanh / khoảng ngày tùy chọn quy đổi ở resolveDateRange.
+  // Không có bộ lọc thời gian => where rỗng, giữ nguyên hành vi cũ.
+  private dateWhere(query?: TimeRangeQueryDto) {
+    const range = query
+      ? resolveDateRange(query.timeRange, query.startDate, query.endDate)
+      : null;
+    return range ? { createdAt: range } : {};
+  }
+
+  async getStats(query?: TimeRangeQueryDto) {
+    const dateWhere = this.dateWhere(query);
     const [totalUsers, roleGroups, deptGroups, pendingCount] =
       await Promise.all([
-        this.prisma.user.count(),
-        this.prisma.user.groupBy({ by: ['role'], _count: { _all: true } }),
+        this.prisma.user.count({ where: dateWhere }),
         this.prisma.user.groupBy({
-          by: ['departmentId'],
+          by: ['role'],
+          where: dateWhere,
           _count: { _all: true },
         }),
-        this.prisma.user.count({ where: { isApproved: false } }),
+        this.prisma.user.groupBy({
+          by: ['departmentId'],
+          where: dateWhere,
+          _count: { _all: true },
+        }),
+        this.prisma.user.count({
+          where: { ...dateWhere, isApproved: false },
+        }),
       ]);
 
     const byRole = { SALE: 0, ORDER: 0, ADMIN: 0 };

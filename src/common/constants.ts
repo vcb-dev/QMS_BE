@@ -50,6 +50,8 @@ export const APP_CONSTANTS = {
   LARK_TENANT_TOKEN_URL:
     'https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal',
   LARK_IMAGE_UPLOAD_URL: 'https://open.larksuite.com/open-apis/im/v1/images',
+  // Gửi / reply tin nhắn qua Lark App (cầu chat web <-> Lark DM).
+  LARK_MESSAGE_SEND_URL: 'https://open.larksuite.com/open-apis/im/v1/messages',
   VNAPPMOB_API_KEY: requiredEnv('VNAPPMOB_API_KEY'),
   VNAPPMOB_GOLD_URL: requiredEnv('VNAPPMOB_GOLD_URL'),
   VANG_TODAY_URL: requiredEnv('VANG_TODAY_URL'),

@@ -3,6 +3,8 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { FilterQuoteRequestDto } from '../dto/filter-quote-request.dto';
 import { QuoteStatus, User, Role } from '@prisma/client';
 import { buildQuoteWhereClause } from '../../utils/quote-filter.util';
+import { resolveDateRange } from '../../utils/date-range.util';
+import { TimeRangeQueryDto } from '../../common/time-range-query.dto';
 import {
   countsFromGroupBy,
   getMyReqCount,
@@ -258,11 +260,19 @@ export class QuoteAnalyticsService {
    * Dashboard) + hiệu suất người báo giá (thời gian TB báo giá/xử lý). Dùng finalOptionId cho
    * quotedDate — cùng nguyên tắc đã áp dụng ở getDashboardCharts.
    */
-  async getStaffPerformance() {
+  async getStaffPerformance(query?: TimeRangeQueryDto) {
+    // Lọc theo quoteRequest.createdAt — chỉ đơn tạo trong kỳ được tính vào tổng/đã chốt/TB thời
+    // gian. Danh sách nhân viên (saleUsers/pricerUsers) KHÔNG lọc: người 0 việc trong kỳ vẫn hiện
+    // dòng số 0.
+    const range = query
+      ? resolveDateRange(query.timeRange, query.startDate, query.endDate)
+      : null;
+    const createdAtWhere = range ? { createdAt: range } : {};
+
     const [saleGroups, saleUsers, pricerRows, pricerUsers] = await Promise.all([
       this.prisma.quoteRequest.groupBy({
         by: ['requesterId', 'status'],
-        where: { requester: { role: Role.SALE, isActive: true } },
+        where: { ...createdAtWhere, requester: { role: Role.SALE, isActive: true } },
         _count: { _all: true },
       }),
       this.prisma.user.findMany({
@@ -271,6 +281,7 @@ export class QuoteAnalyticsService {
       }),
       this.prisma.quoteRequest.findMany({
         where: {
+          ...createdAtWhere,
           assignee: { role: Role.ORDER, isActive: true },
           acceptedAt: { not: null },
         },

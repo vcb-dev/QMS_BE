@@ -1,4 +1,14 @@
-import { Controller, Get, Param, Patch, Delete, Body, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Param,
+  Patch,
+  Delete,
+  Body,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
+import { TimeRangeQueryDto } from '../common/time-range-query.dto';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { UsersService } from './users.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -16,21 +26,26 @@ export class UsersController {
 
   @ApiOperation({ summary: 'Lấy tất cả danh sách người dùng' })
   @Get()
-  async findAll() {
-    return this.usersService.findAll();
+  async findAll(@Query() query: TimeRangeQueryDto) {
+    return this.usersService.findAll(query);
   }
 
-  @ApiOperation({ summary: 'Lấy danh sách tài khoản CHỜ ADMIN PHÊ DUYỆT (ADMIN)' })
+  @ApiOperation({
+    summary: 'Lấy danh sách tài khoản CHỜ ADMIN PHÊ DUYỆT (ADMIN)',
+  })
   @Roles(Role.ADMIN)
   @Get('pending')
   async findPending() {
     return this.usersService.findPending();
   }
 
-  @ApiOperation({ summary: 'Thống kê tổng hợp người dùng (tổng số, theo vai trò, theo bộ phận, chờ duyệt)' })
+  @ApiOperation({
+    summary:
+      'Thống kê tổng hợp người dùng (tổng số, theo vai trò, theo bộ phận, chờ duyệt)',
+  })
   @Get('stats')
-  async getStats() {
-    return this.usersService.getStats();
+  async getStats(@Query() query: TimeRangeQueryDto) {
+    return this.usersService.getStats(query);
   }
 
   @ApiOperation({ summary: 'Lấy thông tin người dùng theo ID' })

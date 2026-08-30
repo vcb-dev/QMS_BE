@@ -1,4 +1,5 @@
-import { Controller, Get, UseGuards } from '@nestjs/common';
+import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { TimeRangeQueryDto } from '../common/time-range-query.dto';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { AuditLogService } from './audit-log.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -16,7 +17,7 @@ export class AuditLogController {
   @ApiOperation({ summary: 'Đếm số lần mỗi hành động, nhóm theo role (ADMIN)' })
   @Roles(Role.ADMIN)
   @Get('stats')
-  async getStats() {
-    return this.auditLogService.getActionStatsByRole();
+  async getStats(@Query() query: TimeRangeQueryDto) {
+    return this.auditLogService.getActionStatsByRole(query);
   }
 }

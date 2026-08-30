@@ -32,6 +32,7 @@ import {
 } from './dto/library-products-query.dto';
 import { UpdateQuoteStatusDto } from './dto/update-quote-status.dto';
 import { ExportQuoteRequestDto } from './dto/export-quote-request.dto';
+import { TimeRangeQueryDto } from '../common/time-range-query.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -120,8 +121,8 @@ export class QuoteRequestsController {
       'Hiệu suất Sale (tổng đơn/đã chốt/tỷ lệ chốt) + hiệu suất người báo giá (thời gian TB)',
   })
   @Get('staff-performance')
-  async getStaffPerformance() {
-    return this.quoteAnalyticsService.getStaffPerformance();
+  async getStaffPerformance(@Query() query: TimeRangeQueryDto) {
+    return this.quoteAnalyticsService.getStaffPerformance(query);
   }
 
   @ApiOperation({

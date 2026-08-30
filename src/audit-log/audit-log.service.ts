@@ -3,6 +3,8 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { Role } from '@prisma/client';
 import { LarkService } from '../lark/lark.service';
+import { resolveDateRange } from '../utils/date-range.util';
+import { TimeRangeQueryDto } from '../common/time-range-query.dto';
 
 // Chỉ dọn log "ồn" nhất, giá trị lưu trữ thấp nhất — mặc định LOGIN quá 90 ngày. Log nghiệp vụ
 // (ACCEPT_QUOTE, CREATE_QUOTE, APPROVE_USER...) KHÔNG bị đụng. Chỉnh qua env.
@@ -123,9 +125,13 @@ export class AuditLogService {
 
   // Đếm số lần mỗi action, nhóm theo role — kèm breakdown theo từng người để biết ai làm gì.
   // Tên actor tra riêng qua quan hệ User (không còn cột actorName lưu trùng trên audit_logs).
-  async getActionStatsByRole() {
+  async getActionStatsByRole(query?: TimeRangeQueryDto) {
+    const range = query
+      ? resolveDateRange(query.timeRange, query.startDate, query.endDate)
+      : null;
     const rows = await this.prisma.auditLog.groupBy({
       by: ['actorRole', 'action', 'actorId'],
+      where: range ? { createdAt: range } : undefined,
       _count: { _all: true },
     });
 
