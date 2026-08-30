@@ -17,7 +17,8 @@ import { QuoteQueryService } from './quote-query.service';
 import { MailService } from '../../mail/mail.service';
 import { AuditLogService } from '../../audit-log/audit-log.service';
 import { LarkService } from '../../lark/lark.service';
-import { QuoteCardData } from '../../lark/lark.types';
+import { QuoteCardData } from '../../common/lark.types';
+import { AuditAction } from '../../common/audit-actions';
 import { QuoteOptionsService } from '../quote-option/quote-options.service';
 import {
   REQUEST_DETAIL_INCLUDE,
@@ -197,7 +198,7 @@ export class QuoteWorkflowService {
     ).catch(() => {});
   }
 
-  private notifySaleQuoteCompleted(quote: any) {
+  private notifySaleQuoteCompleted(quote: any, action: AuditAction) {
     // Tạm tắt gửi email — chỉ dùng Lark. Bỏ comment để bật lại.
     // const price = Number(pickPrimaryOption(quote)?.quotedPrice || 0);
     // this.notifySale(
@@ -206,9 +207,11 @@ export class QuoteWorkflowService {
     //   price,
     //   this.pickProductName(quote),
     // );
-    // Lark: thông báo DUY NHẤT của luồng báo giá — bắn khi (và chỉ khi) yêu cầu đã có giá thành công,
-    // gửi bot dạng message card (thông tin đơn + ảnh sản phẩm + giá) như trang chi tiết phía Sale.
-    void this.larkService.notifySaleQuoteCard(this.buildQuoteCardData(quote));
+    // Lark: thẻ chi tiết "đã báo giá" — fan-out tới các webhook đăng ký action này (LarkService),
+    void this.larkService.dispatchQuoteCard(
+      action,
+      this.buildQuoteCardData(quote),
+    );
   }
 
   private notifySaleQuoteRejected(quote: any, reason: string) {
@@ -271,7 +274,7 @@ export class QuoteWorkflowService {
         include: REQUEST_DETAIL_INCLUDE,
       });
       const mappedNoOpts = mapQuoteRequestDetail(updatedNoOpts);
-      this.notifySaleQuoteCompleted(mappedNoOpts);
+      this.notifySaleQuoteCompleted(mappedNoOpts, AuditAction.QUOTE_PRICE);
       return mappedNoOpts;
     }
 
@@ -338,7 +341,7 @@ export class QuoteWorkflowService {
     });
 
     const mapped = mapQuoteRequestDetail(updated);
-    this.notifySaleQuoteCompleted(mapped);
+    this.notifySaleQuoteCompleted(mapped, AuditAction.QUOTE_PRICE);
     return mapped;
   }
 
@@ -717,7 +720,7 @@ export class QuoteWorkflowService {
           include: REQUEST_DETAIL_INCLUDE,
         });
         const mapped = mapQuoteRequestDetail(approved);
-        this.notifySaleQuoteCompleted(mapped);
+        this.notifySaleQuoteCompleted(mapped, AuditAction.QUICK_APPROVE);
         return mapped;
       }
 

@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { Role } from '@prisma/client';
+import { LarkService } from '../lark/lark.service';
 
 // Chỉ dọn log "ồn" nhất, giá trị lưu trữ thấp nhất — mặc định LOGIN quá 90 ngày. Log nghiệp vụ
 // (ACCEPT_QUOTE, CREATE_QUOTE, APPROVE_USER...) KHÔNG bị đụng. Chỉnh qua env.
@@ -15,7 +16,10 @@ const PRUNE_AFTER_DAYS = Number(process.env.AUDIT_LOG_PRUNE_AFTER_DAYS) || 90;
 export class AuditLogService {
   private readonly logger = new Logger(AuditLogService.name);
 
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private larkService: LarkService,
+  ) {}
 
   // audit_logs là bảng tăng nhanh nhất (mỗi lần đăng nhập + mọi hành động). Không dọn thì vài năm
   // nó chiếm phần lớn DB và làm chậm getActionStatsByRole (groupBy toàn bảng). Chạy 03:00 hằng ngày.
@@ -62,6 +66,19 @@ export class AuditLogService {
         `Không thể ghi audit log (${params.action}): ${err instanceof Error ? err.message : err}`,
       );
     }
+
+    // Bắn thông báo Lark nếu có webhook đăng ký action này — fire-and-forget, KHÔNG chặn/không throw.
+    void this.larkService
+      .dispatchSummary(params.action, {
+        actorId: params.actorId || null,
+        entityType: params.entityType,
+        entityId: params.entityId,
+      })
+      .catch((e) =>
+        this.logger.warn(
+          `Lark dispatch (${params.action}) lỗi: ${e instanceof Error ? e.message : e}`,
+        ),
+      );
   }
 
   // Actor role đã biết (truyền từ controller/guard) — tên tra qua quan hệ actor lúc đọc, không cần snapshot lúc ghi.

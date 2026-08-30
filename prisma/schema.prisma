@@ -70,6 +70,7 @@ model User {
   baseMetalPriceUpdates BaseMetalPriceHistory[]
   pricingFormulaUpdates PricingFormula[]
   auditLogs             AuditLog[]
+  larkWebhookUpdates    LarkWebhook[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -514,4 +515,43 @@ model QuoteChatRead {
 
   @@id([quoteRequestId, userId])
   @@map("quote_chat_reads")
+}
+
+// ==========================
+// LARK WEBHOOK — cấu hình thông báo ra nhóm Lark, ADMIN quản lý qua UI.
+// lark_webhook: danh mục Custom Bot thật — 1 dòng = 1 bot, URL & signing secret là DUY NHẤT.
+// lark_webhook_subscription: bảng nối nhiều–nhiều, bot nào nhận thông báo cho audit action nào.
+// Không có bảng đứng 1 mình: lark_webhook FK -> users (updated_by), subscription FK -> lark_webhook.
+// `action` khớp giá trị audit_logs.action (cùng là text, không FK — audit_logs.action cũng không FK).
+// ==========================
+
+model LarkWebhook {
+  id            String                   @id @default(cuid())
+  chatName      String                   @map("chat_name") // tên nhóm Lark đích (chỉ để hiển thị)
+  botName       String?                  @map("bot_name") // tên Custom Bot — tùy chọn
+  webhookUrl    String                   @unique @map("webhook_url")
+  webhookSecret String?                  @unique @map("webhook_secret") // signing secret, không trả về client
+  isEnabled     Boolean                  @default(true) @map("is_enabled") // tắt = tạm ngưng, không xóa
+  updatedBy     User?                    @relation(fields: [updatedById], references: [id], onDelete: SetNull)
+  updatedById   String?                  @map("updated_by_id")
+  subscriptions LarkWebhookSubscription[]
+  createdAt     DateTime                 @default(now()) @map("created_at")
+  updatedAt     DateTime                 @updatedAt @map("updated_at")
+
+  @@index([updatedById])
+  @@map("lark_webhook")
+}
+
+model LarkWebhookSubscription {
+  id        String      @id @default(cuid())
+  webhook   LarkWebhook @relation(fields: [webhookId], references: [id], onDelete: Cascade)
+  webhookId String      @map("webhook_id")
+  action    String // giá trị AuditAction, vd QUOTE_PRICE, REJECT_QUOTE
+  isEnabled Boolean     @default(true) @map("is_enabled")
+  createdAt DateTime    @default(now()) @map("created_at")
+  updatedAt DateTime    @updatedAt @map("updated_at")
+
+  @@unique([webhookId, action])
+  @@index([action])
+  @@map("lark_webhook_subscription")
 }
