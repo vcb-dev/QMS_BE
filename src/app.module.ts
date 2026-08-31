@@ -20,9 +20,10 @@ import { LarkModule } from './lark/lark.module';
 import { LocationsModule } from './locations/locations.module';
 import { AuditLogModule } from './audit-log/audit-log.module';
 import { LoggerMiddleware } from './common/logger.middleware';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_GUARD, APP_FILTER } from '@nestjs/core';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { CsrfGuard } from './auth/guards/csrf.guard';
+import { PrismaExceptionFilter } from './common/prisma-exception.filter';
 import { ExcelModule } from './excel/excel.module';
 import { QuoteChatModule } from './quote-chat/quote-chat.module';
 import { RealtimeModule } from './realtime/realtime.module';
@@ -66,6 +67,10 @@ import { RealtimeModule } from './realtime/realtime.module';
     {
       provide: APP_GUARD,
       useClass: CsrfGuard,
+    },
+    {
+      provide: APP_FILTER,
+      useClass: PrismaExceptionFilter,
     },
   ],
 })

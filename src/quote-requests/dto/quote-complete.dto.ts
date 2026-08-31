@@ -6,6 +6,8 @@ import {
   IsArray,
   ValidateNested,
   Min,
+  Max,
+  MaxLength,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -36,12 +38,14 @@ export class QuoteOptionItemDto {
   id?: string;
 
   @IsString()
+  @MaxLength(200, { message: 'Tên phương án tối đa 200 ký tự' })
   optionName: string;
 
   @IsOptional()
   @Type(() => Number)
   @IsNumber()
   @Min(0, { message: 'Khối lượng không được là số âm' })
+  @Max(100000, { message: 'Khối lượng vượt ngưỡng hợp lệ' })
   weightChi?: number;
 
   @IsOptional()
@@ -60,6 +64,7 @@ export class QuoteOptionItemDto {
   @Type(() => Number)
   @IsNumber()
   @Min(0, { message: 'Thuế VAT không được là số âm' })
+  @Max(100, { message: 'Thuế VAT không hợp lệ (tối đa 100%)' })
   vat?: number;
 
   // Optional — option nháp (vd Sale khai chất liệu mong muốn lúc tạo yêu cầu) chưa có giá
@@ -71,11 +76,13 @@ export class QuoteOptionItemDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(2000, { message: 'Ghi chú tối đa 2000 ký tự' })
   note?: string;
 
   // Tên/mô tả đá khi báo giá đá tổng nhập tay (không chọn từ danh mục Stone qua field `stones`)
   @IsOptional()
   @IsString()
+  @MaxLength(500, { message: 'Mô tả đá tối đa 500 ký tự' })
   stoneDescription?: string;
 
   @IsOptional()

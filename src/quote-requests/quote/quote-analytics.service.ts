@@ -272,7 +272,10 @@ export class QuoteAnalyticsService {
     const [saleGroups, saleUsers, pricerRows, pricerUsers] = await Promise.all([
       this.prisma.quoteRequest.groupBy({
         by: ['requesterId', 'status'],
-        where: { ...createdAtWhere, requester: { role: Role.SALE, isActive: true } },
+        where: {
+          ...createdAtWhere,
+          requester: { role: Role.SALE, isActive: true },
+        },
         _count: { _all: true },
       }),
       this.prisma.user.findMany({

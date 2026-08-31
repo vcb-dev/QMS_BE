@@ -8,6 +8,7 @@ import {
   IsNotEmpty,
   Max,
   Min,
+  MaxLength,
   ValidateNested,
 } from 'class-validator';
 import { QuoteOptionItemDto } from './quote-complete.dto';
@@ -34,10 +35,12 @@ export class CreateQuoteRequestDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(300, { message: 'Tên sản phẩm tối đa 300 ký tự' })
   productName?: string;
 
   @IsOptional()
   @IsString()
+  @MaxLength(2000, { message: 'Thời gian muốn nhận tối đa 2000 ký tự' })
   desiredLeadTime?: string; // 7. Thời gian khách muốn nhận
 
   @IsOptional()
@@ -62,6 +65,7 @@ export class CreateQuoteRequestDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(150, { message: 'Tên danh mục tối đa 150 ký tự' })
   newCategoryName?: string; // Tên danh mục mới nếu chọn "Khác"
 
   @IsOptional()
@@ -71,6 +75,7 @@ export class CreateQuoteRequestDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(2000, { message: 'Số đo khách tối đa 2000 ký tự' })
   customerMeasurements?: string;
 
   @IsOptional()
@@ -91,6 +96,7 @@ export class CreateQuoteRequestDto {
   // không upload lại. Video MỚI đi qua field `video` (multipart, upload thật, xem CloudinaryService.uploadVideo).
   @IsOptional()
   @IsString()
+  @MaxLength(1000, { message: 'URL video tối đa 1000 ký tự' })
   videoUrl?: string;
 
   // @Transform trả object/mảng thô (parse JSON string xong là dừng) — @Type đứng sau đôi khi KHÔNG

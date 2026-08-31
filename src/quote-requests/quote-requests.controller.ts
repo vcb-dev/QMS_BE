@@ -26,10 +26,6 @@ import { QuoteRequestsService } from './quote-requests.service';
 import { CreateQuoteRequestDto } from './dto/create-quote-request.dto';
 import { UpdateQuoteRequestDto } from './dto/update-quote-request.dto';
 import { FilterQuoteRequestDto } from './dto/filter-quote-request.dto';
-import {
-  LibraryProductsQueryDto,
-  LibraryHistoryQueryDto,
-} from './dto/library-products-query.dto';
 import { UpdateQuoteStatusDto } from './dto/update-quote-status.dto';
 import { ExportQuoteRequestDto } from './dto/export-quote-request.dto';
 import { TimeRangeQueryDto } from '../common/time-range-query.dto';
@@ -125,23 +121,9 @@ export class QuoteRequestsController {
     return this.quoteAnalyticsService.getStaffPerformance(query);
   }
 
-  @ApiOperation({
-    summary:
-      'Danh sách sản phẩm đã báo giá (Thư viện) — gộp trùng theo dedupKey, sort/phân trang thật ở SQL',
-  })
-  @Get('library-products')
-  async getLibraryProducts(@Query() dto: LibraryProductsQueryDto) {
-    return this.quoteQueryService.getLibraryProducts(dto);
-  }
-
-  @ApiOperation({
-    summary:
-      'Lịch sử báo giá của 1 sản phẩm Thư Viện (lazy load khi mở modal) — phân trang theo đơn',
-  })
-  @Get('library-history')
-  async getLibraryProductHistory(@Query() dto: LibraryHistoryQueryDto) {
-    return this.quoteQueryService.getLibraryProductHistory(dto);
-  }
+  // Thư Viện Sản Phẩm (library-products / library-history) đã tách sang LibraryController
+  // (src/quote-requests/library/) — cùng prefix 'quote-requests', đăng ký TRƯỚC controller này
+  // trong module để route @Get(':id') bên dưới không nuốt mất.
 
   @ApiOperation({
     summary: 'Export danh sách yêu cầu báo giá ra Excel (Có lọc & chọn cột)',
@@ -151,7 +133,7 @@ export class QuoteRequestsController {
   async exportToExcel(
     @Query() dto: ExportQuoteRequestDto,
     @CurrentUser() user: any,
-    
+
     @Res({ passthrough: true }) res: Response,
   ) {
     const buffer = await this.quoteRequestsService.exportToExcel(dto, user);
@@ -211,6 +193,10 @@ export class QuoteRequestsController {
     summary:
       'Chuyển trạng thái yêu cầu báo giá tập trung (Bao gồm Duyệt nhanh QUICK_APPROVE & QUICK_REJECT)',
   })
+  // Cả 3 vai trò đều gọi được endpoint này — mỗi `action` tự kiểm quyền riêng trong
+  // QuoteWorkflowService.updateStatus() (assertRole + quyền sở hữu). Khai @Roles tường minh để
+  // KHÔNG phụ thuộc hành vi "thiếu @Roles thì cho qua" của RolesGuard.
+  @Roles(Role.SALE, Role.ORDER, Role.ADMIN)
   @Patch(':id/status')
   async updateStatus(
     @Param('id') id: string,

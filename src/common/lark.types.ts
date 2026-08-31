@@ -18,6 +18,8 @@ export interface QuoteCardData {
   saleName: string;
   saleLarkOpenId: string | null; // có -> field "Sale" trong card là @mention, không -> tên thường
   orderName: string;
+  createdAt: string | null; // ISO — ngày tạo yêu cầu
+  quotedAt: string | null; // ISO — ngày báo giá (quotedDate của yêu cầu, fallback: giờ hiện tại)
   imageUrl: string | null;
   options: QuoteCardOption[];
   totalPrice: number | null;

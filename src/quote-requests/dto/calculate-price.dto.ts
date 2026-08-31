@@ -8,6 +8,7 @@ import {
   ValidateNested,
   ArrayMinSize,
   Min,
+  Max,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -20,6 +21,7 @@ export class CalculatePriceInput {
 
   @IsNumber({}, { message: 'Trọng lượng chỉ phải là dạng số' })
   @Min(0, { message: 'Trọng lượng chỉ không được là số âm' })
+  @Max(100000, { message: 'Trọng lượng chỉ vượt ngưỡng hợp lệ' })
   weightChi: number;
 
   @IsOptional()
@@ -35,6 +37,7 @@ export class CalculatePriceInput {
   @IsOptional()
   @IsNumber()
   @Min(0, { message: 'Thuế VAT không được là số âm' })
+  @Max(100, { message: 'Thuế VAT không hợp lệ (tối đa 100%)' })
   vatRate?: number;
 
   @IsOptional()
@@ -49,7 +52,17 @@ export class CalculatePriceInput {
   @IsOptional()
   @IsNumber()
   @Min(0, { message: 'Hệ số nhân Bạc không được là số âm' })
+  @Max(1000, { message: 'Hệ số nhân Bạc không hợp lệ' })
   silverMultiplier?: number;
+
+  // Đá chọn từ danh mục — BE tự cộng tổng tiền đá (đơn giá × số lượng), FE KHÔNG tự tính rồi
+  // gửi `stoneCost`. Có `stones` thì `stoneCost` scalar bên trên bị bỏ qua; không có `stones`
+  // thì `stoneCost` scalar là tổng tiền đá nhập tay.
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CalculateMultiStoneItem)
+  stones?: CalculateMultiStoneItem[];
 }
 
 export class PricingCalculationResult {
@@ -70,6 +83,12 @@ export class PricingCalculationResult {
   quotedPrice: number;
   // Giá bán phần chất liệu (kim loại + công + margin/VAT) = quotedPrice - stonePrice (đã làm tròn)
   materialPrice: number;
+  // Cấu thành lãi/VAT trả sẵn để FE CHỈ hiển thị (FE không tự tính công thức nào).
+  // metalVatAmount = vatAmount (VAT trên giá vốn kim loại + công); tách tên cho rõ nghĩa ở FE.
+  metalVatAmount: number;
+  metalProfit: number;
+  stoneVatAmount: number;
+  stoneProfit: number;
 }
 
 // 1 phương án cần tính trong lô — trùng field với CalculatePriceInput nhưng KHÔNG có categoryId
@@ -83,6 +102,7 @@ export class CalculateBatchItem {
 
   @IsNumber({}, { message: 'Trọng lượng chỉ phải là dạng số' })
   @Min(0, { message: 'Trọng lượng chỉ không được là số âm' })
+  @Max(100000, { message: 'Trọng lượng chỉ vượt ngưỡng hợp lệ' })
   weightChi: number;
 
   @IsOptional()
@@ -98,12 +118,21 @@ export class CalculateBatchItem {
   @IsOptional()
   @IsNumber()
   @Min(0, { message: 'Thuế VAT không được là số âm' })
+  @Max(100, { message: 'Thuế VAT không hợp lệ (tối đa 100%)' })
   vatRate?: number;
 
   @IsOptional()
   @IsNumber()
   @Min(0, { message: 'Hệ số nhân Bạc không được là số âm' })
+  @Max(1000, { message: 'Hệ số nhân Bạc không hợp lệ' })
   silverMultiplier?: number;
+
+  // Xem chú thích ở CalculatePriceInput.stones — BE tự cộng tổng tiền đá cho phương án này.
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CalculateMultiStoneItem)
+  stones?: CalculateMultiStoneItem[];
 }
 
 // Tính giá cho NHIỀU phương án trong 1 request — mỗi phương án là 1 (chất liệu + khối lượng) độc
@@ -143,6 +172,11 @@ export class CalculateBatchResultItem {
   quotedPrice?: number;
   // Giá bán phần chất liệu = quotedPrice - stonePrice (không có khi phương án lỗi)
   materialPrice?: number;
+  // Cấu thành lãi/VAT — trả sẵn cho FE hiển thị, FE không tự tính.
+  metalVatAmount?: number;
+  metalProfit?: number;
+  stoneVatAmount?: number;
+  stoneProfit?: number;
 }
 
 export class CalculateMultiMaterialItem {
@@ -156,6 +190,7 @@ export class CalculateMultiMaterialItem {
 
   @IsNumber({}, { message: 'Khối lượng chất liệu phải là dạng số' })
   @Min(0, { message: 'Khối lượng chất liệu không được là số âm' })
+  @Max(100000, { message: 'Khối lượng chất liệu vượt ngưỡng hợp lệ' })
   weightChi: number;
 }
 
@@ -184,6 +219,7 @@ export class CalculateMultiInput {
   @IsOptional()
   @IsNumber()
   @Min(0, { message: 'Thuế VAT không được là số âm' })
+  @Max(100, { message: 'Thuế VAT không hợp lệ (tối đa 100%)' })
   vatRate?: number;
 
   @IsOptional()
@@ -241,5 +277,10 @@ export class CalculateMultiResult {
   quotedPrice: number;
   // Giá bán phần chất liệu = quotedPrice - stonePrice (đã làm tròn)
   materialPrice: number;
+  // Cấu thành lãi/VAT — trả sẵn cho FE hiển thị, FE không tự tính.
+  metalVatAmount: number;
+  metalProfit: number;
+  stoneVatAmount: number;
+  stoneProfit: number;
   breakdown: CalculateMultiMaterialBreakdownItem[];
 }

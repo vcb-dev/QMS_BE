@@ -11,11 +11,10 @@ import { MaterialsService } from '../../materials/materials.service';
 import { PricingFormulasService } from '../../pricing-formulas/pricing-formulas.service';
 import { StonesService } from '../../stones/stones.service';
 import {
+  applyMarginTiers,
   computeMetalQuote,
-  computeStoneSellPrice,
   getSpotPrice,
   normalizeAppliedRatio,
-  roundToThousand,
 } from '../../utils/pricing-math.util';
 import { MarginTier } from '../../pricing-formulas/dto/pricing-formula.dto';
 import {
@@ -61,6 +60,32 @@ export class QuoteOptionsService {
   private async getDefaultStoneTiers(): Promise<MarginTier[]> {
     const defaultFormula = await this.pricingFormulasService.getDefault();
     return ((defaultFormula.config as any)?.tiers || []) as MarginTier[];
+  }
+
+  // Cộng tổng tiền đá từ danh sách đá chọn (đơn giá catalog × số lượng) — BE tự tính, FE KHÔNG
+  // gửi `stoneCost` tính sẵn. Trả undefined khi không có `stones` (caller dùng `stoneCost` scalar
+  // nhập tay). Ném lỗi khi 1 stoneId không có trong danh mục (giống calculateMulti).
+  private async resolveStoneCostFromSelections(
+    stones: { stoneId: string; quantity: number }[] | undefined,
+  ): Promise<number | undefined> {
+    if (!stones || stones.length === 0) return undefined;
+    const stoneIds = [...new Set(stones.map((s) => s.stoneId))];
+    const records = await this.prisma.stone.findMany({
+      where: { id: { in: stoneIds } },
+      select: { id: true, price: true },
+    });
+    const priceById = new Map(records.map((s) => [s.id, Number(s.price)]));
+    let total = 0;
+    for (const sel of stones) {
+      const price = priceById.get(sel.stoneId);
+      if (price === undefined) {
+        throw new BadRequestException(
+          `Không tìm thấy đá với id "${sel.stoneId}" trong danh mục`,
+        );
+      }
+      total += price * Math.max(1, sel.quantity || 1);
+    }
+    return total;
   }
 
   // Tra 1 lượt mọi dữ liệu material/stone cần cho luồng GHI option, bằng 1 câu material + 1 câu
@@ -120,7 +145,7 @@ export class QuoteOptionsService {
       stoneMeta: new Map(
         stones.map((s): [string, { name: string; stoneType: string }] => [
           s.id,
-          { name: s.name, stoneType: s.stoneType as string },
+          { name: s.name, stoneType: s.stoneType },
         ]),
       ),
     };
@@ -193,6 +218,13 @@ export class QuoteOptionsService {
       vatRate: Math.max(0, input.vatRate || 0),
     };
 
+    // Có `stones` (đá chọn từ danh mục) thì BE tự cộng tổng tiền đá; không có thì dùng `stoneCost`
+    // nhập tay. FE không tính rồi gửi `stoneCost` nữa.
+    const resolvedStoneCost = await this.resolveStoneCostFromSelections(
+      input.stones,
+    );
+    const effectiveStoneCost = Math.max(0, resolvedStoneCost ?? stoneCost);
+
     const resolved = await this.resolveMaterial(materialNameOrKey);
     if (!resolved) {
       throw new BadRequestException(
@@ -206,7 +238,7 @@ export class QuoteOptionsService {
       resolved.material,
       weightChi,
       laborCost,
-      stoneCost,
+      effectiveStoneCost,
       vatRate,
       metalPrices,
       input.silverMultiplier,
@@ -219,7 +251,7 @@ export class QuoteOptionsService {
       totalMetalCost: Math.round(result.raw),
       metalRawCost: Math.round(result.metalRawCost),
       laborCost,
-      stoneCost,
+      stoneCost: Math.round(effectiveStoneCost),
       stonePrice: Math.round(result.stoneResult.stonePrice),
       stoneMarginLabel: result.stoneResult.stoneMarginLabel,
       totalProductionCost: Math.round(result.totalProductionCost),
@@ -231,6 +263,10 @@ export class QuoteOptionsService {
       quotedPrice: result.quotedPrice,
       materialPrice:
         result.quotedPrice - Math.round(result.stoneResult.stonePrice),
+      metalVatAmount: Math.round(result.vatAmount),
+      metalProfit: Math.round(result.metalProfit),
+      stoneVatAmount: Math.round(result.stoneResult.stoneVatAmount),
+      stoneProfit: Math.round(result.stoneResult.stoneProfit),
     };
   }
 
@@ -253,12 +289,27 @@ export class QuoteOptionsService {
       throw new BadRequestException('Cần ít nhất 1 phương án để tính');
     }
 
-    const [metalPrices, materials, defaultStoneTiers] = await Promise.all([
-      this.metalPricesService.getLatestAsync(),
-      this.materialsService.findAll(),
-      this.getDefaultStoneTiers(),
-    ]);
+    const allStoneIds = [
+      ...new Set(
+        input.items.flatMap((i) => (i.stones || []).map((s) => s.stoneId)),
+      ),
+    ];
+    const [metalPrices, materials, defaultStoneTiers, stoneRecords] =
+      await Promise.all([
+        this.metalPricesService.getLatestAsync(),
+        this.materialsService.findAll(),
+        this.getDefaultStoneTiers(),
+        allStoneIds.length
+          ? this.prisma.stone.findMany({
+              where: { id: { in: allStoneIds } },
+              select: { id: true, price: true },
+            })
+          : Promise.resolve([] as { id: string; price: any }[]),
+      ]);
     const materialByName = new Map(materials.map((m) => [m.name, m]));
+    const stonePriceById = new Map(
+      stoneRecords.map((s) => [s.id, Number(s.price)]),
+    );
 
     return input.items.map((item): CalculateBatchResultItem => {
       const name = (item.materialNameOrKey || '').trim();
@@ -272,10 +323,24 @@ export class QuoteOptionsService {
 
       const weightChi = Math.max(0, item.weightChi || 0);
       const laborCost = Math.max(0, item.laborCost || 0);
-      const stoneCost = Math.max(0, item.stoneCost || 0);
       const vatRate = Math.max(0, item.vatRate || 0);
 
       try {
+        // Có `stones` thì BE tự cộng tổng tiền đá; không có thì dùng `stoneCost` nhập tay.
+        let stoneCost = Math.max(0, item.stoneCost || 0);
+        if (item.stones && item.stones.length > 0) {
+          stoneCost = 0;
+          for (const sel of item.stones) {
+            const price = stonePriceById.get(sel.stoneId);
+            if (price === undefined) {
+              throw new Error(
+                `Không tìm thấy đá với id "${sel.stoneId}" trong danh mục`,
+              );
+            }
+            stoneCost += price * Math.max(1, sel.quantity || 1);
+          }
+        }
+
         const result = computeMetalQuote(
           (material as any).baseMetal?.name || 'kim loại',
           material,
@@ -293,7 +358,7 @@ export class QuoteOptionsService {
           totalMetalCost: Math.round(result.raw),
           metalRawCost: Math.round(result.metalRawCost),
           laborCost,
-          stoneCost,
+          stoneCost: Math.round(stoneCost),
           stonePrice: Math.round(result.stoneResult.stonePrice),
           totalProductionCost: Math.round(result.totalProductionCost),
           profitMarginDivisor: result.divisor,
@@ -303,6 +368,10 @@ export class QuoteOptionsService {
           quotedPrice: result.quotedPrice,
           materialPrice:
             result.quotedPrice - Math.round(result.stoneResult.stonePrice),
+          metalVatAmount: Math.round(result.vatAmount),
+          metalProfit: Math.round(result.metalProfit),
+          stoneVatAmount: Math.round(result.stoneResult.stoneVatAmount),
+          stoneProfit: Math.round(result.stoneResult.stoneProfit),
         };
       } catch (err) {
         return {
@@ -410,7 +479,6 @@ export class QuoteOptionsService {
       }
     }
 
-    const totalProductionCost = totalMetalCost + laborCost;
     const sharedFormula = await this.prisma.pricingFormula.findUniqueOrThrow({
       where: { id: sharedFormulaId! },
     });
@@ -420,21 +488,16 @@ export class QuoteOptionsService {
         `Chưa cấu hình bậc lợi nhuận cho công thức "${sharedFormula.name}" trong Database.`,
       );
     }
-    const sorted = [...tiers].sort((a, b) => a.maxCost - b.maxCost);
-    const costWithVat = totalProductionCost * (1 + vatRate / 100);
-    const matchedTier =
-      sorted.find((t) => costWithVat <= t.maxCost) || sorted[sorted.length - 1];
-    const divisor = matchedTier.divisor;
-    const raw = divisor > 0 ? costWithVat / divisor : costWithVat;
-    const vatAmount = costWithVat - totalProductionCost;
-
     const defaultStoneTiers = await this.getDefaultStoneTiers();
-    const stoneResult = computeStoneSellPrice(
-      stoneCost,
-      vatRate,
-      defaultStoneTiers,
-    );
-    const quotedPrice = roundToThousand(raw + stoneResult.stonePrice);
+    const { raw, vatAmount, metalProfit, stoneResult, quotedPrice } =
+      applyMarginTiers(
+        totalMetalCost,
+        laborCost,
+        vatRate,
+        tiers,
+        stoneCost,
+        defaultStoneTiers,
+      );
 
     return {
       // totalMetalCost trả về là GIÁ BÁN cuối của phần kim loại+công (đã gồm margin/VAT) —
@@ -448,6 +511,10 @@ export class QuoteOptionsService {
       vatAmount: Math.round(vatAmount),
       quotedPrice,
       materialPrice: quotedPrice - Math.round(stoneResult.stonePrice),
+      metalVatAmount: Math.round(vatAmount),
+      metalProfit: Math.round(metalProfit),
+      stoneVatAmount: Math.round(stoneResult.stoneVatAmount),
+      stoneProfit: Math.round(stoneResult.stoneProfit),
       breakdown,
     };
   }
@@ -566,25 +633,19 @@ export class QuoteOptionsService {
           continue;
         }
 
-        const totalProductionCost = totalMetalCost + item.laborCost;
         const tiers = (sharedFormula.config?.tiers || []) as MarginTier[];
         if (tiers.length === 0) {
           result.set(item.key, null);
           continue;
         }
-        const sorted = [...tiers].sort((a, b) => a.maxCost - b.maxCost);
-        const costWithVat = totalProductionCost * (1 + item.vatRate / 100);
-        const matchedTier =
-          sorted.find((t) => costWithVat <= t.maxCost) ||
-          sorted[sorted.length - 1];
-        const divisor = matchedTier.divisor;
-        const raw = divisor > 0 ? costWithVat / divisor : costWithVat;
-        const stoneResult = computeStoneSellPrice(
-          stoneCost,
+        const { quotedPrice: total, stoneResult } = applyMarginTiers(
+          totalMetalCost,
+          item.laborCost,
           item.vatRate,
+          tiers,
+          stoneCost,
           defaultStoneTiers,
         );
-        const total = roundToThousand(raw + stoneResult.stonePrice);
         const stone = Math.round(stoneResult.stonePrice);
         result.set(item.key, { total, material: total - stone, stone });
       } catch {

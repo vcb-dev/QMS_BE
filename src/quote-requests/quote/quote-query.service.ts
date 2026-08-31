@@ -1,11 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { FilterQuoteRequestDto } from '../dto/filter-quote-request.dto';
-import {
-  LibraryProductsQueryDto,
-  LibraryHistoryQueryDto,
-} from '../dto/library-products-query.dto';
-import { User, Role, Prisma } from '@prisma/client';
+import { User, Role } from '@prisma/client';
 import { APP_CONSTANTS } from '../../common/constants';
 import {
   REQUEST_DETAIL_INCLUDE,
@@ -13,9 +9,9 @@ import {
   mapQuoteRequestDetail,
   pickPrimaryOption,
   buildProductName,
-  buildLibraryProductName,
-  stripMaterialPercent,
-  computePriceBreakdown,
+  attachPriceBreakdowns,
+  toLivePriceInput,
+  applyLivePriceMap,
 } from '../../utils/option-mapper.util';
 import { buildQuoteWhereClause } from '../../utils/quote-filter.util';
 import {
@@ -26,690 +22,23 @@ import {
   QuoteOptionsService,
   LivePriceItem,
 } from '../quote-option/quote-options.service';
+import { QuoteListCacheService } from '../quote-list-cache.service';
 
+// Read path CHÍNH của yêu cầu báo giá: danh sách (findAll, có cache + counts + giá sống), chi tiết
+// (findOne), và export Excel (findAllForExport). Thư Viện Sản Phẩm đã tách hẳn sang LibraryService
+// (dữ liệu lịch sử, query gộp nhóm rất khác) — 2 service chỉ chia sẻ QuoteListCacheService để
+// clearCache() từ luồng ghi xoá cả 2 loại entry.
 @Injectable()
 export class QuoteQueryService {
-  private readonly listCache = new Map<
-    string,
-    { at: number; ttl: number; data: any }
-  >();
-  // TTL cache danh sách (findAll) + thư viện sản phẩm (getLibraryProducts). Mọi lệnh ghi đã gọi
-  // clearCache() nên stale chỉ xảy ra khi đổi dữ liệu ngoài luồng hoặc chạy nhiều instance (cache
-  // theo từng instance). Chỉnh qua LIST_CACHE_TTL_MS; mặc định 60s.
-  private readonly cacheTtlMs = Number(process.env.LIST_CACHE_TTL_MS) || 60_000;
-  // Thư Viện Sản Phẩm là dữ liệu LỊCH SỬ (báo giá đã chốt) — không cần realtime, và query gộp
-  // nhóm nặng hơn findAll nhiều. TTL riêng dài hơn; vẫn bị xóa ngay khi có báo giá mới qua
-  // clearCache(). Chỉnh qua LIBRARY_CACHE_TTL_MS; mặc định 5 phút.
-  private readonly libraryCacheTtlMs =
-    Number(process.env.LIBRARY_CACHE_TTL_MS) || 300_000;
-  // Trần số entry — cacheKey = JSON.stringify(filterDto) nên số key phân biệt là vô hạn (mỗi tổ
-  // hợp filter/search/page là 1 key). Không có trần thì Map phình mãi = memory leak chậm. Map giữ
-  // thứ tự insert; cacheSet xóa+chèn lại khi "touch" nên key cũ nhất luôn ở đầu -> evict kiểu LRU.
-  private readonly cacheMaxEntries =
-    Number(process.env.LIST_CACHE_MAX_ENTRIES) || 200;
-
   constructor(
     private prisma: PrismaService,
     private quoteOptionsService: QuoteOptionsService,
+    // Cache RAM chia sẻ với LibraryService — clearCache() xoá cả danh sách yêu cầu lẫn Thư Viện.
+    private listCache: QuoteListCacheService,
   ) {}
 
   clearCache() {
     this.listCache.clear();
-  }
-
-  // Gắn priceBreakdown (+ livePriceBreakdown khi đã có livePrice + liveStonePrice) cho 1 option thô.
-  private attachBreakdown(opt: any) {
-    const bd = computePriceBreakdown(opt.quotedPrice, opt.stonePrice);
-    if (bd) opt.priceBreakdown = bd;
-    if (opt.livePrice != null && opt.liveStonePrice != null) {
-      opt.livePriceBreakdown = {
-        material: Math.round(
-          Number(opt.livePrice) - Number(opt.liveStonePrice),
-        ),
-        stone: Math.round(Number(opt.liveStonePrice)),
-      };
-    }
-    return opt;
-  }
-
-  // Đọc cache có kiểm TTL + "touch" (đưa key lên cuối) để lần evict sau bỏ đúng key ít dùng nhất.
-  private cacheGet(key: string): any | undefined {
-    const hit = this.listCache.get(key);
-    if (!hit) return undefined;
-    if (Date.now() - hit.at >= hit.ttl) {
-      this.listCache.delete(key);
-      return undefined;
-    }
-    this.listCache.delete(key);
-    this.listCache.set(key, hit);
-    return hit.data;
-  }
-
-  // Ghi cache + evict key cũ nhất khi vượt trần. ttlMs mặc định = TTL danh sách chung.
-  private cacheSet(key: string, data: any, ttlMs = this.cacheTtlMs): void {
-    this.listCache.delete(key);
-    this.listCache.set(key, { at: Date.now(), ttl: ttlMs, data });
-    while (this.listCache.size > this.cacheMaxEntries) {
-      const oldest = this.listCache.keys().next().value as string | undefined;
-      if (oldest === undefined) break;
-      this.listCache.delete(oldest);
-    }
-  }
-
-  /**
-   * Danh sách sản phẩm đã báo giá (Thư viện/Quản lý sản phẩm). Gộp nhóm THÔ theo cột
-   * QuoteOption.libraryGroupKey (tính SẴN lúc ghi option — xem computeLibraryGroupKey):
-   * "<categoryId> | <baseMetalId chất liệu nặng nhất> | <tập tên đá MAIN>". Bỏ tuổi vàng/khối
-   * lượng/size đá/đá tấm.
-   *
-   * SQL gộp + phân trang phía DB (GROUP BY library_group_key), CHỈ hydrate + tính giá sống cho
-   * option thuộc các nhóm CỦA TRANG này — không kéo toàn bộ option như trước. Sort PRICE_ASC/DESC
-   * theo giá ĐÃ BÁO (quoted_price) để SQL sắp được; card vẫn hiển thị giá sống (có thể lệch nhẹ
-   * thứ tự ở các cặp giá suýt soát — chấp nhận). Cache như findAll; mọi thao tác ghi gọi clearCache().
-   */
-  // Bộ lọc SQL dùng chung cho danh sách Thư Viện + lịch sử báo giá 1 sản phẩm. Alias: qo =
-  // quote_options, qr = quote_requests, pc = product_categories (caller phải JOIN đủ 3).
-  private buildLibraryFilters(dto: {
-    search?: string;
-    categoryId?: string;
-    materialId?: string;
-    salePersonId?: string;
-    orderPersonId?: string;
-    timeRange?: string;
-    startDate?: string;
-    endDate?: string;
-  }): Prisma.Sql[] {
-    const filters: Prisma.Sql[] = [
-      Prisma.sql`qo.quoted_price IS NOT NULL`,
-      Prisma.sql`qr.status IN ('QUOTED', 'CLOSED')`,
-      Prisma.sql`qo.dedup_key IS NOT NULL`,
-      Prisma.sql`qo.library_group_key IS NOT NULL`,
-    ];
-    if (dto.categoryId && dto.categoryId !== 'ALL') {
-      filters.push(Prisma.sql`qr.category_id = ${dto.categoryId}`);
-    }
-    if (dto.materialId && dto.materialId !== 'ALL') {
-      filters.push(
-        Prisma.sql`EXISTS (SELECT 1 FROM quote_option_materials qom WHERE qom.option_id = qo.id AND qom.material_id = ${dto.materialId})`,
-      );
-    }
-    if (dto.salePersonId && dto.salePersonId !== 'ALL') {
-      filters.push(Prisma.sql`qr.requester_id = ${dto.salePersonId}`);
-    }
-    if (dto.orderPersonId && dto.orderPersonId !== 'ALL') {
-      filters.push(Prisma.sql`qr.assignee_id = ${dto.orderPersonId}`);
-    }
-    const search = dto.search?.trim();
-    if (search) {
-      filters.push(Prisma.sql`(
-        qr.code ILIKE ${`%${search}%`}
-        OR pc.name ILIKE ${`%${search}%`}
-        OR EXISTS (
-          SELECT 1 FROM quote_option_materials qom2
-          JOIN materials m ON m.id = qom2.material_id
-          WHERE qom2.option_id = qo.id AND m.name ILIKE ${`%${search}%`}
-        )
-      )`);
-    }
-    const cutoff = this.libraryTimeRangeCutoff(dto.timeRange);
-    if (cutoff) {
-      filters.push(
-        Prisma.sql`COALESCE(qo.quoted_date, qr.created_at) >= ${cutoff}`,
-      );
-    }
-    const startDate = dto.startDate ? new Date(dto.startDate) : null;
-    if (startDate && !isNaN(startDate.getTime())) {
-      filters.push(
-        Prisma.sql`COALESCE(qo.quoted_date, qr.created_at) >= ${startDate}`,
-      );
-    }
-    const endDate = dto.endDate ? new Date(dto.endDate) : null;
-    if (endDate && !isNaN(endDate.getTime())) {
-      endDate.setDate(endDate.getDate() + 1); // bao trọn ngày endDate
-      filters.push(
-        Prisma.sql`COALESCE(qo.quoted_date, qr.created_at) < ${endDate}`,
-      );
-    }
-    return filters;
-  }
-
-  async getLibraryProducts(dto: LibraryProductsQueryDto) {
-    const page = dto.page ?? 1;
-    const limit = dto.limit ?? 8;
-    const offset = (page - 1) * limit;
-
-    const cacheKey = `library:${JSON.stringify(dto)}`;
-    const cached = this.cacheGet(cacheKey);
-    if (cached) return cached;
-
-    const whereSql = Prisma.join(this.buildLibraryFilters(dto), ' AND ');
-
-    // Sort theo giá ĐÃ BÁO (quoted_price) để SQL sắp + phân trang được.
-    const sortSql =
-      dto.sortMode === 'PRICE_ASC'
-        ? Prisma.sql`q_min ASC`
-        : dto.sortMode === 'MOST_QUOTED'
-          ? Prisma.sql`dup_count DESC`
-          : dto.sortMode === 'RECENT'
-            ? Prisma.sql`last_at DESC`
-            : Prisma.sql`q_max DESC`; // PRICE_DESC (mặc định)
-
-    // 1 query CTE — gộp 2 bước thành 1 round-trip DB:
-    //  page:   1 TRANG khóa nhóm + aggregate (min/max giá, tách phần kim loại / phần đá, khối
-    //          lượng, số đơn, mốc mới nhất). count(*) OVER() = tổng số nhóm để phân trang.
-    //  ranked: chỉ cho các khóa nhóm CỦA TRANG (IN SELECT gkey FROM page) — row_number() lấy
-    //          option ĐẠI DIỆN (mới nhất) + option giá THẤP NHẤT + CAO NHẤT.
-    // KHÔNG array_agg(... ORDER BY ...) ×3 quét toàn bộ lịch sử như trước; aggregate của page chạy
-    // thẳng trên covering index idx_qo_library.
-    const grpRows = await this.prisma.$queryRaw<
-      {
-        gkey: string;
-        dup_count: bigint;
-        q_min: unknown;
-        q_max: unknown;
-        mat_min: unknown;
-        mat_max: unknown;
-        stone_min: unknown;
-        stone_max: unknown;
-        w_min: unknown;
-        w_max: unknown;
-        last_at: Date;
-        total: bigint;
-        rep_id: string | null;
-        min_opt_id: string | null;
-        max_opt_id: string | null;
-      }[]
-    >(Prisma.sql`
-      WITH page AS (
-        SELECT
-          qo.library_group_key AS gkey,
-          count(DISTINCT qo.quote_request_id) AS dup_count,
-          min(qo.quoted_price) AS q_min,
-          max(qo.quoted_price) AS q_max,
-          min(qo.quoted_price - COALESCE(qo.stone_price, 0)) AS mat_min,
-          max(qo.quoted_price - COALESCE(qo.stone_price, 0)) AS mat_max,
-          min(COALESCE(qo.stone_price, 0)) AS stone_min,
-          max(COALESCE(qo.stone_price, 0)) AS stone_max,
-          min(qo.weight_chi) AS w_min,
-          max(qo.weight_chi) AS w_max,
-          max(COALESCE(qo.quoted_date, qr.created_at)) AS last_at,
-          count(*) OVER () AS total
-        FROM quote_options qo
-        JOIN quote_requests qr ON qr.id = qo.quote_request_id
-        LEFT JOIN product_categories pc ON pc.id = qr.category_id
-        WHERE ${whereSql}
-        GROUP BY qo.library_group_key
-        ORDER BY ${sortSql}, gkey
-        LIMIT ${limit} OFFSET ${offset}
-      ),
-      ranked AS (
-        SELECT
-          qo.library_group_key AS gkey,
-          qo.id,
-          row_number() OVER (PARTITION BY qo.library_group_key ORDER BY COALESCE(qo.quoted_date, qr.created_at) DESC, qo.id DESC) AS rn_rep,
-          row_number() OVER (PARTITION BY qo.library_group_key ORDER BY qo.quoted_price ASC, qo.id) AS rn_min,
-          row_number() OVER (PARTITION BY qo.library_group_key ORDER BY qo.quoted_price DESC, qo.id) AS rn_max
-        FROM quote_options qo
-        JOIN quote_requests qr ON qr.id = qo.quote_request_id
-        LEFT JOIN product_categories pc ON pc.id = qr.category_id
-        WHERE ${whereSql}
-          AND qo.library_group_key IN (SELECT gkey FROM page)
-      ),
-      reps AS (
-        SELECT
-          gkey,
-          max(id) FILTER (WHERE rn_rep = 1) AS rep_id,
-          max(id) FILTER (WHERE rn_min = 1) AS min_opt_id,
-          max(id) FILTER (WHERE rn_max = 1) AS max_opt_id
-        FROM ranked
-        WHERE rn_rep = 1 OR rn_min = 1 OR rn_max = 1
-        GROUP BY gkey
-      )
-      SELECT p.*, r.rep_id, r.min_opt_id, r.max_opt_id
-      FROM page p
-      LEFT JOIN reps r ON r.gkey = p.gkey
-      ORDER BY ${sortSql}, p.gkey
-    `);
-
-    const total = grpRows.length ? Number(grpRows[0].total) : 0;
-
-    // Hydrate rep + option min/max giá của mỗi nhóm trên trang (dedupe) — ≤ 3×limit dòng.
-    const optIds = [
-      ...new Set(
-        grpRows.flatMap((r) =>
-          [r.rep_id, r.min_opt_id, r.max_opt_id].filter(
-            (x): x is string => !!x,
-          ),
-        ),
-      ),
-    ];
-    const opts = optIds.length ? await this.hydrateLibraryOptions(optIds) : [];
-    await this.attachLivePricesToOptions(opts as any[]);
-    for (const o of opts as any[]) this.attachBreakdown(o);
-    const optById = new Map((opts as any[]).map((o) => [o.id, o]));
-
-    // Thứ tự thẻ = thứ tự SQL đã sort + phân trang.
-    const data = grpRows
-      .map((r) => {
-        const rep = r.rep_id ? optById.get(r.rep_id) : undefined;
-        if (!rep) return null;
-        const minOpt = r.min_opt_id ? optById.get(r.min_opt_id) : undefined;
-        const maxOpt = r.max_opt_id ? optById.get(r.max_opt_id) : undefined;
-        return this.buildLibraryCardFromRep(r.gkey, rep, {
-          dupCount: Number(r.dup_count),
-          qMin: Number(r.q_min) || 0,
-          qMax: Number(r.q_max) || 0,
-          matMin: Number(r.mat_min) || 0,
-          matMax: Number(r.mat_max) || 0,
-          stoneMin: Number(r.stone_min) || 0,
-          stoneMax: Number(r.stone_max) || 0,
-          wMin: r.w_min != null ? Number(r.w_min) : null,
-          wMax: r.w_max != null ? Number(r.w_max) : null,
-          lastAt: r.last_at,
-          liveMin: this.livePriceOf(minOpt),
-          liveMax: this.livePriceOf(maxOpt),
-          liveStoneMin: (minOpt as any)?.liveStonePrice ?? null,
-          liveStoneMax: (maxOpt as any)?.liveStonePrice ?? null,
-        });
-      })
-      .filter((c): c is NonNullable<typeof c> => !!c);
-
-    const result = {
-      data,
-      meta: { total, page, limit, totalPages: Math.ceil(total / limit) || 1 },
-    };
-    this.cacheSet(cacheKey, result, this.libraryCacheTtlMs);
-    return result;
-  }
-
-  /**
-   * Lịch sử báo giá của 1 sản phẩm (1 thẻ Thư Viện) — lazy load khi mở modal chi tiết. Phân trang
-   * theo ĐƠN (1 dòng = 1 yêu cầu báo giá), mới → cũ. Áp cùng bộ lọc với danh sách ngoài.
-   */
-  async getLibraryProductHistory(dto: LibraryHistoryQueryDto) {
-    const page = dto.page ?? 1;
-    const limit = dto.limit ?? 20;
-    const offset = (page - 1) * limit;
-
-    const filters = this.buildLibraryFilters(dto);
-    filters.push(Prisma.sql`qo.library_group_key = ${dto.groupKey}`);
-    const whereSql = Prisma.join(filters, ' AND ');
-
-    const reqRows = await this.prisma.$queryRaw<
-      { request_id: string; total: bigint }[]
-    >(Prisma.sql`
-      SELECT
-        qr.id AS request_id,
-        max(COALESCE(qo.quoted_date, qr.created_at)) AS last_at,
-        count(*) OVER () AS total
-      FROM quote_options qo
-      JOIN quote_requests qr ON qr.id = qo.quote_request_id
-      LEFT JOIN product_categories pc ON pc.id = qr.category_id
-      WHERE ${whereSql}
-      GROUP BY qr.id
-      ORDER BY last_at DESC, qr.id
-      LIMIT ${limit} OFFSET ${offset}
-    `);
-
-    const total = reqRows.length ? Number(reqRows[0].total) : 0;
-    const requestIds = reqRows.map((r) => r.request_id);
-
-    const optRows = requestIds.length
-      ? await this.prisma.$queryRaw<{ id: string }[]>(Prisma.sql`
-          SELECT qo.id
-          FROM quote_options qo
-          WHERE qo.quote_request_id IN (${Prisma.join(requestIds)})
-            AND qo.library_group_key = ${dto.groupKey}
-            AND qo.quoted_price IS NOT NULL
-        `)
-      : [];
-
-    const options = optRows.length
-      ? await this.hydrateLibraryOptions(optRows.map((r) => r.id))
-      : [];
-    await this.attachLivePricesToOptions(options as any[]);
-    for (const o of options as any[]) this.attachBreakdown(o);
-
-    const byRequest = new Map<string, any[]>();
-    for (const o of options as any[]) {
-      const rid = o.quoteRequest.id;
-      const b = byRequest.get(rid);
-      if (b) b.push(o);
-      else byRequest.set(rid, [o]);
-    }
-
-    const data = requestIds
-      .map((rid) => {
-        const opts = byRequest.get(rid);
-        return opts && opts.length ? this.buildHistoryEntry(opts) : null;
-      })
-      .filter((e): e is NonNullable<typeof e> => !!e);
-
-    return {
-      data,
-      meta: { total, page, limit, totalPages: Math.ceil(total / limit) || 1 },
-    };
-  }
-
-  private hydrateLibraryOptions(optionIds: string[]) {
-    return this.prisma.quoteOption.findMany({
-      where: { id: { in: optionIds } },
-      select: {
-        ...OPTION_SUMMARY_SELECT,
-        // Khóa gộp nhóm (tính sẵn lúc ghi) — dùng để gom option đã hydrate về đúng thẻ.
-        libraryGroupKey: true,
-        // Cần kim loại gốc để gộp nhóm + đặt tên — OPTION_SUMMARY_SELECT chỉ có id/name của material.
-        materials: {
-          select: {
-            materialId: true,
-            weightChi: true,
-            material: {
-              select: {
-                id: true,
-                name: true,
-                baseMetalId: true,
-                baseMetal: { select: { id: true, name: true } },
-              },
-            },
-          },
-        },
-        quoteRequest: {
-          select: {
-            id: true,
-            code: true,
-            categoryId: true,
-            createdAt: true,
-            category: { select: { name: true } },
-            // Lịch sử báo giá ở modal chi tiết cần tên Sale (người tạo) + người báo giá (assignee).
-            requester: { select: { name: true } },
-            assignee: { select: { name: true } },
-            images: {
-              select: { id: true, imageUrl: true },
-              orderBy: { id: 'asc' },
-            },
-          },
-        },
-      },
-    });
-  }
-
-  // Dải khối lượng của 1 tập option — "min – max chỉ", 1 số nếu đồng nhất, null nếu không có.
-  private weightRangeDisplay(opts: any[]): string | null {
-    const w = [
-      ...new Set(
-        opts.map((o) => Number(o.weightChi) || 0).filter((x) => x > 0),
-      ),
-    ].sort((a, b) => a - b);
-    if (w.length === 0) return null;
-    if (w.length === 1) return `${w[0]} chỉ`;
-    return `${w[0]} – ${w[w.length - 1]} chỉ`;
-  }
-
-  // Kim loại gốc "chủ đạo" của 1 option = baseMetal của material nặng nhất (option 1 chất liệu là
-  // thường; hợp kim nhiều chất liệu lấy cái weightChi lớn nhất). null nếu toàn phi kim loại.
-  private dominantMaterial(o: any): any | null {
-    const mats = (o.materials || []).filter(
-      (m: any) => m.material?.baseMetalId,
-    );
-    if (mats.length === 0) return null;
-    return [...mats].sort(
-      (a: any, b: any) =>
-        (Number(b.weightChi) || 0) - (Number(a.weightChi) || 0),
-    )[0];
-  }
-
-  // Tên đá CHỦ (MAIN) của 1 option — giữ nguyên tên đầy đủ trong danh mục đá, không cắt bớt.
-  // Đá tấm (SIDE) bỏ hẳn: là đá phụ trang trí, không định danh sản phẩm.
-  private mainStoneNames(o: any): string[] {
-    return [
-      ...new Set(
-        ((o.stones || []) as any[])
-          .filter((s) => s.stone?.stoneType === 'MAIN' && s.stone?.name)
-          .map((s) => String(s.stone.name).trim())
-          .filter(Boolean),
-      ),
-    ];
-  }
-
-  // Khóa gộp nhóm tính SẴN lúc ghi option (computeLibraryGroupKey). dominantMaterial() +
-  // mainStoneNames() vẫn giữ để build thẻ (tên/chất liệu/đá) từ option đại diện.
-
-  // Dải khối lượng "min – max chỉ" từ 2 số min/max SQL đã tính sẵn cho cả nhóm.
-  private weightRangeFromMinMax(
-    min: number | null,
-    max: number | null,
-  ): string | null {
-    const lo = min && min > 0 ? min : null;
-    const hi = max && max > 0 ? max : null;
-    if (lo == null && hi == null) return null;
-    if (lo != null && hi != null && lo !== hi) return `${lo} – ${hi} chỉ`;
-    return `${hi ?? lo} chỉ`;
-  }
-
-  // Thẻ sản phẩm từ 1 option ĐẠI DIỆN (mới nhất của nhóm) + số liệu tổng hợp SQL. Nhóm gộp thô
-  // (cùng danh mục + kim loại gốc + tập đá MAIN) nên rep đủ để hiện tên/chất liệu/đá. Khoảng giá
-  // trên thẻ = giá ĐÃ BÁO (qMin/qMax từ SQL); giá sống chỉ của rep. Lịch sử báo giá (history) KHÔNG
-  // nằm trong response này — FE lazy-load qua getLibraryProductHistory khi mở modal.
-  // Giá sống đã gắn vào 1 option đã hydrate — null nếu không tính được (thiếu config).
-  private livePriceOf(o: any): number | null {
-    return o && o.livePrice != null ? Number(o.livePrice) : null;
-  }
-
-  private buildLibraryCardFromRep(
-    groupKey: string,
-    rep: any,
-    agg: {
-      dupCount: number;
-      qMin: number;
-      qMax: number;
-      wMin: number | null;
-      wMax: number | null;
-      lastAt: Date;
-      liveMin: number | null;
-      liveMax: number | null;
-      matMin: number;
-      matMax: number;
-      stoneMin: number;
-      stoneMax: number;
-      liveStoneMin: number | null;
-      liveStoneMax: number | null;
-    },
-  ) {
-    const catName = rep.quoteRequest.category?.name || '';
-    const baseMetalName =
-      this.dominantMaterial(rep)?.material?.baseMetal?.name || '';
-    const stoneNames = [
-      ...new Set(this.mainStoneNames(rep)),
-    ].sort() as string[];
-
-    const productName = buildLibraryProductName(
-      catName,
-      baseMetalName,
-      stoneNames,
-    );
-
-    const detailMatNames = [
-      ...new Set(
-        ((rep.materials || []) as any[])
-          .map((m) => m.material?.name)
-          .filter(Boolean),
-      ),
-    ]
-      .map(stripMaterialPercent)
-      .sort() as string[];
-
-    // Khoảng giá HÔM NAY: tính live ĐÚNG cho option giá thấp nhất + option giá cao nhất của nhóm
-    // (mỗi cái theo config riêng của nó — min/max báo khác ngày, biến động khác nhau). null khi
-    // option tương ứng không tính được giá sống.
-    const roundK = (x: number) => Math.round(x / 1000) * 1000;
-    const livePriceMin = agg.liveMin != null ? roundK(agg.liveMin) : null;
-    const livePriceMax = agg.liveMax != null ? roundK(agg.liveMax) : null;
-
-    return {
-      key: `grp:${groupKey}`,
-      groupKey,
-      requestId: rep.quoteRequest.id,
-      code: rep.quoteRequest.code,
-      categoryId: rep.quoteRequest.categoryId,
-      images: rep.quoteRequest.images,
-      option: rep,
-      productName,
-      matStr: baseMetalName || detailMatNames.join(', '),
-      weightDisplay: this.weightRangeFromMinMax(agg.wMin, agg.wMax),
-      stoneDisplay: stoneNames.length ? stoneNames.join(', ') : 'Không đính đá',
-      materialIds: [
-        ...new Set(
-          ((rep.materials || []) as any[])
-            .map((m) => m.materialId)
-            .filter(Boolean),
-        ),
-      ] as string[],
-      requestCreatedAt: rep.quoteRequest.createdAt,
-      lastQuotedAt: agg.lastAt,
-      duplicateCount: agg.dupCount,
-      priceMin: agg.qMin,
-      priceMax: agg.qMax,
-      // Khoảng giá tách chất liệu / đá (đã báo) — min/max trên cả nhóm từ SQL.
-      priceMaterialMin: agg.matMin,
-      priceMaterialMax: agg.matMax,
-      priceStoneMin: agg.stoneMin,
-      priceStoneMax: agg.stoneMax,
-      // Ước lượng khoảng giá hôm nay (xem comment trên) — FE hiện "Hôm nay ~X – Y".
-      livePriceMin,
-      livePriceMax,
-      // Khoảng giá tách hôm nay — chất liệu chỉ có khi cả live tổng & live đá != null.
-      livePriceMaterialMin:
-        agg.liveMin != null && agg.liveStoneMin != null
-          ? roundK(agg.liveMin - agg.liveStoneMin)
-          : null,
-      livePriceMaterialMax:
-        agg.liveMax != null && agg.liveStoneMax != null
-          ? roundK(agg.liveMax - agg.liveStoneMax)
-          : null,
-      livePriceStoneMin:
-        agg.liveStoneMin != null ? roundK(agg.liveStoneMin) : null,
-      livePriceStoneMax:
-        agg.liveStoneMax != null ? roundK(agg.liveStoneMax) : null,
-      history: [] as unknown[], // giữ field cho tương thích; nội dung lazy-load riêng
-    };
-  }
-
-  // 1 dòng lịch sử = 1 đơn báo giá (opts = mọi option của đơn đó thuộc nhóm). Dùng chung bởi
-  // getLibraryProductHistory. `price` = giá đã báo (đóng băng); `livePrice` = tính lại hôm nay;
-  // `livePriceDeltaPct` = % lệch (BE tính sẵn).
-  private buildHistoryEntry(opts: any[]) {
-    const req = opts[0].quoteRequest;
-    const quotedDate =
-      opts
-        .map((o) => o.quotedDate)
-        .filter(Boolean)
-        .sort(
-          (a: any, b: any) => new Date(b).getTime() - new Date(a).getTime(),
-        )[0] || null;
-
-    const options = [...opts]
-      .map((o) => {
-        const price = Number(o.quotedPrice) || 0;
-        const livePrice = o.livePrice != null ? Number(o.livePrice) : null;
-        let livePriceDeltaPct: number | null = null;
-        if (livePrice != null && price > 0) {
-          const pct = ((livePrice - price) / price) * 100;
-          livePriceDeltaPct =
-            Math.abs(pct) < 0.05 ? 0 : Math.round(pct * 10) / 10;
-        }
-        return {
-          optionName: o.optionName,
-          price,
-          livePrice,
-          livePriceDeltaPct,
-          selectionStatus: o.selectionStatus,
-          priceBreakdown:
-            computePriceBreakdown(o.quotedPrice, o.stonePrice) ?? undefined,
-          livePriceBreakdown:
-            o.livePrice != null && o.liveStonePrice != null
-              ? {
-                  material: Math.round(
-                    Number(o.livePrice) - Number(o.liveStonePrice),
-                  ),
-                  stone: Math.round(Number(o.liveStonePrice)),
-                }
-              : undefined,
-        };
-      })
-      .sort((a, b) => a.price - b.price);
-
-    const paid = options.map((o) => o.price).filter((p) => p > 0);
-    return {
-      requestId: req.id,
-      code: req.code,
-      quotedDate,
-      quotedAt: quotedDate || req.createdAt,
-      weightDisplay: this.weightRangeDisplay(opts),
-      saleName: req.requester?.name || '',
-      pricerName: req.assignee?.name || null,
-      priceMin: paid.length ? Math.min(...paid) : 0,
-      priceMax: paid.length ? Math.max(...paid) : 0,
-      // Ảnh của chính đơn này — modal chi tiết đổi ảnh nền theo đơn đang chọn ở cột lịch sử.
-      images: (req.images || []).map((i: any) => ({
-        id: i.id,
-        imageUrl: i.imageUrl,
-      })),
-      options,
-    };
-  }
-
-  private libraryTimeRangeCutoff(timeRange: string | undefined): Date | null {
-    const now = new Date();
-    if (timeRange === 'TODAY')
-      return new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    if (timeRange === 'THIS_WEEK') {
-      const day = now.getDay() || 7;
-      return new Date(
-        now.getFullYear(),
-        now.getMonth(),
-        now.getDate() - day + 1,
-      );
-    }
-    if (timeRange === 'THIS_MONTH')
-      return new Date(now.getFullYear(), now.getMonth(), 1);
-    return null;
-  }
-
-  private async attachLivePricesToOptions(options: any[]) {
-    const inputs: LivePriceItem[] = [];
-    for (const opt of options) {
-      if (opt.quotedPrice == null) continue;
-      inputs.push({
-        key: opt.id,
-        materials: (opt.materials || []).map((m: any) => ({
-          materialId: m.materialId,
-          weightChi: Number(m.weightChi) || 0,
-        })),
-        laborCost: Number(opt.laborCost) || 0,
-        vatRate: opt.vat != null ? Number(opt.vat) : 10,
-        stones:
-          (opt.stones || []).length > 0
-            ? opt.stones.map((s: any) => ({
-                stoneId: s.stoneId,
-                quantity: s.quantity,
-              }))
-            : undefined,
-        manualStoneCost: Number(opt.stoneCost) || 0,
-      });
-    }
-    if (inputs.length === 0) return;
-    const priceMap =
-      await this.quoteOptionsService.batchComputeLivePrices(inputs);
-    for (const opt of options) {
-      const entry = priceMap.get(opt.id);
-      if (entry === undefined) continue;
-      if (entry === null) {
-        opt.livePrice = null;
-        continue;
-      }
-      opt.livePrice = entry.total;
-      opt.liveStonePrice = entry.stone;
-    }
   }
 
   async findAll(filterDto: FilterQuoteRequestDto, _user: User) {
@@ -721,7 +50,7 @@ export class QuoteQueryService {
     // withLivePrice=true là nút "Tải lại giá" bấm tay — phải luôn tính lại giá MỚI NHẤT, cache
     // 30s ở đây sẽ trả nhầm giá cũ nếu bấm lại trong vòng 30s sau khi vừa đổi giá kim loại/đá.
     const skipCache = filterDto.withLivePrice === 'true';
-    const cached = skipCache ? undefined : this.cacheGet(cacheKey);
+    const cached = skipCache ? undefined : this.listCache.get(cacheKey);
     if (cached) return cached;
 
     const { page = 1, limit = 10 } = filterDto;
@@ -841,10 +170,10 @@ export class QuoteQueryService {
       // stoneCost của chính option đó để tính lại giá, ẩn trước thì Sale mở Thư Viện Sản Phẩm sẽ
       // luôn ra null.
       await this.attachLivePrices(sanitizedItems);
-      // attachBreakdown (trong sanitizeItem) đã chạy TRƯỚC bước này nên livePriceBreakdown chưa
-      // populate — gắn lại sau khi đã có livePrice/liveStonePrice trên option.
+      // attachPriceBreakdowns (trong sanitizeItem) đã chạy TRƯỚC bước này nên livePriceBreakdown
+      // chưa populate — gắn lại sau khi đã có livePrice/liveStonePrice trên option.
       for (const item of sanitizedItems) {
-        for (const o of item.options || []) this.attachBreakdown(o);
+        for (const o of item.options || []) attachPriceBreakdowns(o);
       }
     }
 
@@ -871,7 +200,7 @@ export class QuoteQueryService {
     };
 
     if (!skipCache) {
-      this.cacheSet(cacheKey, result);
+      this.listCache.set(cacheKey, result);
     }
     return result;
   }
@@ -881,46 +210,21 @@ export class QuoteQueryService {
   // (batchComputeLivePrices tự lấy giá kim loại/chất liệu/đá từ cache TTL sẵn có).
   private async attachLivePrices(items: any[]) {
     const inputs: LivePriceItem[] = [];
+    const allOpts: any[] = [];
     for (const item of items) {
       const categoryVat =
         item.category?.vatRate != null ? Number(item.category.vatRate) : null;
       for (const opt of item.options || []) {
+        allOpts.push(opt);
         if (opt.quotedPrice == null) continue;
-        inputs.push({
-          key: opt.id,
-          materials: (opt.materials || []).map((m: any) => ({
-            materialId: m.materialId,
-            weightChi: Number(m.weightChi) || 0,
-          })),
-          laborCost: Number(opt.laborCost) || 0,
-          vatRate: categoryVat ?? (opt.vat != null ? Number(opt.vat) : 10),
-          stones:
-            (opt.stones || []).length > 0
-              ? opt.stones.map((s: any) => ({
-                  stoneId: s.stoneId,
-                  quantity: s.quantity,
-                }))
-              : undefined,
-          manualStoneCost: Number(opt.stoneCost) || 0,
-        });
+        inputs.push(toLivePriceInput(opt, categoryVat));
       }
     }
     if (inputs.length === 0) return;
-    // Batch tính giá sống cho cả trang, tránh query DB nhiều lần (1 option = 1 query) — batchComputeLivePrices
+    // Batch tính giá sống cho cả trang, tránh query DB nhiều lần (1 option = 1 query).
     const priceMap =
       await this.quoteOptionsService.batchComputeLivePrices(inputs);
-    for (const item of items) {
-      for (const opt of item.options || []) {
-        const entry = priceMap.get(opt.id);
-        if (entry === undefined) continue;
-        if (entry === null) {
-          opt.livePrice = null;
-          continue;
-        }
-        opt.livePrice = entry.total;
-        opt.liveStonePrice = entry.stone;
-      }
-    }
+    applyLivePriceMap(allOpts, priceMap);
   }
 
   // Cắt field cấu thành giá vốn khỏi từng option — Sale chỉ được xem quotedPrice (giá bán), không
@@ -936,6 +240,8 @@ export class QuoteQueryService {
         totalMetalCost,
         metalRawCost,
         stonePrice,
+        // costBreakdown = cấu thành lãi/VAT giá vốn — SALE không được thấy.
+        costBreakdown,
         ...rest
       } = opt;
       return rest;
@@ -951,7 +257,7 @@ export class QuoteQueryService {
     );
 
     if (Array.isArray(item.options))
-      item.options = item.options.map((o: any) => this.attachBreakdown(o));
+      item.options = item.options.map((o: any) => attachPriceBreakdowns(o));
 
     return {
       ...item,
@@ -961,12 +267,12 @@ export class QuoteQueryService {
       quotedPrice: primaryOption?.quotedPrice ?? null,
       vat: primaryOption?.vat ?? null,
       quotedDate: primaryOption?.quotedDate ?? null,
-      images: (item.images || []).map((img: any) => ({
-        ...img,
-        imageUrl: img.imageUrl.startsWith('data:image')
-          ? 'https://images.unsplash.com/photo-1605100804763-247f67b3557e?w=500&auto=format&fit=crop&q=60'
-          : img.imageUrl,
-      })),
+      // Bản ghi cũ có thể lưu nguyên chuỗi base64 (data:...) thay vì link Cloudinary — lọc bỏ hẳn
+      // khỏi response (trước đây thay bằng 1 URL Unsplash hardcode, gây hiển thị sai sản phẩm).
+      // Luồng tạo/sửa yêu cầu giờ đã chặn không cho data: lọt vào DB nữa.
+      images: (item.images || []).filter(
+        (img: any) => !String(img?.imageUrl || '').startsWith('data:'),
+      ),
     };
   }
 

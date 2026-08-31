@@ -36,9 +36,20 @@ export function computeStoneSellPrice(
   stoneCost: number,
   vatRate: number,
   defaultTiers: MarginTier[],
-): { stonePrice: number; stoneMarginLabel: string } {
+): {
+  stonePrice: number;
+  stoneMarginLabel: string;
+  // VAT phần đá + tiền lãi phần đá — trả sẵn để FE chỉ hiển thị, không tự tính lại.
+  stoneVatAmount: number;
+  stoneProfit: number;
+} {
   if (!stoneCost) {
-    return { stonePrice: 0, stoneMarginLabel: '' };
+    return {
+      stonePrice: 0,
+      stoneMarginLabel: '',
+      stoneVatAmount: 0,
+      stoneProfit: 0,
+    };
   }
   const stoneCostWithVat = stoneCost * (1 + vatRate / 100);
   const sorted = [...defaultTiers].sort((a, b) => a.maxCost - b.maxCost);
@@ -48,7 +59,63 @@ export function computeStoneSellPrice(
   const divisor = tier ? tier.divisor : 1;
   const stonePrice =
     divisor > 0 ? stoneCostWithVat / divisor : stoneCostWithVat;
-  return { stonePrice, stoneMarginLabel: tier ? tier.margin : '' };
+  return {
+    stonePrice,
+    stoneMarginLabel: tier ? tier.margin : '',
+    stoneVatAmount: stoneCostWithVat - stoneCost,
+    stoneProfit: stonePrice - stoneCostWithVat,
+  };
+}
+
+// Áp bậc lợi nhuận MARGIN_TIERS lên (giá vốn kim loại + tiền công), rồi cộng giá đá đã tính lãi
+// riêng — LÕI CHUNG cho cả 3 luồng: computeMetalQuote (1 chất liệu), QuoteOptionsService.calculateMulti
+// và batchComputeLivePrices (gộp nhiều chất liệu). Trước đây 3 nơi tự lặp y hệt: sort tiers ->
+// costWithVat -> matchedTier -> divisor -> raw -> computeStoneSellPrice -> roundToThousand.
+// `tiers` PHẢI khác rỗng (caller tự kiểm + tự quyết ném lỗi hay trả null).
+export function applyMarginTiers(
+  metalRawCost: number,
+  laborCost: number,
+  vatRate: number,
+  tiers: MarginTier[],
+  stoneCost: number,
+  defaultStoneTiers: MarginTier[],
+): {
+  totalProductionCost: number;
+  costWithVat: number;
+  vatAmount: number;
+  // Tiền lãi phần kim loại (giá bán kim loại+công - chi phí đã gồm VAT) — trả sẵn cho FE.
+  metalProfit: number;
+  divisor: number;
+  marginLabel: string;
+  raw: number;
+  stoneResult: ReturnType<typeof computeStoneSellPrice>;
+  quotedPrice: number;
+} {
+  const totalProductionCost = metalRawCost + laborCost;
+  const costWithVat = totalProductionCost * (1 + vatRate / 100);
+  const vatAmount = costWithVat - totalProductionCost;
+  const sorted = [...tiers].sort((a, b) => a.maxCost - b.maxCost);
+  const matchedTier =
+    sorted.find((t) => costWithVat <= t.maxCost) || sorted[sorted.length - 1];
+  const divisor = matchedTier?.divisor ?? 1;
+  const raw = divisor > 0 ? costWithVat / divisor : costWithVat;
+  const stoneResult = computeStoneSellPrice(
+    stoneCost,
+    vatRate,
+    defaultStoneTiers,
+  );
+  const quotedPrice = roundToThousand(raw + stoneResult.stonePrice);
+  return {
+    totalProductionCost,
+    costWithVat,
+    vatAmount,
+    metalProfit: raw - costWithVat,
+    divisor,
+    marginLabel: matchedTier?.margin ?? '',
+    raw,
+    stoneResult,
+    quotedPrice,
+  };
 }
 
 // Chất liệu tối thiểu cần để tính giá — cấu trúc khớp với Material (Prisma) join sẵn pricingFormula
@@ -88,18 +155,17 @@ export function computeMetalQuote(
   const metalPricePerChi =
     spotPrice * normalizeAppliedRatio(Number(material.priceRatioPct));
   const metalRawCost = weightChi * metalPricePerChi;
-  const totalProductionCost = metalRawCost + laborCost;
-  const stoneResult = computeStoneSellPrice(
-    stoneCost,
-    vatRate,
-    defaultStoneTiers,
-  );
-  const costWithVat = totalProductionCost * (1 + vatRate / 100);
-  const vatAmount = costWithVat - totalProductionCost;
-
   const formula = material.pricingFormula;
 
   if (formula.formulaType === 'MULTIPLIER') {
+    const totalProductionCost = metalRawCost + laborCost;
+    const costWithVat = totalProductionCost * (1 + vatRate / 100);
+    const vatAmount = costWithVat - totalProductionCost;
+    const stoneResult = computeStoneSellPrice(
+      stoneCost,
+      vatRate,
+      defaultStoneTiers,
+    );
     const multipliers: number[] = formula.config?.multipliers || [];
     const chosenMultiplier = silverMultiplierChoice ?? multipliers[0] ?? 3;
     const raw = costWithVat * chosenMultiplier;
@@ -112,6 +178,7 @@ export function computeMetalQuote(
       stoneResult,
       quotedPrice,
       vatAmount,
+      metalProfit: raw - costWithVat,
       divisor: chosenMultiplier,
       marginLabel: `${material.name}: (giá kim loại + công) có VAT × ${chosenMultiplier}`,
     };
@@ -124,21 +191,24 @@ export function computeMetalQuote(
       `Chưa cấu hình bậc lợi nhuận cho công thức "${formula.name}" trong Database.`,
     );
   }
-  const sorted = [...tiers].sort((a, b) => a.maxCost - b.maxCost);
-  const matchedTier =
-    sorted.find((t) => costWithVat <= t.maxCost) || sorted[sorted.length - 1];
-  const divisor = matchedTier.divisor;
-  const raw = divisor > 0 ? costWithVat / divisor : costWithVat;
-  const quotedPrice = roundToThousand(raw + stoneResult.stonePrice);
+  const m = applyMarginTiers(
+    metalRawCost,
+    laborCost,
+    vatRate,
+    tiers,
+    stoneCost,
+    defaultStoneTiers,
+  );
   return {
     metalPricePerChi,
     metalRawCost,
-    totalProductionCost,
-    raw,
-    stoneResult,
-    quotedPrice,
-    vatAmount,
-    divisor,
-    marginLabel: matchedTier.margin,
+    totalProductionCost: m.totalProductionCost,
+    raw: m.raw,
+    stoneResult: m.stoneResult,
+    quotedPrice: m.quotedPrice,
+    vatAmount: m.vatAmount,
+    metalProfit: m.metalProfit,
+    divisor: m.divisor,
+    marginLabel: m.marginLabel,
   };
 }

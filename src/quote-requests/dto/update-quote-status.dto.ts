@@ -5,6 +5,7 @@ import {
   IsOptional,
   IsString,
   IsArray,
+  MaxLength,
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -42,10 +43,12 @@ export class UpdateQuoteStatusDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(2000, { message: 'Lý do từ chối tối đa 2000 ký tự' })
   rejectReason?: string;
 
   @IsOptional()
   @IsString()
+  @MaxLength(2000, { message: 'Lý do cần bổ sung tối đa 2000 ký tự' })
   returnReason?: string;
 
   @IsOptional()

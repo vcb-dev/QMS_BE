@@ -1,4 +1,5 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   BaseMetalDto,
@@ -107,35 +108,42 @@ export class MetalPricesService implements OnModuleInit {
     // không cùng tạo dòng active thứ 2 (đọc-tắt-tạo là chuỗi read-modify-write, isolation mặc định
     // Read Committed vẫn lách được). Partial unique "base_metal_price_history_one_active" là chốt
     // chặn cuối; request thua sẽ nhận lỗi transaction thay vì ghi giá sai.
-    const created = await this.prisma.$transaction(
-      async (tx) => {
-        const prev = await tx.baseMetalPriceHistory.findFirst({
-          where: { baseMetalId, isActive: true },
-        });
-        const changePct = prev
-          ? computeChangePct(priceVnd, Number(prev.priceVnd))
-          : null;
+    //
+    // Nhưng Serializable của Postgres còn ném P2034 (serialization failure) cả khi 2 request cập
+    // nhật KHÁC kim loại chạy song song — FE "Lưu cấu hình" bắn Promise.all nhiều PATCH giá một
+    // lúc. Đó là xung đột nhất thời, không phải ghi sai: retry vài lần, lần chạy lại gần như luôn
+    // thành công. (FE cũng đã đổi sang gọi tuần tự, đây là lớp chắn cho cả 2 admin cùng lúc.)
+    const created = await this.runPriceTxWithRetry(() =>
+      this.prisma.$transaction(
+        async (tx) => {
+          const prev = await tx.baseMetalPriceHistory.findFirst({
+            where: { baseMetalId, isActive: true },
+          });
+          const changePct = prev
+            ? computeChangePct(priceVnd, Number(prev.priceVnd))
+            : null;
 
-        await tx.baseMetalPriceHistory.updateMany({
-          where: { baseMetalId, isActive: true },
-          data: { isActive: false },
-        });
-        return tx.baseMetalPriceHistory.create({
-          data: {
-            baseMetalId,
-            priceVnd,
-            changePct,
-            source: 'cập nhật thủ công',
-            isActive: true,
-            updatedById: updatedBy?.id,
-          },
-          include: {
-            updatedBy: { select: { name: true } },
-            baseMetal: { select: { name: true } },
-          },
-        });
-      },
-      { isolationLevel: 'Serializable' },
+          await tx.baseMetalPriceHistory.updateMany({
+            where: { baseMetalId, isActive: true },
+            data: { isActive: false },
+          });
+          return tx.baseMetalPriceHistory.create({
+            data: {
+              baseMetalId,
+              priceVnd,
+              changePct,
+              source: 'cập nhật thủ công',
+              isActive: true,
+              updatedById: updatedBy?.id,
+            },
+            include: {
+              updatedBy: { select: { name: true } },
+              baseMetal: { select: { name: true } },
+            },
+          });
+        },
+        { isolationLevel: 'Serializable' },
+      ),
     );
 
     this.cached = null; // ép loadFromDb() lại lần đọc tiếp theo thay vì chờ hết TTL
@@ -143,6 +151,26 @@ export class MetalPricesService implements OnModuleInit {
       `Đã cập nhật giá ${created.baseMetal.name} — tạo dòng lịch sử mới`,
     );
     return this.toHistoryItem(created);
+  }
+
+  // Chạy lại transaction khi Postgres báo P2034 (write conflict / serialization failure) —
+  // xung đột nhất thời giữa các request song song, không phải lỗi dữ liệu. Backoff nhẹ tăng dần.
+  private async runPriceTxWithRetry<T>(run: () => Promise<T>): Promise<T> {
+    const MAX_ATTEMPTS = 4;
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await run();
+      } catch (err) {
+        const isSerializationConflict =
+          err instanceof Prisma.PrismaClientKnownRequestError &&
+          err.code === 'P2034';
+        if (!isSerializationConflict || attempt >= MAX_ATTEMPTS) throw err;
+        this.logger.warn(
+          `Cập nhật giá kim loại gặp P2034 (lần ${attempt}/${MAX_ATTEMPTS}) — thử lại`,
+        );
+        await new Promise((resolve) => setTimeout(resolve, 25 * attempt));
+      }
+    }
   }
 
   // Bỏ dòng "lưu lại giá y hệt" (changePct = 0, vd Lưu tất cả nhưng chỉ đổi 1 kim loại) —

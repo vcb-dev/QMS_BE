@@ -3,6 +3,12 @@
 // trả QuoteOption/QuoteRequest ra ngoài, để tránh mỗi service tự viết include khác nhau.
 
 import { OptionSelectionStatus } from '@prisma/client';
+import { LivePriceItem } from '../quote-requests/dto/calculate-price.dto';
+import type {
+  HydratedOption,
+  LivePriceEntry,
+  OptionInput,
+} from '../quote-requests/quote.types';
 
 export const OPTION_DETAIL_INCLUDE = {
   materials: { include: { material: true } },
@@ -137,7 +143,7 @@ export function computeLibraryGroupKey(
 // Build nested-create payload cho 1 QuoteOption từ QuoteOptionItemDto — dùng ở mọi chỗ
 // tạo/ghi-đè option (create request, quick-quote, complete quote, quick-approve).
 export function buildOptionCreateInput(
-  opt: any,
+  opt: OptionInput,
   idx: number,
   categoryId?: string,
   stonePriceMap?: Map<string, number>,
@@ -147,19 +153,19 @@ export function buildOptionCreateInput(
   },
 ) {
   const matKey =
-    opt.materials?.length > 0
+    opt.materials && opt.materials.length > 0
       ? opt.materials
           .map(
-            (m: any) =>
+            (m) =>
               `${m.materialId}:${m.weightChi != null ? m.weightChi : opt.weightChi || 0}`,
           )
           .sort()
           .join(',')
       : `${opt.materialName || ''}:${opt.weightChi || 0}`;
   const stoneKey =
-    opt.stones?.length > 0
+    opt.stones && opt.stones.length > 0
       ? opt.stones
-          .map((s: any) => `${s.stoneId}:${s.quantity}`)
+          .map((s) => `${s.stoneId}:${s.quantity}`)
           .sort()
           .join(',')
       : opt.stoneDescription ||
@@ -231,21 +237,148 @@ export function computePriceBreakdown(
   return { material: Math.round(total - stone), stone: Math.round(stone) };
 }
 
-export function mapOptionDetail(opt: any) {
+// Bản GIÁ SỐNG (tính lại hôm nay) của computePriceBreakdown — tách 2 dòng phụ material/stone từ
+// livePrice + liveStonePrice. null khi thiếu 1 trong 2 (chưa tính được giá sống). Dùng chung ở mọi
+// chỗ gắn livePriceBreakdown cho 1 option (attachPriceBreakdowns / buildHistoryEntry).
+export function computeLivePriceBreakdown(
+  livePrice: unknown,
+  liveStonePrice: unknown,
+): { material: number; stone: number } | null {
+  if (livePrice == null || liveStonePrice == null) return null;
+  const total = Number(livePrice);
+  const stone = Number(liveStonePrice);
+  if (!Number.isFinite(total) || !Number.isFinite(stone)) return null;
+  return { material: Math.round(total - stone), stone: Math.round(stone) };
+}
+
+// Cấu thành lãi/VAT của 1 QuoteOption ĐÃ LƯU — suy từ các cột đóng băng lúc báo giá
+// (metalRawCost/laborCost/totalMetalCost/stoneCost/stonePrice/vat), KHÔNG tính lại công thức.
+// Khớp đúng nghĩa với luồng máy tính giá (computeMetalQuote/computeStoneSellPrice):
+//   metalVatAmount  = (giá vốn kim loại thô + công) × vat%
+//   metalProfit     = giá bán kim loại (totalMetalCost, = raw trước làm tròn) − (vốn+công) có VAT
+//   stoneVatAmount  = tiền đá gốc × vat%
+//   stoneProfit     = giá bán đá (stonePrice) − tiền đá gốc có VAT
+// null khi thiếu cột bắt buộc (option nháp chưa có giá, hoặc record cũ chưa lưu đủ).
+// Đây là DỮ LIỆU GIÁ VỐN — QuoteQueryService.stripCostFieldsForSale phải cắt field này cho SALE.
+export function computeCostBreakdown(opt: {
+  metalRawCost?: unknown;
+  laborCost?: unknown;
+  totalMetalCost?: unknown;
+  stoneCost?: unknown;
+  stonePrice?: unknown;
+  vat?: unknown;
+}): {
+  metalVatAmount: number;
+  metalProfit: number;
+  stoneVatAmount: number;
+  stoneProfit: number;
+} | null {
+  const metalRaw = Number(opt.metalRawCost);
+  const metalSell = Number(opt.totalMetalCost);
+  if (!Number.isFinite(metalRaw) || !Number.isFinite(metalSell)) return null;
+
+  const labor = Number(opt.laborCost) || 0;
+  const stoneCost = Number(opt.stoneCost) || 0;
+  const stoneSell = Number(opt.stonePrice) || 0;
+  const vat = Number(opt.vat) || 0;
+
+  const metalProdCost = metalRaw + labor;
+  const metalCostWithVat = metalProdCost * (1 + vat / 100);
+  const stoneCostWithVat = stoneCost * (1 + vat / 100);
+
+  return {
+    metalVatAmount: Math.round(metalCostWithVat - metalProdCost),
+    metalProfit: Math.round(metalSell - metalCostWithVat),
+    stoneVatAmount: Math.round(stoneCostWithVat - stoneCost),
+    stoneProfit: Math.round(stoneSell - stoneCostWithVat),
+  };
+}
+
+// Mutate 1 QuoteOption đã hydrate: gắn priceBreakdown (+ livePriceBreakdown nếu đã có live +
+// costBreakdown giá vốn). Dùng chung cho QuoteQueryService (danh sách) và LibraryService (Thư Viện).
+export function attachPriceBreakdowns(opt: HydratedOption) {
+  const bd = computePriceBreakdown(opt.quotedPrice, opt.stonePrice);
+  if (bd) opt.priceBreakdown = bd;
+  const liveBd = computeLivePriceBreakdown(opt.livePrice, opt.liveStonePrice);
+  if (liveBd) opt.livePriceBreakdown = liveBd;
+  const costBd = computeCostBreakdown(opt);
+  if (costBd) opt.costBreakdown = costBd;
+  return opt;
+}
+
+// 1 QuoteOption đã hydrate -> input cho QuoteOptionsService.batchComputeLivePrices. categoryVat !=
+// null (danh sách yêu cầu — VAT theo danh mục) đè lên opt.vat; null (Thư Viện) dùng VAT đóng trên
+// chính option. THUẦN — không DI, dùng chung cho mọi service tính giá sống.
+export function toLivePriceInput(
+  opt: HydratedOption,
+  categoryVat: number | null = null,
+): LivePriceItem {
+  return {
+    key: opt.id,
+    materials: (opt.materials || []).map((m) => ({
+      materialId: m.materialId,
+      weightChi: Number(m.weightChi) || 0,
+    })),
+    laborCost: Number(opt.laborCost) || 0,
+    vatRate: categoryVat ?? (opt.vat != null ? Number(opt.vat) : 10),
+    stones:
+      (opt.stones || []).length > 0
+        ? opt.stones.map((s) => ({
+            stoneId: s.stoneId,
+            quantity: s.quantity,
+          }))
+        : undefined,
+    manualStoneCost: Number(opt.stoneCost) || 0,
+  };
+}
+
+// Gắn livePrice/liveStonePrice từ kết quả batchComputeLivePrices vào từng option (null = không tính
+// được, giữ nguyên liveStonePrice cũ nếu có).
+export function applyLivePriceMap(
+  options: {
+    id: string;
+    livePrice?: number | null;
+    liveStonePrice?: number | null;
+  }[],
+  priceMap: Map<string, LivePriceEntry | null>,
+) {
+  for (const opt of options) {
+    const entry = priceMap.get(opt.id);
+    if (entry === undefined) continue;
+    opt.livePrice = entry === null ? null : entry.total;
+    if (entry) opt.liveStonePrice = entry.stone;
+  }
+}
+
+// Nhận cả QuoteOption hydrate thô (HydratedOption) lẫn object option đã map dở (test / luồng cũ) —
+// hàm chỉ đọc quotedPrice/stonePrice/materials/stones + spread phần còn lại, nên khai lỏng thay vì
+// ép full Prisma payload.
+type MappableOption = {
+  quotedPrice?: unknown;
+  stonePrice?: unknown;
+  materials?: any[];
+  stones?: any[];
+  [k: string]: unknown;
+};
+
+export function mapOptionDetail(opt: MappableOption) {
   if (!opt) return opt;
   const priceBreakdown = computePriceBreakdown(opt.quotedPrice, opt.stonePrice);
+  const costBreakdown = computeCostBreakdown(opt);
   return {
     ...opt,
     ...(priceBreakdown ? { priceBreakdown } : {}),
+    ...(costBreakdown ? { costBreakdown } : {}),
     materials: Array.isArray(opt.materials)
-      ? opt.materials.map((m: any) => ({
+      ? opt.materials.map((m) => ({
           materialId: m.materialId,
-          materialName: m.material?.name,
+          // runtime shape: đã gắn materialName ở bước trước hoặc lấy từ relation material
+          materialName: m.material?.name ?? (m as any).materialName,
           weightChi: m.weightChi,
         }))
       : opt.materials,
     stones: Array.isArray(opt.stones)
-      ? opt.stones.map((s: any) => ({
+      ? opt.stones.map((s) => ({
           stoneId: s.stoneId,
           stoneName: s.stone?.name,
           stoneType: s.stone?.stoneType,
@@ -260,10 +393,21 @@ export function mapOptionDetail(opt: any) {
   };
 }
 
+// quote: kết quả query QuoteRequest + REQUEST_DETAIL_INCLUDE. Giữ `any` có chủ đích — type chặt
+// (Prisma.QuoteRequestGetPayload) làm vỡ ~15 chỗ ở read path pricing/workflow do các nơi đó
+// reshape kết quả loosely (spec R1.3 cho phép giữ any khi gỡ hết quá tốn).
 export function mapQuoteRequestDetail(quote: any) {
   if (!quote) return quote;
   return {
     ...quote,
+    // Bản ghi cũ có thể lưu nguyên chuỗi base64 (data:...) thay vì link Cloudinary — lọc bỏ khỏi
+    // MỌI response chi tiết (findOne + các action ở quote-workflow.service). findAll/export lọc
+    // riêng ở sanitizeItem; đây phủ nốt phần còn lại.
+    images: Array.isArray(quote.images)
+      ? quote.images.filter(
+          (img: any) => !String(img?.imageUrl || '').startsWith('data:'),
+        )
+      : quote.images,
     options: Array.isArray(quote.options)
       ? quote.options.map(mapOptionDetail)
       : quote.options,
@@ -275,14 +419,16 @@ export function mapQuoteRequestDetail(quote: any) {
 // giá chính), rồi tới option có GIÁ MỚI NHẤT (options orderBy createdAt asc) — không được lấy
 // options[0] vô điều kiện, vì option đầu tiên luôn là bản nháp rỗng "Yêu cầu ban đầu" tự tạo lúc
 // Sale gửi yêu cầu, chưa có giá.
-export function pickPrimaryOption(quote: any) {
+export function pickPrimaryOption<T = any>(
+  quote: { options?: T[] } | null | undefined,
+): T | null {
   const options = Array.isArray(quote?.options) ? quote.options : [];
   if (options.length === 0) return null;
-  const closed = options.find((o: any) => o.selectionStatus === 'CLOSED');
+  const closed = options.find((o: any) => o?.selectionStatus === 'CLOSED');
   if (closed) return closed;
-  const selected = options.find((o: any) => o.selectionStatus === 'SELECTED');
+  const selected = options.find((o: any) => o?.selectionStatus === 'SELECTED');
   if (selected) return selected;
-  const priced = options.filter((o: any) => o.quotedPrice != null);
+  const priced = options.filter((o: any) => o?.quotedPrice != null);
   if (priced.length > 0) return priced[priced.length - 1];
   return options[0];
 }

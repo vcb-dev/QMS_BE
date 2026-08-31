@@ -77,10 +77,11 @@ export class QuoteWorkflowService {
     id: string,
     userId: string,
     role: Role,
+    expectedVersion?: number,
   ) {
     const quote = await this.prisma.quoteRequest.findUnique({
       where: { id },
-      select: { status: true, assigneeId: true },
+      select: { status: true, assigneeId: true, version: true },
     });
 
     if (!quote) {
@@ -98,6 +99,15 @@ export class QuoteWorkflowService {
         'Bạn chỉ được thao tác trên yêu cầu do mình tiếp nhận xử lý',
       );
     }
+
+    // Check-then-write: vẫn còn khe race ~ms nếu 2 request qua đây trước khi
+    // bên nào kịp increment version. Chấp nhận cho tool nội bộ; nâng lên
+    // updateMany(where:{id,version}) + đếm count nếu sau này cần chặt tuyệt đối.
+    if (expectedVersion != null && quote.version !== expectedVersion) {
+      throw new ConflictException(
+        'Yêu cầu đã được cập nhật bởi người khác, vui lòng tải lại trang',
+      );
+    }
   }
 
   private pickProductName(quote: any): string {
@@ -108,9 +118,11 @@ export class QuoteWorkflowService {
   // Sale: thông tin đơn + ảnh sản phẩm + từng phương án (chất liệu/khối lượng/đá) + giá bán (giá chất
   // liệu = quotedPrice - stonePrice, giá đá = stonePrice, KHÔNG lộ giá vốn), tổng = phương án đại diện.
   private buildQuoteCardData(quote: any): QuoteCardData {
-    const priced = (Array.isArray(quote.options) ? quote.options : []).filter(
-      (o: any) => o.quotedPrice != null,
-    );
+    // Card Lark chỉ đưa PHƯƠNG ÁN BÁO GIÁ CHÍNH (CLOSED > SELECTED > giá mới nhất) — bỏ các phương
+    // án phụ / so sánh loại vàng khác (locked). Nhóm Lark chỉ cần đúng phương án chốt với khách.
+    const primaryOpt = pickPrimaryOption(quote);
+    const priced =
+      primaryOpt && primaryOpt.quotedPrice != null ? [primaryOpt] : [];
 
     const options = priced.map((opt: any, idx: number) => {
       const mats = Array.isArray(opt.materials) ? opt.materials : [];
@@ -160,7 +172,7 @@ export class QuoteWorkflowService {
     const firstImage = Array.isArray(quote.images)
       ? quote.images.find((i: any) => !!i?.imageUrl)?.imageUrl
       : undefined;
-    const primary = pickPrimaryOption(quote);
+    const primary = primaryOpt;
 
     return {
       code: quote.code,
@@ -171,6 +183,12 @@ export class QuoteWorkflowService {
       saleName: quote.requester?.name || 'Chưa rõ',
       saleLarkOpenId: quote.requester?.larkOpenId ?? null,
       orderName: quote.assignee?.name || 'Chưa phân công',
+      createdAt: quote.createdAt
+        ? new Date(quote.createdAt).toISOString()
+        : null,
+      quotedAt: new Date(
+        quote.quotedDate ?? primary?.quotedDate ?? Date.now(),
+      ).toISOString(),
       imageUrl: firstImage || null,
       options,
       totalPrice:
@@ -270,7 +288,11 @@ export class QuoteWorkflowService {
     if (opts.length === 0) {
       const updatedNoOpts = await this.prisma.quoteRequest.update({
         where: { id },
-        data: { status: QuoteStatus.QUOTED, assigneeId: userId },
+        data: {
+          status: QuoteStatus.QUOTED,
+          assigneeId: userId,
+          version: { increment: 1 },
+        },
         include: REQUEST_DETAIL_INCLUDE,
       });
       const mappedNoOpts = mapQuoteRequestDetail(updatedNoOpts);
@@ -322,7 +344,11 @@ export class QuoteWorkflowService {
       this.prisma.quoteOption.deleteMany({ where: { quoteRequestId: id } }),
       this.prisma.quoteRequest.update({
         where: { id },
-        data: { status: QuoteStatus.QUOTED, assigneeId: userId },
+        data: {
+          status: QuoteStatus.QUOTED,
+          assigneeId: userId,
+          version: { increment: 1 },
+        },
       }),
       this.prisma.quoteOption.createMany({
         data: optionWrites.map((w) => w.row),
@@ -380,6 +406,7 @@ export class QuoteWorkflowService {
         rejectReason,
         assigneeId: userId,
         status: QuoteStatus.REJECTED,
+        version: { increment: 1 },
       },
       include: REQUEST_DETAIL_INCLUDE,
     });
@@ -402,6 +429,7 @@ export class QuoteWorkflowService {
         assigneeId: userId,
         status: QuoteStatus.NEED_MORE_INFO,
         returnedAt: new Date(),
+        version: { increment: 1 },
       },
       include: REQUEST_DETAIL_INCLUDE,
     });
@@ -415,12 +443,18 @@ export class QuoteWorkflowService {
    * Đánh dấu đơn hàng là đã chốt (Khách đồng ý mua).
    * Yêu cầu phải chọn 1 phương án cuối cùng (optionId) mà khách đã chọn.
    */
-  private async markClosed(id: string, role: Role, optionId?: string) {
+  private async markClosed(
+    id: string,
+    userId: string,
+    role: Role,
+    optionId?: string,
+  ) {
     this.queryService.clearCache();
     const quote = await this.prisma.quoteRequest.findUnique({
       where: { id },
       select: {
         status: true,
+        requesterId: true,
         options: {
           select: { id: true, quotedPrice: true, selectionStatus: true },
           orderBy: { createdAt: 'asc' },
@@ -430,6 +464,14 @@ export class QuoteWorkflowService {
 
     if (!quote) {
       throw new NotFoundException('Không tìm thấy yêu cầu báo giá');
+    }
+
+    // Sale chỉ được chốt đơn do CHÍNH MÌNH tạo (Order/Admin thao tác trên đơn bất kỳ) — nhất quán
+    // với check quyền sở hữu ở QuoteRequestsService.update().
+    if (role === Role.SALE && quote.requesterId !== userId) {
+      throw new ForbiddenException(
+        'Bạn chỉ được đánh dấu Đã chốt trên yêu cầu do mình tạo',
+      );
     }
 
     if (quote.status !== QuoteStatus.QUOTED) {
@@ -498,12 +540,20 @@ export class QuoteWorkflowService {
       where: { id: requestId },
       select: {
         status: true,
+        assigneeId: true,
         options: { select: { id: true } },
       },
     });
 
     if (!quote) {
       throw new NotFoundException('Không tìm thấy yêu cầu báo giá');
+    }
+
+    // ORDER chỉ xóa phương án trên đơn do mình tiếp nhận — giống assertPricingCanProcess. ADMIN tự do.
+    if (role === Role.ORDER && quote.assigneeId !== userId) {
+      throw new ForbiddenException(
+        'Bạn chỉ được thao tác trên yêu cầu do mình tiếp nhận xử lý',
+      );
     }
 
     if (quote.status === QuoteStatus.CLOSED) {
@@ -608,7 +658,7 @@ export class QuoteWorkflowService {
             'Vui lòng nhập giá sản phẩm cho ít nhất 1 phương án (options[].quotedPrice)',
           );
         }
-        await this.assertPricingCanProcess(id, userId, role);
+        await this.assertPricingCanProcess(id, userId, role, dto.version);
         // Fire-and-forget — không chặn phản hồi bằng 1 INSERT audit_logs qua pooler (~0.8s cộng
         // thẳng vào thời gian bấm "Xác Nhận & Gửi Báo Giá"). logAction tự nuốt lỗi.
         void this.auditLog.logAction(
@@ -622,6 +672,12 @@ export class QuoteWorkflowService {
       }
 
       case QuoteAction.QUICK_QUOTE: {
+        this.assertRole(
+          role,
+          [Role.ORDER, Role.ADMIN],
+          'Chỉ có vai trò ORDER hoặc ADMIN mới được phép nhập giá nhanh',
+        );
+        await this.assertPricingCanProcess(id, userId, role);
         this.queryService.clearCache();
         await this.auditLog.logAction(
           userId,
@@ -755,7 +811,7 @@ export class QuoteWorkflowService {
             'Vui lòng nhập lý do từ chối (rejectReason)',
           );
         }
-        await this.assertPricingCanProcess(id, userId, role);
+        await this.assertPricingCanProcess(id, userId, role, dto.version);
         await this.auditLog.logAction(
           userId,
           role,
@@ -776,7 +832,7 @@ export class QuoteWorkflowService {
             'Vui lòng nhập lý do cần bổ sung (returnReason)',
           );
         }
-        await this.assertPricingCanProcess(id, userId, role);
+        await this.assertPricingCanProcess(id, userId, role, dto.version);
         await this.auditLog.logAction(
           userId,
           role,
@@ -814,7 +870,7 @@ export class QuoteWorkflowService {
           'QuoteRequest',
           id,
         );
-        return this.markClosed(id, role, dto.optionId);
+        return this.markClosed(id, userId, role, dto.optionId);
 
       case QuoteAction.SELECT_OPTION:
         this.assertRole(

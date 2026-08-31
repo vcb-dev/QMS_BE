@@ -5,7 +5,7 @@ import { UpdateQuoteRequestDto } from './dto/update-quote-request.dto';
 import { FilterQuoteRequestDto } from './dto/filter-quote-request.dto';
 import { UpdateQuoteStatusDto } from './dto/update-quote-status.dto';
 import { ExportQuoteRequestDto } from './dto/export-quote-request.dto';
-import { QuoteStatus, User, Role } from '@prisma/client';
+import { QuoteStatus, User, Role, Prisma } from '@prisma/client';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
 import { QuoteQueryService } from './quote/quote-query.service';
 import { QuoteWorkflowService } from './quote/quote-workflow.service';
@@ -14,6 +14,7 @@ import { ExcelService } from '../excel/excel.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
 import { QuoteOptionsService } from './quote-option/quote-options.service';
 import { EXPORT_FIELD_DEFS } from './dto/export-field-defs';
+import type { OptionInput } from './quote.types';
 import {
   REQUEST_DETAIL_INCLUDE,
   buildOptionCreateInput,
@@ -49,37 +50,48 @@ export class QuoteRequestsService {
     if (trimmed) return trimmed;
 
     const name = QuoteRequestsService.WALK_IN_CUSTOMER_NAME;
-    const existing = await this.prisma.customer.findFirst({
-      where: { name: { equals: name, mode: 'insensitive' } },
-      select: { id: true },
-    });
+    const findWalkIn = () =>
+      this.prisma.customer.findFirst({
+        where: { name: { equals: name, mode: 'insensitive' } },
+        select: { id: true },
+        orderBy: { createdAt: 'asc' },
+      });
+
+    const existing = await findWalkIn();
     if (existing) return existing.id;
 
-    const created = await this.prisma.customer.create({ data: { name } });
-    return created.id;
+    try {
+      const created = await this.prisma.customer.create({ data: { name } });
+      return created.id;
+    } catch (err) {
+      // Partial unique index uq_customer_walk_in — request khác vừa tạo bản "Khách lẻ".
+      if (
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === 'P2002'
+      ) {
+        const raced = await findWalkIn();
+        if (raced) return raced.id;
+      }
+      throw err;
+    }
   }
 
-  async create(
-    userId: string,
-    dto: CreateQuoteRequestDto,
-    files?: Express.Multer.File[],
-    videoFile?: Express.Multer.File,
-  ) {
-    this.queryService.clearCache();
+  private buildEffectiveOptions(args: {
+    options?: OptionInput[];
+    materialIds?: string[];
+    materialId?: string;
+    stoneIds?: string[];
+    defaultLaborCost?: number;
+    defaultVat?: number;
+  }): OptionInput[] {
     const {
-      imageUrls,
-      videoUrl,
+      options,
       materialIds,
       materialId,
       stoneIds,
-      newCategoryName,
-      productName,
-      options,
-      customerId,
-      ...data
-    } = dto;
-    const code = this.generateCode();
-    const finalCustomerId = await this.resolveWalkInCustomerId(customerId);
+      defaultLaborCost,
+      defaultVat,
+    } = args;
 
     const fallbackMaterials = (
       materialIds?.length ? materialIds : materialId ? [materialId] : []
@@ -90,44 +102,9 @@ export class QuoteRequestsService {
       quantity: 1,
     }));
 
-    let finalCategoryId = data.categoryId;
-    if (newCategoryName && newCategoryName.trim()) {
-      const existing = await this.prisma.productCategory.findFirst({
-        where: {
-          name: { equals: newCategoryName.trim(), mode: 'insensitive' },
-        },
-      });
-      if (existing) {
-        finalCategoryId = existing.id;
-      } else {
-        const createdCat = await this.prisma.productCategory.create({
-          data: { name: newCategoryName.trim() },
-        });
-        finalCategoryId = createdCat.id;
-      }
-    }
-
     const hasRealOptions = options && options.length > 0;
-    // Sale không tự nhập tiền công/VAT (quote-options.controller.ts CHỦ ĐỘNG ẩn 2 field này khỏi
-    // response trả về cho Sale — Sale chỉ được xem Giá bán). Nên dù Sale tạo yêu cầu qua máy tính
-    // giá (gửi kèm `options`) hay tạo nhanh không qua máy tính (không gửi `options`), option lưu
-    // xuống DB đều có thể thiếu laborCost/vat — luôn tra sẵn danh mục sản phẩm để bù vào chỗ thiếu.
-    const categoryDefaults = finalCategoryId
-      ? await this.prisma.productCategory.findUnique({
-          where: { id: finalCategoryId },
-          select: { laborCost: true, vatRate: true },
-        })
-      : null;
-    const defaultLaborCost =
-      categoryDefaults?.laborCost != null
-        ? Number(categoryDefaults.laborCost)
-        : undefined;
-    const defaultVat =
-      categoryDefaults?.vatRate != null
-        ? Number(categoryDefaults.vatRate)
-        : undefined;
 
-    const effectiveOptions: any[] = hasRealOptions
+    return hasRealOptions
       ? options.map((opt) => ({
           ...opt,
           laborCost: opt.laborCost != null ? opt.laborCost : defaultLaborCost,
@@ -157,6 +134,89 @@ export class QuoteRequestsService {
             },
           ]
         : [];
+  }
+
+  async create(
+    userId: string,
+    dto: CreateQuoteRequestDto,
+    files?: Express.Multer.File[],
+    videoFile?: Express.Multer.File,
+  ) {
+    this.queryService.clearCache();
+    const {
+      imageUrls,
+      videoUrl,
+      materialIds,
+      materialId,
+      stoneIds,
+      newCategoryName,
+      productName,
+      options,
+      customerId,
+      ...data
+    } = dto;
+    const code = this.generateCode();
+    const finalCustomerId = await this.resolveWalkInCustomerId(customerId);
+
+    let finalCategoryId = data.categoryId;
+    if (newCategoryName && newCategoryName.trim()) {
+      const catName = newCategoryName.trim();
+      const existing = await this.prisma.productCategory.findFirst({
+        where: { name: { equals: catName, mode: 'insensitive' } },
+      });
+      if (existing) {
+        finalCategoryId = existing.id;
+      } else {
+        try {
+          const createdCat = await this.prisma.productCategory.create({
+            data: { name: catName },
+          });
+          finalCategoryId = createdCat.id;
+        } catch (err) {
+          // ProductCategory.name @unique — race: request khác vừa tạo cùng tên. Tra lại thay vì 500.
+          if (
+            err instanceof Prisma.PrismaClientKnownRequestError &&
+            err.code === 'P2002'
+          ) {
+            const raced = await this.prisma.productCategory.findFirst({
+              where: { name: { equals: catName, mode: 'insensitive' } },
+            });
+            if (!raced) throw err;
+            finalCategoryId = raced.id;
+          } else {
+            throw err;
+          }
+        }
+      }
+    }
+
+    // Sale không tự nhập tiền công/VAT (quote-options.controller.ts CHỦ ĐỘNG ẩn 2 field này khỏi
+    // response trả về cho Sale — Sale chỉ được xem Giá bán). Nên dù Sale tạo yêu cầu qua máy tính
+    // giá (gửi kèm `options`) hay tạo nhanh không qua máy tính (không gửi `options`), option lưu
+    // xuống DB đều có thể thiếu laborCost/vat — luôn tra sẵn danh mục sản phẩm để bù vào chỗ thiếu.
+    const categoryDefaults = finalCategoryId
+      ? await this.prisma.productCategory.findUnique({
+          where: { id: finalCategoryId },
+          select: { laborCost: true, vatRate: true },
+        })
+      : null;
+    const defaultLaborCost =
+      categoryDefaults?.laborCost != null
+        ? Number(categoryDefaults.laborCost)
+        : undefined;
+    const defaultVat =
+      categoryDefaults?.vatRate != null
+        ? Number(categoryDefaults.vatRate)
+        : undefined;
+
+    const effectiveOptions = this.buildEffectiveOptions({
+      options,
+      materialIds,
+      materialId,
+      stoneIds,
+      defaultLaborCost,
+      defaultVat,
+    });
 
     const lookups =
       await this.quoteOptionsService.buildOptionLookupMaps(effectiveOptions);
@@ -167,7 +227,9 @@ export class QuoteRequestsService {
               buildOptionCreateInput(
                 opt,
                 idx,
-                dto.categoryId,
+                // finalCategoryId (đã resolve khi Sale chọn "Khác" + newCategoryName) — KHÔNG dùng
+                // dto.categoryId thô, nếu không dedupKey/libraryGroupKey của option lệch category.
+                finalCategoryId,
                 lookups.stonePriceMap,
                 lookups,
               ),
@@ -186,7 +248,13 @@ export class QuoteRequestsService {
       const uploadedFromDto = await Promise.all(
         imageUrls.map((url) => this.cloudinaryService.uploadBase64OrUrl(url)),
       );
-      finalCloudinaryUrls.push(...uploadedFromDto.filter(Boolean));
+      // Chỉ giữ URL thật (Cloudinary/https). Loại bỏ '' (upload lỗi) và mọi chuỗi data: còn sót —
+      // KHÔNG để ảnh base64 lọt vào quote_request_images.
+      finalCloudinaryUrls.push(
+        ...uploadedFromDto.filter(
+          (u): u is string => !!u && !u.startsWith('data:'),
+        ),
+      );
     }
 
     let finalVideoUrl: string | undefined;
@@ -197,26 +265,50 @@ export class QuoteRequestsService {
       finalVideoUrl = videoUrl;
     }
 
-    const created = await this.prisma.quoteRequest.create({
-      data: {
-        ...data,
-        customerId: finalCustomerId,
-        categoryId: finalCategoryId,
-        code,
-        status: QuoteStatus.PENDING,
-        version: 1,
-        requesterId: userId,
-        videoUrl: finalVideoUrl,
-        images:
-          finalCloudinaryUrls.length > 0
-            ? {
-                create: finalCloudinaryUrls.map((url) => ({ imageUrl: url })),
-              }
-            : undefined,
-        options: optionsCreate,
-      },
-      include: REQUEST_DETAIL_INCLUDE,
-    });
+    // code = QG-<năm>-<4 số> ngẫu nhiên (chỉ 9000 khả năng/năm) — có thể trùng. `code` là @unique
+    // nên trùng ném P2002; thử lại tối đa 5 lần với code mới thay vì trả 500. Ảnh/video đã upload
+    // xong ở trên nên retry chỉ tốn thêm 1 câu INSERT.
+    let created:
+      Awaited<ReturnType<typeof this.prisma.quoteRequest.create>> | undefined;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        created = await this.prisma.quoteRequest.create({
+          data: {
+            ...data,
+            customerId: finalCustomerId,
+            categoryId: finalCategoryId,
+            code: attempt === 0 ? code : this.generateCode(),
+            status: QuoteStatus.PENDING,
+            version: 1,
+            requesterId: userId,
+            videoUrl: finalVideoUrl,
+            images:
+              finalCloudinaryUrls.length > 0
+                ? {
+                    create: finalCloudinaryUrls.map((url) => ({
+                      imageUrl: url,
+                    })),
+                  }
+                : undefined,
+            options: optionsCreate,
+          },
+          include: REQUEST_DETAIL_INCLUDE,
+        });
+        break;
+      } catch (err) {
+        const isDupCode =
+          err instanceof Prisma.PrismaClientKnownRequestError &&
+          err.code === 'P2002' &&
+          (err.meta?.target as string[] | undefined)?.includes('code');
+        if (isDupCode && attempt < 4) continue;
+        throw err;
+      }
+    }
+    if (!created) {
+      throw new BadRequestException(
+        'Không tạo được mã yêu cầu báo giá, vui lòng thử lại',
+      );
+    }
 
     await this.auditLog.logActionByUserId(userId, 'CREATE_QUOTE', created.id);
     const detail = mapQuoteRequestDetail(created);
@@ -269,7 +361,13 @@ export class QuoteRequestsService {
       const uploadedFromDto = await Promise.all(
         imageUrls.map((url) => this.cloudinaryService.uploadBase64OrUrl(url)),
       );
-      finalCloudinaryUrls.push(...uploadedFromDto.filter(Boolean));
+      // Chỉ giữ URL thật (Cloudinary/https). Loại bỏ '' (upload lỗi) và mọi chuỗi data: còn sót —
+      // KHÔNG để ảnh base64 lọt vào quote_request_images.
+      finalCloudinaryUrls.push(
+        ...uploadedFromDto.filter(
+          (u): u is string => !!u && !u.startsWith('data:'),
+        ),
+      );
     }
 
     // Video: file mới chọn -> upload thật; không có file nhưng có videoUrl (giữ video cũ) -> giữ
@@ -306,8 +404,10 @@ export class QuoteRequestsService {
 
   async remove(id: string, userId: string) {
     this.queryService.clearCache();
-    await this.auditLog.logActionByUserId(userId, 'DELETE_QUOTE', id);
+    // Xóa TRƯỚC rồi mới ghi audit — nếu delete lỗi (không tồn tại/ràng buộc FK) thì không ghi
+    // nhầm "đã xóa" vào lịch sử.
     await this.prisma.quoteRequest.delete({ where: { id } });
+    await this.auditLog.logActionByUserId(userId, 'DELETE_QUOTE', id);
     this.realtimeGateway.broadcastStatusChanged(id, 'DELETED');
     return { message: 'Đã hủy yêu cầu báo giá thành công' };
   }

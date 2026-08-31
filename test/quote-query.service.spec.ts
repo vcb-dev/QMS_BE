@@ -1,5 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { QuoteQueryService } from '../src/quote-requests/quote/quote-query.service';
+import { LibraryService } from '../src/quote-requests/library/library.service';
+import { QuoteListCacheService } from '../src/quote-requests/quote-list-cache.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { QuoteOptionsService } from '../src/quote-requests/quote-option/quote-options.service';
 
@@ -67,8 +69,8 @@ function keyOf(o: any): string {
   return `${categoryId}|${baseMetalId}|${stoneKey}`;
 }
 
-describe('QuoteQueryService.getLibraryProducts — gộp nhóm + phân trang phía SQL', () => {
-  let service: QuoteQueryService;
+describe('LibraryService.getLibraryProducts — gộp nhóm + phân trang phía SQL', () => {
+  let service: LibraryService;
   let prisma: any;
   let livePrices: Map<string, number>;
 
@@ -159,7 +161,8 @@ describe('QuoteQueryService.getLibraryProducts — gộp nhóm + phân trang ph�
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
-        QuoteQueryService,
+        LibraryService,
+        QuoteListCacheService,
         { provide: PrismaService, useValue: prisma },
         {
           provide: QuoteOptionsService,
@@ -185,7 +188,7 @@ describe('QuoteQueryService.getLibraryProducts — gộp nhóm + phân trang ph�
       ],
     }).compile();
 
-    service = module.get<QuoteQueryService>(QuoteQueryService);
+    service = module.get<LibraryService>(LibraryService);
   });
 
   it('cùng danh mục + kim loại gốc, khác tuổi vàng & khối lượng → 1 thẻ; giá/khối lượng min–max từ SQL', async () => {
@@ -210,10 +213,10 @@ describe('QuoteQueryService.getLibraryProducts — gộp nhóm + phân trang ph�
       page: 1,
       limit: 8,
       sortMode: 'PRICE_DESC',
-    } as any);
+    });
 
     expect(res.data).toHaveLength(1);
-    const card = res.data[0] as any;
+    const card = res.data[0];
     expect(card.productName).toBe('Nhẫn Vàng 24K');
     expect(card.priceMin).toBe(4_000_000);
     expect(card.priceMax).toBe(6_000_000);
@@ -239,8 +242,8 @@ describe('QuoteQueryService.getLibraryProducts — gộp nhóm + phân trang ph�
       page: 1,
       limit: 8,
       sortMode: 'PRICE_DESC',
-    } as any);
-    const card = res.data[0] as any;
+    });
+    const card = res.data[0];
     expect(card.priceMin).toBe(4_000_000);
     expect(card.priceMax).toBe(10_000_000);
     expect(card.livePriceMin).toBe(5_000_000);
@@ -270,8 +273,8 @@ describe('QuoteQueryService.getLibraryProducts — gộp nhóm + phân trang ph�
       page: 1,
       limit: 8,
       sortMode: 'PRICE_DESC',
-    } as any);
-    const card = res.data[0] as any;
+    });
+    const card = res.data[0];
     // material = quoted - stone; stone = stone_price
     expect(card.priceMaterialMin).toBe(6_000_000);
     expect(card.priceMaterialMax).toBe(9_000_000);
@@ -317,7 +320,7 @@ describe('QuoteQueryService.getLibraryProducts — gộp nhóm + phân trang ph�
       page: 1,
       limit: 8,
       sortMode: 'PRICE_DESC',
-    } as any);
+    });
 
     // o1 + o3 (chỉ đá tấm) cùng nhóm trơn; o2 (đá chủ Kim cương) nhóm riêng.
     expect(res.meta.total).toBe(2);
@@ -376,7 +379,7 @@ describe('QuoteQueryService.getLibraryProducts — gộp nhóm + phân trang ph�
       page: 1,
       limit: 8,
       sortMode: 'PRICE_DESC',
-    } as any);
+    });
     expect((res.data as any[]).map((d) => d.productName)).toEqual([
       'Nhẫn Bạc',
       'Nhẫn Vàng 24K',
@@ -384,8 +387,8 @@ describe('QuoteQueryService.getLibraryProducts — gộp nhóm + phân trang ph�
   });
 });
 
-describe('QuoteQueryService.getLibraryProductHistory — lịch sử báo giá 1 sản phẩm', () => {
-  let service: QuoteQueryService;
+describe('LibraryService.getLibraryProductHistory — lịch sử báo giá 1 sản phẩm', () => {
+  let service: LibraryService;
   let prisma: any;
   let livePrices: Map<string, number>;
 
@@ -394,7 +397,8 @@ describe('QuoteQueryService.getLibraryProductHistory — lịch sử báo giá 1
     livePrices = new Map();
     const module: TestingModule = await Test.createTestingModule({
       providers: [
-        QuoteQueryService,
+        LibraryService,
+        QuoteListCacheService,
         { provide: PrismaService, useValue: prisma },
         {
           provide: QuoteOptionsService,
@@ -419,7 +423,7 @@ describe('QuoteQueryService.getLibraryProductHistory — lịch sử báo giá 1
         },
       ],
     }).compile();
-    service = module.get(QuoteQueryService);
+    service = module.get(LibraryService);
   });
 
   it('gom option theo đơn, mới → cũ; price = giá đã báo, livePrice + deltaPct tính sẵn', async () => {
@@ -467,7 +471,7 @@ describe('QuoteQueryService.getLibraryProductHistory — lịch sử báo giá 1
       groupKey: 'cat-ring|bm-gold|',
       page: 1,
       limit: 20,
-    } as any);
+    });
 
     expect(res.meta.total).toBe(2);
     expect(res.data).toHaveLength(2);
@@ -490,7 +494,7 @@ describe('QuoteQueryService.getLibraryProductHistory — lịch sử báo giá 1
 
 describe('QuoteQueryService — priceBreakdown tách giá chất liệu / giá đá', () => {
   it('stripCostFieldsForSale giữ priceBreakdown, bỏ giá vốn', () => {
-    const svc = new QuoteQueryService({} as any, {} as any);
+    const svc = new QuoteQueryService({} as any, {} as any, {} as any);
     const out = (svc.stripCostFieldsForSale([
       {
         quotedPrice: 10_000_000,
@@ -514,7 +518,7 @@ describe('QuoteQueryService — priceBreakdown tách giá chất liệu / giá �
   });
 
   it('buildHistoryEntry gắn priceBreakdown mỗi option', () => {
-    const svc = new QuoteQueryService({} as any, {} as any);
+    const svc = new LibraryService({} as any, {} as any, {} as any);
     const entry = svc['buildHistoryEntry']([
       {
         quoteRequest: {

@@ -6,6 +6,9 @@ import { QuoteWorkflowService } from './quote/quote-workflow.service';
 import { QuoteOptionsService } from './quote-option/quote-options.service';
 import { QuoteOptionsController } from './quote-option/quote-options.controller';
 import { QuoteRequestsController } from './quote-requests.controller';
+import { QuoteListCacheService } from './quote-list-cache.service';
+import { LibraryService } from './library/library.service';
+import { LibraryController } from './library/library.controller';
 import { CloudinaryModule } from '../cloudinary/cloudinary.module';
 import { MailModule } from '../mail/mail.module';
 import { AuditLogModule } from '../audit-log/audit-log.module';
@@ -30,13 +33,21 @@ import { StonesModule } from '../stones/stones.module';
     PricingFormulasModule,
     StonesModule,
   ],
-  controllers: [QuoteRequestsController, QuoteOptionsController],
+  // LibraryController TRƯỚC QuoteRequestsController: 2 controller cùng prefix 'quote-requests', route
+  // /library-products, /library-history phải khớp trước @Get(':id') của QuoteRequestsController.
+  controllers: [
+    LibraryController,
+    QuoteRequestsController,
+    QuoteOptionsController,
+  ],
   providers: [
     QuoteRequestsService,
     QuoteQueryService,
     QuoteAnalyticsService,
     QuoteWorkflowService,
     QuoteOptionsService,
+    QuoteListCacheService,
+    LibraryService,
   ],
   exports: [
     QuoteRequestsService,

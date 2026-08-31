@@ -500,6 +500,19 @@ export class LarkService implements OnModuleInit {
       : data.saleName;
   }
 
+  private fmtDate(iso: string | null): string {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return '—';
+    return d.toLocaleString('vi-VN', {
+      hour: '2-digit',
+      minute: '2-digit',
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+    });
+  }
+
   // Thẻ tóm tắt generic cho các hành động không phải "đã báo giá"
   // (từ chối, trả lại, tạo yêu cầu, xuất Excel, tin thử...). Header xám.
   private buildSummaryCard(input: SummaryCardInput): LarkCard {
@@ -572,6 +585,8 @@ export class LarkService implements OnModuleInit {
         `**Khách hàng:** ${data.customerName || '—'}`,
         `**Sale:** ${this.saleMention(data)}`,
         `**Order:** ${data.orderName || '—'}`,
+        `**Ngày tạo:** ${this.fmtDate(data.createdAt)}`,
+        `**Ngày báo giá:** ${this.fmtDate(data.quotedAt)}`,
       ].join('\n'),
     );
 
@@ -609,6 +624,8 @@ export class LarkService implements OnModuleInit {
       elements.push(infoDiv);
     }
 
+    // Chỉ dựng phương án BÁO GIÁ CHÍNH (data.options đã lọc ở buildQuoteCardData còn đúng 1 phương
+    // án chính, bỏ các phương án phụ / so sánh loại vàng khác).
     data.options.forEach((opt) => {
       const lines = [`**${opt.name}**`];
       if (opt.materialText) lines.push(`• Chất liệu: ${opt.materialText}`);

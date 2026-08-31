@@ -4,6 +4,7 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
+import { APP_CONSTANTS } from './common/constants';
 
 import { json, urlencoded } from 'express';
 
@@ -35,8 +36,11 @@ async function bootstrap() {
   app.use(cookieParser());
 
   // CORS hỗ trợ gửi/nhận Cookie từ Frontend
+  // Danh sách origin lấy từ APP_CONSTANTS.CORS_ORIGINS (requiredEnv('FRONTEND_URL') — thiếu env là
+  // crash ngay lúc khởi động, KHÔNG âm thầm rơi về localhost ở prod). Hỗ trợ nhiều origin phân tách
+  // bằng dấu phẩy.
   app.enableCors({
-    origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+    origin: APP_CONSTANTS.CORS_ORIGINS,
     credentials: true,
   });
 
@@ -51,7 +55,9 @@ async function bootstrap() {
 
   const config = new DocumentBuilder()
     .setTitle('VCB QMS API Documentation')
-    .setDescription('Hệ thống Quản lý Yêu cầu & Báo giá Trang sức VCB QMS (NestJS + Prisma + PostgreSQL)')
+    .setDescription(
+      'Hệ thống Quản lý Yêu cầu & Báo giá Trang sức VCB QMS (NestJS + Prisma + PostgreSQL)',
+    )
     .setVersion('1.0')
     .addBearerAuth(
       {
@@ -72,6 +78,8 @@ async function bootstrap() {
 
   const port = process.env.PORT ?? 8000;
   await app.listen(port);
-  console.log(`🚀 Swagger UI documentation running at http://localhost:${port}/api/docs`);
+  console.log(
+    `🚀 Swagger UI documentation running at http://localhost:${port}/api/docs`,
+  );
 }
 bootstrap();

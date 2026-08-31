@@ -16,6 +16,7 @@ import {
 
 import { Server, Socket } from 'socket.io';
 import { JwtService } from '@nestjs/jwt';
+import { APP_CONSTANTS } from '../common/constants';
 import { JwtPayload } from '../auth/strategies/jwt.strategy';
 import { COOKIE_ACCESS } from '../auth/cookie/cookie.constants';
 import { QuoteChatService } from '../quote-chat/quote-chat.service';
@@ -33,7 +34,7 @@ interface AuthedSocket extends Socket {
 // riêng khi mở 1 yêu cầu) cùng nối vào namespace này.
 @WebSocketGateway({
   cors: {
-    origin: process.env.FRONTEND_URL,
+    origin: APP_CONSTANTS.CORS_ORIGINS,
     credentials: true,
   },
 })

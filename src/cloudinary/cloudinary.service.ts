@@ -107,12 +107,17 @@ export class CloudinaryService {
         this.logger.log(`Base64 Uploaded to Cloudinary: ${result.secure_url}`);
         return result.secure_url;
       } catch (err: any) {
-        this.logger.error(`Cloudinary Upload Error: ${err.message}`);
-        throw new BadRequestException(
-          `Không thể tải ảnh Base64 lên Cloudinary: ${err.message}`,
+        // Upload lỗi (mạng / Cloudinary lag) -> trả '' để caller lọc bỏ ảnh này, KHÔNG throw làm
+        // hỏng cả request tạo/sửa yêu cầu. Chuỗi base64 KHÔNG được lưu xuống DB.
+        this.logger.error(
+          `Cloudinary Base64 upload lỗi, bỏ ảnh: ${err.message}`,
         );
+        return '';
       }
     }
+
+    // data: nhưng không phải ảnh (data:application/... v.v.) -> tuyệt đối KHÔNG để lọt vào DB.
+    if (input.startsWith('data:')) return '';
 
     return input;
   }

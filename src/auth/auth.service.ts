@@ -168,16 +168,29 @@ export class AuthService {
 
     const { open_id, name, email, avatar_url } = infoData.data;
 
-    // 3. Map user
+    // 3. Map user — ưu tiên khớp theo larkOpenId (định danh chắc chắn từ Lark).
     let user = await this.prisma.user.findFirst({
-      where: {
-        OR: [
-          { larkOpenId: open_id },
-          email ? { email: email } : { id: 'non-existent' },
-        ],
-      },
+      where: { larkOpenId: open_id },
       include: { department: true },
     });
+
+    // Chưa từng đăng nhập Lark: thử khớp theo email, NHƯNG chỉ auto-link khi tài khoản đó CHƯA đặt
+    // mật khẩu nội bộ (tài khoản thuần SSO). Tài khoản có passwordHash mà email Lark chưa xác thực
+    // trùng email nội bộ = nguy cơ chiếm quyền — bắt Admin liên kết thủ công.
+    if (!user && email) {
+      const byEmail = await this.prisma.user.findUnique({
+        where: { email },
+        include: { department: true },
+      });
+      if (byEmail) {
+        if (byEmail.passwordHash) {
+          throw new UnauthorizedException(
+            'Email này đã gắn với một tài khoản đăng nhập bằng mật khẩu. Vui lòng liên hệ quản trị viên để liên kết tài khoản Lark.',
+          );
+        }
+        user = byEmail;
+      }
+    }
 
     if (user) {
       // Cập nhật larkOpenId và avatar nếu chưa có
