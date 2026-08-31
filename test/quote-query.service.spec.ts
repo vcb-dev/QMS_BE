@@ -1,7 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { QuoteQueryService } from '../src/quote-requests/quote/quote-query.service';
 import { LibraryService } from '../src/quote-requests/library/library.service';
-import { QuoteListCacheService } from '../src/quote-requests/quote-list-cache.service';
+import { QuoteListCacheService } from '../src/quote-requests/quote/quote-list-cache.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { QuoteOptionsService } from '../src/quote-requests/quote-option/quote-options.service';
 

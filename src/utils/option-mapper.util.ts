@@ -8,7 +8,7 @@ import type {
   HydratedOption,
   LivePriceEntry,
   OptionInput,
-} from '../quote-requests/quote.types';
+} from '../common/quote.types';
 
 export const OPTION_DETAIL_INCLUDE = {
   materials: { include: { material: true } },

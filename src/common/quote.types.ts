@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { OPTION_DETAIL_INCLUDE } from '../utils/option-mapper.util';
-import { QuoteOptionItemDto } from './dto/quote-complete.dto';
+import { QuoteOptionItemDto } from '../quote-requests/dto/quote-complete.dto';
 
 // 1 phần tử Map trả về của QuoteOptionsService.batchComputeLivePrices.
 export interface LivePriceEntry {

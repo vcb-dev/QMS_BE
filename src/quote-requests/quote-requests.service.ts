@@ -14,7 +14,7 @@ import { ExcelService } from '../excel/excel.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
 import { QuoteOptionsService } from './quote-option/quote-options.service';
 import { EXPORT_FIELD_DEFS } from './dto/export-field-defs';
-import type { OptionInput } from './quote.types';
+import type { OptionInput } from '../common/quote.types';
 import {
   REQUEST_DETAIL_INCLUDE,
   buildOptionCreateInput,

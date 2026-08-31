@@ -24,7 +24,7 @@ import {
 } from '../../utils/option-mapper.util';
 import { resolveDateRange } from '../../utils/date-range.util';
 import { QuoteOptionsService } from '../quote-option/quote-options.service';
-import { QuoteListCacheService } from '../quote-list-cache.service';
+import { QuoteListCacheService } from '../quote/quote-list-cache.service';
 
 @Injectable()
 export class LibraryService {
