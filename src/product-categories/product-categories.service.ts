@@ -5,13 +5,10 @@ import {
   ConflictException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { Prisma, ProductCategory } from '@prisma/client';
-import { CacheWithTtl } from '../common/cache-with-ttl.util';
+import { Prisma } from '@prisma/client';
 
 @Injectable()
 export class ProductCategoriesService {
-  private readonly cache = new CacheWithTtl<ProductCategory[]>(60_000);
-
   constructor(private prisma: PrismaService) {}
 
   private isPrismaError(err: unknown, code: string): boolean {
@@ -21,22 +18,16 @@ export class ProductCategoriesService {
   }
 
   async findAll() {
-    const cached = this.cache.get();
-    if (cached) return cached;
-
-    const data = await this.prisma.productCategory.findMany({
+    return this.prisma.productCategory.findMany({
       where: { isActive: true },
       orderBy: { name: 'asc' },
     });
-    this.cache.set(data);
-    return data;
   }
 
   async create(name: string, laborCost?: number, vatRate?: number) {
     if (!name || !name.trim()) {
       throw new BadRequestException('Tên danh mục không được để trống');
     }
-    this.cache.clear();
     try {
       return await this.prisma.productCategory.create({
         data: {
@@ -60,7 +51,6 @@ export class ProductCategoriesService {
     });
     if (!existing)
       throw new NotFoundException('Không tìm thấy danh mục sản phẩm');
-    this.cache.clear();
     try {
       await this.prisma.productCategory.delete({ where: { id } });
       return { message: 'Đã xóa danh mục sản phẩm thành công' };
@@ -79,7 +69,6 @@ export class ProductCategoriesService {
   async removeMany(ids: string[]) {
     if (!ids || ids.length === 0)
       return { deleted: 0, failedIds: [] as string[] };
-    this.cache.clear();
     let deleted = 0;
     const failedIds: string[] = [];
     for (const id of ids) {
@@ -100,7 +89,6 @@ export class ProductCategoriesService {
     });
     if (!existing)
       throw new NotFoundException('Không tìm thấy danh mục sản phẩm');
-    this.cache.clear();
     return this.prisma.productCategory.update({
       where: { id },
       data: patch,
@@ -112,7 +100,6 @@ export class ProductCategoriesService {
     items: { id: string; laborCost?: number; vatRate?: number }[],
   ) {
     if (!items || items.length === 0) return { updated: 0 };
-    this.cache.clear();
     await this.prisma.$transaction(
       items.map((it) =>
         this.prisma.productCategory.update({

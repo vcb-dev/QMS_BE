@@ -3,8 +3,9 @@ import { QuoteAnalyticsService } from '../src/quote-requests/quote/quote-analyti
 import { PrismaService } from '../src/prisma/prisma.service';
 
 // getDashboardCharts() gọi 4 query song song (findMany timeline, groupBy sale, groupBy category,
-// findMany price/material) rồi thêm 4 query phụ (user/category/material/option lookup) — mock
-// Prisma bằng plain object jest.fn(), KHÔNG đụng DB thật.
+// findMany price/material trong kỳ) + 1 query finalOptionId mọi thời kỳ cho featuredProducts, rồi
+// thêm các query phụ (user/category/material/option lookup) — mock Prisma bằng plain object
+// jest.fn(), KHÔNG đụng DB thật.
 describe('QuoteAnalyticsService.getDashboardCharts', () => {
   let service: QuoteAnalyticsService;
   let prisma: any;
@@ -77,6 +78,8 @@ describe('QuoteAnalyticsService.getDashboardCharts', () => {
         findMany: jest
           .fn()
           .mockResolvedValueOnce(TIMELINE_ROWS)
+          .mockResolvedValueOnce(PRICE_STAT_ROWS)
+          // featuredProducts lấy finalOptionId MỌI THỜI KỲ (query riêng, bỏ filter ngày)
           .mockResolvedValueOnce(PRICE_STAT_ROWS),
         groupBy: jest
           .fn()

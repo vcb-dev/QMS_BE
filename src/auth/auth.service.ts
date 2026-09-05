@@ -15,7 +15,7 @@ import { Role } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { createHash } from 'crypto';
 import { MailService } from '../mail/mail.service';
-import { APP_CONSTANTS } from 'src/common/constants';
+import { APP_CONSTANTS } from '../common/constants';
 
 @Injectable()
 export class AuthService {

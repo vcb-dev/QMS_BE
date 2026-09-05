@@ -1,11 +1,10 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   BaseMetalDto,
   BaseMetalPriceHistoryItem,
 } from './dto/metal-prices.dto';
-import { APP_CONSTANTS } from '../common/constants';
 
 // % biến động so với giá active trước đó — 0 nếu không đổi, null nếu chưa từng có dữ liệu cũ.
 // Kẹp trong ±9999.99 cho khớp cột DB Decimal(6,2).
@@ -18,37 +17,18 @@ function computeChangePct(next: number, prev: number): number | null {
 }
 
 @Injectable()
-export class MetalPricesService implements OnModuleInit {
+export class MetalPricesService {
   private readonly logger = new Logger(MetalPricesService.name);
-  // baseMetalId -> giá đang active, cache RAM 1 phút (giá kim loại ít đổi trong ngày, hàm tính
-  // giá gọi getLatestAsync nhiều lần liên tiếp không nên query DB mỗi lần)
-  private cached: Map<string, number> | null = null;
-  private lastLoadAt = 0;
 
   constructor(private readonly prisma: PrismaService) {}
 
-  async onModuleInit() {
-    await this.loadFromDb();
-  }
-
+  // baseMetalId -> giá đang active. Query thẳng DB mỗi lần gọi (không cache RAM).
   async getLatestAsync(): Promise<Map<string, number>> {
-    if (
-      this.cached &&
-      Date.now() - this.lastLoadAt < APP_CONSTANTS.REFERENCE_DATA_TTL
-    ) {
-      return this.cached;
-    }
-    return this.loadFromDb();
-  }
-
-  private async loadFromDb(): Promise<Map<string, number>> {
     const rows = await this.prisma.baseMetalPriceHistory.findMany({
       where: { isActive: true },
       select: { baseMetalId: true, priceVnd: true },
     });
-    this.cached = new Map(rows.map((r) => [r.baseMetalId, Number(r.priceVnd)]));
-    this.lastLoadAt = Date.now();
-    return this.cached;
+    return new Map(rows.map((r) => [r.baseMetalId, Number(r.priceVnd)]));
   }
 
   // Danh mục kim loại gốc kèm giá hiện tại — dùng cho tab "Nguồn giá gốc" (PricingConfigPage) và
@@ -146,7 +126,6 @@ export class MetalPricesService implements OnModuleInit {
       ),
     );
 
-    this.cached = null; // ép loadFromDb() lại lần đọc tiếp theo thay vì chờ hết TTL
     this.logger.log(
       `Đã cập nhật giá ${created.baseMetal.name} — tạo dòng lịch sử mới`,
     );

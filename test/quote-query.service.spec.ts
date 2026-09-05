@@ -1,7 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { QuoteQueryService } from '../src/quote-requests/quote/quote-query.service';
 import { LibraryService } from '../src/quote-requests/library/library.service';
-import { QuoteListCacheService } from '../src/quote-requests/quote/quote-list-cache.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { QuoteOptionsService } from '../src/quote-requests/quote-option/quote-options.service';
 
@@ -162,7 +161,6 @@ describe('LibraryService.getLibraryProducts — gộp nhóm + phân trang phía 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         LibraryService,
-        QuoteListCacheService,
         { provide: PrismaService, useValue: prisma },
         {
           provide: QuoteOptionsService,
@@ -398,7 +396,6 @@ describe('LibraryService.getLibraryProductHistory — lịch sử báo giá 1 s�
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         LibraryService,
-        QuoteListCacheService,
         { provide: PrismaService, useValue: prisma },
         {
           provide: QuoteOptionsService,
@@ -494,7 +491,7 @@ describe('LibraryService.getLibraryProductHistory — lịch sử báo giá 1 s�
 
 describe('QuoteQueryService — priceBreakdown tách giá chất liệu / giá đá', () => {
   it('stripCostFieldsForSale giữ priceBreakdown, bỏ giá vốn', () => {
-    const svc = new QuoteQueryService({} as any, {} as any, {} as any);
+    const svc = new QuoteQueryService({} as any, {} as any);
     const out = (svc.stripCostFieldsForSale([
       {
         quotedPrice: 10_000_000,
@@ -518,7 +515,7 @@ describe('QuoteQueryService — priceBreakdown tách giá chất liệu / giá �
   });
 
   it('buildHistoryEntry gắn priceBreakdown mỗi option', () => {
-    const svc = new LibraryService({} as any, {} as any, {} as any);
+    const svc = new LibraryService({} as any, {} as any);
     const entry = svc['buildHistoryEntry']([
       {
         quoteRequest: {

@@ -21,16 +21,16 @@ interface CachedAuthUser {
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
-  // Cache user hợp lệ theo id — mở 1 trang bắn 6-8 request song song, mỗi cái trước đây là 1 lượt
-  // query DB xác thực (BEGIN/SELECT/COMMIT/DEALLOCATE qua pooler ~200ms mỗi round-trip). TTL ngắn:
-  // khóa user / đổi role có hiệu lực chậm nhất sau TTL (mặc định 30s, chỉnh qua JWT_USER_CACHE_TTL_MS).
-  // Cache theo từng instance — chạy nhiều instance thì mỗi instance stale tối đa TTL độc lập.
+  // Ngoại lệ có chủ đích của quy tắc "không cache RAM": đây là auth infra, không phải dữ liệu
+  // nghiệp vụ. Mở 1 trang bắn nhiều request song song — mỗi cái là 1 query user qua pooler
+  // (~100-200ms round-trip). Cache theo id, TTL NGẮN: khoá tài khoản / đổi trạng thái có hiệu
+  // lực chậm nhất sau TTL (mặc định 15s, chỉnh qua JWT_USER_CACHE_TTL_MS). Cache theo instance.
   private readonly userCache = new Map<
     string,
     { user: CachedAuthUser; at: number }
   >();
   private readonly userCacheTtlMs =
-    Number(process.env.JWT_USER_CACHE_TTL_MS) || 30_000;
+    Number(process.env.JWT_USER_CACHE_TTL_MS) || 15_000;
 
   constructor(
     config: ConfigService,

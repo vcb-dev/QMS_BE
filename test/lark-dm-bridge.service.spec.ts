@@ -72,16 +72,16 @@ describe('LarkService — cầu chat web <-> Lark DM', () => {
       expect(await service.isBridgeEnabled()).toBe(false);
     });
 
-    it('isBridgeEnabled: cache 15s — gọi 2 lần chỉ 1 query', async () => {
+    it('isBridgeEnabled: không cache — gọi 2 lần query DB 2 lần', async () => {
       prisma.larkDmBridgeConfig.findFirst.mockResolvedValue({
         isEnabled: false,
       });
       await service.isBridgeEnabled();
       await service.isBridgeEnabled();
-      expect(prisma.larkDmBridgeConfig.findFirst).toHaveBeenCalledTimes(1);
+      expect(prisma.larkDmBridgeConfig.findFirst).toHaveBeenCalledTimes(2);
     });
 
-    it('setBridgeEnabled: ghi row mới + xoá cache', async () => {
+    it('setBridgeEnabled: ghi row mới rồi đọc lại trạng thái', async () => {
       prisma.larkDmBridgeConfig.findFirst.mockResolvedValue({
         isEnabled: false,
       });

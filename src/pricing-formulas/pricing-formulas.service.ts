@@ -1,19 +1,10 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { PricingFormulaType } from '@prisma/client';
-import { CacheWithTtl } from '../common/cache-with-ttl.util';
-import { APP_CONSTANTS } from '../common/constants';
 
 @Injectable()
 export class PricingFormulasService {
   constructor(private readonly prisma: PrismaService) {}
-
-  // getDefault() bị gọi mỗi lần tính giá (calculate / calculate-batch / danh sách Thư Viện qua
-  // getDefaultStoneTiers) — công thức mặc định gần như không đổi nên cache RAM để bỏ 1 round-trip
-  // DB mỗi lần. Mọi create/update đều clear() cache.
-  private readonly defaultCache = new CacheWithTtl<
-    Awaited<ReturnType<PricingFormulasService['loadDefault']>>
-  >(APP_CONSTANTS.REFERENCE_DATA_TTL);
 
   async findAll() {
     return this.prisma.pricingFormula.findMany({
@@ -38,11 +29,7 @@ export class PricingFormulasService {
   // 1 bậc lợi nhuận theo chi phí bất kể chất liệu kim loại đi kèm dùng công thức gì (hệ số nhân
   // như Bạc không áp dụng được cho đá).
   async getDefault() {
-    const cached = this.defaultCache.get();
-    if (cached) return cached;
-    const found = await this.loadDefault();
-    this.defaultCache.set(found);
-    return found;
+    return this.loadDefault();
   }
 
   async create(
@@ -60,7 +47,6 @@ export class PricingFormulasService {
         data: { isDefault: false },
       });
     }
-    this.defaultCache.clear();
     return this.prisma.pricingFormula.create({
       data: {
         name: dto.name,
@@ -85,7 +71,6 @@ export class PricingFormulasService {
         data: { isDefault: false },
       });
     }
-    this.defaultCache.clear();
     return this.prisma.pricingFormula.update({
       where: { id },
       data: {

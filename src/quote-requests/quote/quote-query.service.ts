@@ -22,37 +22,18 @@ import {
   QuoteOptionsService,
   LivePriceItem,
 } from '../quote-option/quote-options.service';
-import { QuoteListCacheService } from './quote-list-cache.service';
 
-// Read path CHÍNH của yêu cầu báo giá: danh sách (findAll, có cache + counts + giá sống), chi tiết
+// Read path CHÍNH của yêu cầu báo giá: danh sách (findAll, có counts + giá sống), chi tiết
 // (findOne), và export Excel (findAllForExport). Thư Viện Sản Phẩm đã tách hẳn sang LibraryService
-// (dữ liệu lịch sử, query gộp nhóm rất khác) — 2 service chỉ chia sẻ QuoteListCacheService để
-// clearCache() từ luồng ghi xoá cả 2 loại entry.
+// (dữ liệu lịch sử, query gộp nhóm rất khác). Không cache RAM — mọi lần đọc query thẳng DB.
 @Injectable()
 export class QuoteQueryService {
   constructor(
     private prisma: PrismaService,
     private quoteOptionsService: QuoteOptionsService,
-    // Cache RAM chia sẻ với LibraryService — clearCache() xoá cả danh sách yêu cầu lẫn Thư Viện.
-    private listCache: QuoteListCacheService,
   ) {}
 
-  clearCache() {
-    this.listCache.clear();
-  }
-
   async findAll(filterDto: FilterQuoteRequestDto, _user: User) {
-    const cacheKey = JSON.stringify({
-      filterDto,
-      userId: _user?.id,
-      role: _user?.role,
-    });
-    // withLivePrice=true là nút "Tải lại giá" bấm tay — phải luôn tính lại giá MỚI NHẤT, cache
-    // 30s ở đây sẽ trả nhầm giá cũ nếu bấm lại trong vòng 30s sau khi vừa đổi giá kim loại/đá.
-    const skipCache = filterDto.withLivePrice === 'true';
-    const cached = skipCache ? undefined : this.listCache.get(cacheKey);
-    if (cached) return cached;
-
     const { page = 1, limit = 10 } = filterDto;
     const pageNum = Math.max(1, Number(page) || 1);
     const limitNum = Math.max(1, Math.min(100, Number(limit) || 10));
@@ -199,15 +180,12 @@ export class QuoteQueryService {
       },
     };
 
-    if (!skipCache) {
-      this.listCache.set(cacheKey, result);
-    }
     return result;
   }
 
   // Gắn giá "sống" (livePrice) vào từng option — tính theo config HIỆN TẠI (giá kim loại/đá/tỷ lệ/
-  // VAT hôm nay), không đụng quotedPrice đã đóng băng. 1 lệnh gọi cho cả trang, 0 query DB thêm
-  // (batchComputeLivePrices tự lấy giá kim loại/chất liệu/đá từ cache TTL sẵn có).
+  // VAT hôm nay), không đụng quotedPrice đã đóng băng. 1 lệnh gọi cho cả trang
+  // (batchComputeLivePrices tự lấy giá kim loại/chất liệu/đá).
   private async attachLivePrices(items: any[]) {
     const inputs: LivePriceItem[] = [];
     const allOpts: any[] = [];

@@ -53,7 +53,6 @@ export class QuoteWorkflowService {
    * Trạng thái chuyển từ PENDING -> PROCESSING và gán người xử lý (assigneeId).
    */
   private async accept(id: string, userId: string) {
-    this.queryService.clearCache();
     const result = await this.prisma.quoteRequest.updateMany({
       where: { id, status: QuoteStatus.PENDING },
       data: {
@@ -266,7 +265,6 @@ export class QuoteWorkflowService {
     userId: string,
     dto: CompleteQuoteInput,
   ) {
-    this.queryService.clearCache();
 
     // FE luôn gửi kèm options đầy đủ (mỗi phương án tự mang materials/stones riêng) —
     // categoryId + tra cứu material/stone gộp chung 1 nhịp Promise.all thay vì chờ nối tiếp.
@@ -372,7 +370,6 @@ export class QuoteWorkflowService {
   }
 
   private async selectOption(id: string, optionId: string, role: Role) {
-    this.queryService.clearCache();
     const option = await this.prisma.quoteOption.findUnique({
       where: { id: optionId },
     });
@@ -399,7 +396,6 @@ export class QuoteWorkflowService {
    * Yêu cầu phải có lý do từ chối. Trạng thái chuyển sang REJECTED.
    */
   private async rejectQuote(id: string, userId: string, rejectReason: string) {
-    this.queryService.clearCache();
     const updated = await this.prisma.quoteRequest.update({
       where: { id },
       data: {
@@ -421,7 +417,6 @@ export class QuoteWorkflowService {
    * Trạng thái chuyển sang NEED_MORE_INFO kèm theo lý do cần bổ sung.
    */
   private async returnQuote(id: string, userId: string, returnReason: string) {
-    this.queryService.clearCache();
     const updated = await this.prisma.quoteRequest.update({
       where: { id },
       data: {
@@ -449,7 +444,6 @@ export class QuoteWorkflowService {
     role: Role,
     optionId?: string,
   ) {
-    this.queryService.clearCache();
     const quote = await this.prisma.quoteRequest.findUnique({
       where: { id },
       select: {
@@ -534,7 +528,6 @@ export class QuoteWorkflowService {
       [Role.ORDER, Role.ADMIN],
       'Chỉ có vai trò ORDER hoặc ADMIN mới được phép xóa phương án báo giá',
     );
-    this.queryService.clearCache();
 
     const quote = await this.prisma.quoteRequest.findUnique({
       where: { id: requestId },
@@ -592,7 +585,6 @@ export class QuoteWorkflowService {
    * Reset lại trạng thái về PENDING để Order tiếp nhận lại từ đầu.
    */
   private async resubmitQuote(id: string, role: Role) {
-    this.queryService.clearCache();
     const curent = await this.prisma.quoteRequest.findUnique({
       where: { id },
       select: { status: true },
@@ -678,7 +670,6 @@ export class QuoteWorkflowService {
           'Chỉ có vai trò ORDER hoặc ADMIN mới được phép nhập giá nhanh',
         );
         await this.assertPricingCanProcess(id, userId, role);
-        this.queryService.clearCache();
         await this.auditLog.logAction(
           userId,
           role,
@@ -724,7 +715,6 @@ export class QuoteWorkflowService {
           [Role.ORDER, Role.ADMIN],
           'Chỉ có vai trò ORDER hoặc ADMIN mới được phép duyệt báo giá nhanh',
         );
-        this.queryService.clearCache();
         await this.auditLog.logAction(
           userId,
           role,
@@ -786,7 +776,6 @@ export class QuoteWorkflowService {
           [Role.ORDER, Role.ADMIN],
           'Chỉ có vai trò ORDER hoặc ADMIN mới được phép từ chối báo giá nhanh',
         );
-        this.queryService.clearCache();
         await this.auditLog.logAction(
           userId,
           role,

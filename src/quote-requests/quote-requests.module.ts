@@ -6,7 +6,6 @@ import { QuoteWorkflowService } from './quote/quote-workflow.service';
 import { QuoteOptionsService } from './quote-option/quote-options.service';
 import { QuoteOptionsController } from './quote-option/quote-options.controller';
 import { QuoteRequestsController } from './quote-requests.controller';
-import { QuoteListCacheService } from './quote/quote-list-cache.service';
 import { LibraryService } from './library/library.service';
 import { LibraryController } from './library/library.controller';
 import { CloudinaryModule } from '../cloudinary/cloudinary.module';
@@ -46,7 +45,6 @@ import { StonesModule } from '../stones/stones.module';
     QuoteAnalyticsService,
     QuoteWorkflowService,
     QuoteOptionsService,
-    QuoteListCacheService,
     LibraryService,
   ],
   exports: [

@@ -138,11 +138,11 @@ export class QuoteRequestsService {
 
   async create(
     userId: string,
+    role: Role,
     dto: CreateQuoteRequestDto,
     files?: Express.Multer.File[],
     videoFile?: Express.Multer.File,
   ) {
-    this.queryService.clearCache();
     const {
       imageUrls,
       videoUrl,
@@ -312,6 +312,11 @@ export class QuoteRequestsService {
 
     await this.auditLog.logActionByUserId(userId, 'CREATE_QUOTE', created.id);
     const detail = mapQuoteRequestDetail(created);
+    // SALE tạo đơn cũng chỉ được xem Giá bán — option nháp mang sẵn laborCost/vat theo danh mục,
+    // cắt luôn cho nhất quán với findOne / update.
+    if (role === Role.SALE) {
+      detail.options = this.queryService.stripCostFieldsForSale(detail.options);
+    }
     this.realtimeGateway.broadcastStatusChanged(created.id, created.status);
     return detail;
   }
@@ -324,7 +329,6 @@ export class QuoteRequestsService {
     files?: Express.Multer.File[],
     videoFile?: Express.Multer.File,
   ) {
-    this.queryService.clearCache();
     const existing = await this.prisma.quoteRequest.findUnique({
       where: { id },
       include: { requester: true },
@@ -343,6 +347,18 @@ export class QuoteRequestsService {
     ) {
       throw new BadRequestException(
         'Yêu cầu báo giá đã đóng hoặc bị từ chối, không thể chỉnh sửa',
+      );
+    }
+    // SALE chỉ sửa được spec khi đơn CHƯA vào tay Order — PENDING (chưa ai tiếp nhận) hoặc
+    // NEED_MORE_INFO (bị trả lại bổ sung). Từ PROCESSING trở đi Order đang/đã tính giá theo spec
+    // này, sửa spec sau lưng là sai luồng. ADMIN vẫn sửa được mọi trạng thái (trừ CLOSED/REJECTED).
+    if (
+      role === Role.SALE &&
+      existing.status !== QuoteStatus.PENDING &&
+      existing.status !== QuoteStatus.NEED_MORE_INFO
+    ) {
+      throw new BadRequestException(
+        'Đơn đã được tiếp nhận xử lý, không thể chỉnh sửa. Vui lòng trao đổi với người báo giá.',
       );
     }
     // materialIds/materialId/options không còn map trực tiếp vào QuoteRequest — chất liệu/option
@@ -399,11 +415,16 @@ export class QuoteRequestsService {
     });
 
     await this.auditLog.logActionByUserId(userId, 'UPDATE_QUOTE', id);
-    return mapQuoteRequestDetail(updated);
+    const mapped = mapQuoteRequestDetail(updated);
+    // SALE sửa được đơn đến trạng thái QUOTED — option lúc đó đã có đủ giá vốn/lãi/VAT. Response
+    // phải cắt cấu thành giá vốn y như findOne / các action workflow.
+    if (role === Role.SALE) {
+      mapped.options = this.queryService.stripCostFieldsForSale(mapped.options);
+    }
+    return mapped;
   }
 
   async remove(id: string, userId: string) {
-    this.queryService.clearCache();
     // Xóa TRƯỚC rồi mới ghi audit — nếu delete lỗi (không tồn tại/ràng buộc FK) thì không ghi
     // nhầm "đã xóa" vào lịch sử.
     await this.prisma.quoteRequest.delete({ where: { id } });

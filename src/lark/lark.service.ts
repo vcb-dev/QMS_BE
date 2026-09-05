@@ -95,15 +95,9 @@ const wrapCard = (
 @Injectable()
 export class LarkService implements OnModuleInit {
   private readonly logger = new Logger(LarkService.name);
-  private static readonly ROUTE_TTL_MS = 15_000;
-  private static readonly BRIDGE_CONFIG_TTL_MS = 15_000;
   private static readonly DM_DIGEST_COOLDOWN_MS = 2 * 60 * 1000;
   // tenant_access_token sống ~2h; cache RAM, refresh sớm 5 phút trước hạn.
   private tokenCache: { token: string; expiresAt: number } | null = null;
-  // Cache bảng định tuyến (webhook đang bật + action đang bật) — tránh 1 query mỗi lần ghi audit.
-  private routesCache: { at: number; data: RouteRow[] } | null = null;
-  // Cache công tắc tổng của cầu DM.
-  private bridgeConfigCache: { at: number; enabled: boolean } | null = null;
 
   // Reply từ Lark DM -> RealtimeGateway subscribe cái này (tránh vòng phụ thuộc module).
   private readonly replySubject = new Subject<ChatMessageDto>();
@@ -229,7 +223,6 @@ export class LarkService implements OnModuleInit {
           },
         },
       });
-      this.invalidate();
       return this.toView(created);
     } catch (err) {
       throw this.mapWriteError(err);
@@ -267,7 +260,6 @@ export class LarkService implements OnModuleInit {
       throw this.mapWriteError(err);
     }
 
-    this.invalidate();
     const fresh = await this.prisma.larkWebhook.findUniqueOrThrow({
       where: { id },
       include: {
@@ -284,7 +276,6 @@ export class LarkService implements OnModuleInit {
     });
     if (!existing) throw new NotFoundException('Không tìm thấy webhook');
     await this.prisma.larkWebhook.delete({ where: { id } }); // subscription cascade
-    this.invalidate();
   }
 
   async sendTest(id: string): Promise<{ ok: boolean; message: string }> {
@@ -344,18 +335,7 @@ export class LarkService implements OnModuleInit {
 
   // ============ Nội bộ — định tuyến ============
 
-  private invalidate(): void {
-    this.routesCache = null;
-  }
-
   private async loadRoutes(): Promise<RouteRow[]> {
-    const now = Date.now();
-    if (
-      this.routesCache &&
-      now - this.routesCache.at < LarkService.ROUTE_TTL_MS
-    ) {
-      return this.routesCache.data;
-    }
     const rows = await this.prisma.larkWebhook.findMany({
       where: { isEnabled: true },
       select: {
@@ -364,13 +344,11 @@ export class LarkService implements OnModuleInit {
         subscriptions: { where: { isEnabled: true }, select: { action: true } },
       },
     });
-    const data: RouteRow[] = rows.map((r) => ({
+    return rows.map((r) => ({
       webhookUrl: r.webhookUrl,
       webhookSecret: r.webhookSecret,
       actions: new Set(r.subscriptions.map((s) => s.action)),
     }));
-    this.routesCache = { at: now, data };
-    return data;
   }
 
   private async webhooksForAction(
@@ -923,20 +901,11 @@ export class LarkService implements OnModuleInit {
   // ============ Cầu chat web <-> Lark DM — công tắc ADMIN ============
 
   async isBridgeEnabled(): Promise<boolean> {
-    const now = Date.now();
-    if (
-      this.bridgeConfigCache &&
-      now - this.bridgeConfigCache.at < LarkService.BRIDGE_CONFIG_TTL_MS
-    ) {
-      return this.bridgeConfigCache.enabled;
-    }
     const row = await this.prisma.larkDmBridgeConfig.findFirst({
       orderBy: { createdAt: 'desc' },
       select: { isEnabled: true },
     });
-    const enabled = row?.isEnabled ?? false;
-    this.bridgeConfigCache = { at: now, enabled };
-    return enabled;
+    return row?.isEnabled ?? false;
   }
 
   async getBridgeStatus(): Promise<LarkDmBridgeStatus> {
@@ -959,7 +928,6 @@ export class LarkService implements OnModuleInit {
     await this.prisma.larkDmBridgeConfig.create({
       data: { isEnabled, note: note?.trim() || null, changedById: userId },
     });
-    this.bridgeConfigCache = null;
     return this.getBridgeStatus();
   }
 

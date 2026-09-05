@@ -164,46 +164,68 @@ export class QuoteAnalyticsService {
       .sort((a, b) => b.value - a.value)
       .slice(0, 8);
 
-    // materialDistribution + featuredProducts — dùng finalOptionId (phương án đại diện đúng nghiệp vụ)
+    // materialDistribution dùng finalOptionId TRONG KỲ (đúng phương án đại diện).
     const finalOptionIds = priceStatRows
       .map((r) => r.finalOptionId)
       .filter((id): id is string => !!id);
 
-    const [optionMaterials, featuredOptions] = await Promise.all([
+    // featuredProducts là "showcase" — sản phẩm đáng chú ý MỌI THỜI KỲ, KHÔNG bó theo bộ lọc thời
+    // gian như các biểu đồ khác (bó thì đầu kỳ / kỳ ít data sẽ trống trơn). Chỉ giữ scope
+    // user/locked, bỏ điều kiện ngày.
+    const whereAllTime = buildQuoteWhereClause(
+      {
+        ...filterDto,
+        timeRange: undefined,
+        startDate: undefined,
+        endDate: undefined,
+      },
+      _user,
+    );
+
+    const [optionMaterials, allTimeFinalIdRows] = await Promise.all([
       finalOptionIds.length
         ? this.prisma.quoteOptionMaterial.findMany({
             where: { optionId: { in: finalOptionIds } },
             select: { optionId: true, material: { select: { name: true } } },
           })
         : Promise.resolve([]),
-      finalOptionIds.length
-        ? this.prisma.quoteOption.findMany({
-            // Chỉ lấy option ĐÃ có giá — bỏ option nháp (quotedPrice null, vẫn có thể là
-            // finalOptionId nếu quote_request đó chưa ai báo giá). Không lọc thì option nháp
-            // (quotedDate null) bị Postgres xếp LÊN ĐẦU khi orderBy desc (NULLS FIRST mặc định),
-            // chiếm hết top 4 "nổi bật" và hiện toàn "---".
-            where: { id: { in: finalOptionIds }, quotedPrice: { not: null } },
-            orderBy: { quotedDate: 'desc' },
-            take: 4,
-            select: {
-              id: true,
-              quotedPrice: true,
-              stonePrice: true,
-              quoteRequest: {
-                select: {
-                  id: true,
-                  category: { select: { name: true } },
-                  images: {
-                    select: { id: true, imageUrl: true },
-                    orderBy: { id: 'asc' },
-                  },
+      this.prisma.quoteRequest.findMany({
+        where: whereAllTime,
+        select: { finalOptionId: true },
+      }),
+    ]);
+
+    const featuredFinalIds = allTimeFinalIdRows
+      .map((r) => r.finalOptionId)
+      .filter((id): id is string => !!id);
+
+    const featuredOptions = featuredFinalIds.length
+      ? await this.prisma.quoteOption.findMany({
+          // Chỉ lấy option ĐÃ có giá — bỏ option nháp (quotedPrice null, vẫn có thể là
+          // finalOptionId nếu quote_request đó chưa ai báo giá). Không lọc thì option nháp
+          // (quotedDate null) bị Postgres xếp LÊN ĐẦU khi orderBy desc (NULLS FIRST mặc định),
+          // chiếm hết top 4 "nổi bật" và hiện toàn "---".
+          where: { id: { in: featuredFinalIds }, quotedPrice: { not: null } },
+          orderBy: { quotedDate: 'desc' },
+          take: 4,
+          select: {
+            id: true,
+            quotedPrice: true,
+            stonePrice: true,
+            quoteRequest: {
+              select: {
+                id: true,
+                category: { select: { name: true } },
+                images: {
+                  select: { id: true, imageUrl: true },
+                  orderBy: { id: 'asc' },
                 },
               },
-              materials: { select: { material: { select: { name: true } } } },
             },
-          })
-        : Promise.resolve([]),
-    ]);
+            materials: { select: { material: { select: { name: true } } } },
+          },
+        })
+      : [];
 
     const materialsByOption = new Map<string, string[]>();
     for (const row of optionMaterials) {

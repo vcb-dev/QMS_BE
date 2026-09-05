@@ -8,54 +8,30 @@ import { ChatMessageDto } from './dto/quote-chat.types';
 
 @Injectable()
 export class QuoteChatService {
-  private participantCache = new Map<
-    string,
-    { requesterId: string; assigneeId: string | null; expiresAt: number }
-  >();
-
   constructor(private prisma: PrismaService) {}
 
-  private static readonly CACHE_TTL_MS = 30 * 1000; // ngắn để giảm cửa sổ stale khi quote bị reassign
-
-  private evictExpired(now: number) {
-    for (const [key, entry] of this.participantCache) {
-      if (entry.expiresAt < now) this.participantCache.delete(key);
-    }
-  }
-
   async assertParticipant(quoteRequestId: string, userId: string) {
-    const now = Date.now();
-    let cached = this.participantCache.get(quoteRequestId);
+    const request = await this.prisma.quoteRequest.findUnique({
+      where: { id: quoteRequestId },
+      select: { requesterId: true, assigneeId: true },
+    });
 
-    if (!cached || cached.expiresAt < now) {
-      const request = await this.prisma.quoteRequest.findUnique({
-        where: { id: quoteRequestId },
-        select: { requesterId: true, assigneeId: true },
-      });
-
-      if (!request) {
-        throw new ForbiddenException(
-          'Bạn không có quyền xem cuộc trò chuyện này',
-        );
-      }
-
-      cached = {
-        requesterId: request.requesterId,
-        assigneeId: request.assigneeId,
-        expiresAt: now + QuoteChatService.CACHE_TTL_MS,
-      };
-      this.participantCache.set(quoteRequestId, cached);
-
-      if (this.participantCache.size > 200) this.evictExpired(now);
-    }
-
-    if (cached.requesterId !== userId && cached.assigneeId !== userId) {
+    if (!request) {
       throw new ForbiddenException(
         'Bạn không có quyền xem cuộc trò chuyện này',
       );
     }
 
-    return { requesterId: cached.requesterId, assigneeId: cached.assigneeId };
+    if (request.requesterId !== userId && request.assigneeId !== userId) {
+      throw new ForbiddenException(
+        'Bạn không có quyền xem cuộc trò chuyện này',
+      );
+    }
+
+    return {
+      requesterId: request.requesterId,
+      assigneeId: request.assigneeId,
+    };
   }
 
   async saveMessage(

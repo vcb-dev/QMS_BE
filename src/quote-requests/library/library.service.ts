@@ -2,8 +2,7 @@
 // QuoteOption.libraryGroupKey (tính SẴN lúc ghi option, xem computeLibraryGroupKey). Trước đây nằm
 // chung trong QuoteQueryService (god-service ~1000 dòng gộp cả read path realtime lẫn query gộp
 // nhóm nặng của Thư Viện) — tách hẳn ra vì: dữ liệu LỊCH SỬ không cần realtime, SQL gộp nhóm/hydrate
-// rất khác findAll, TTL cache riêng. Cache RAM chia sẻ qua QuoteListCacheService (clear() từ luồng
-// ghi xoá cả 2 loại entry cùng lúc).
+// rất khác findAll. Không cache RAM — query thẳng DB mỗi lần.
 
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
@@ -24,14 +23,12 @@ import {
 } from '../../utils/option-mapper.util';
 import { resolveDateRange } from '../../utils/date-range.util';
 import { QuoteOptionsService } from '../quote-option/quote-options.service';
-import { QuoteListCacheService } from '../quote/quote-list-cache.service';
 
 @Injectable()
 export class LibraryService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly quoteOptionsService: QuoteOptionsService,
-    private readonly listCache: QuoteListCacheService,
   ) {}
 
   // Bộ lọc SQL dùng chung cho danh sách Thư Viện + lịch sử báo giá 1 sản phẩm. Alias: qo =
@@ -106,16 +103,12 @@ export class LibraryService {
    *
    * SQL gộp + phân trang phía DB (GROUP BY library_group_key), CHỈ hydrate + tính giá sống cho
    * option thuộc các nhóm CỦA TRANG này. Sort PRICE_ASC/DESC theo giá ĐÃ BÁO (quoted_price); card
-   * vẫn hiển thị giá sống. Cache như findAll; mọi thao tác ghi gọi listCache.clear().
+   * vẫn hiển thị giá sống. Không cache RAM — query thẳng DB mỗi lần.
    */
   async getLibraryProducts(dto: LibraryProductsQueryDto) {
     const page = dto.page ?? 1;
     const limit = dto.limit ?? 8;
     const offset = (page - 1) * limit;
-
-    const cacheKey = `library:${JSON.stringify(dto)}`;
-    const cached = this.listCache.get(cacheKey);
-    if (cached) return cached;
 
     const whereSql = Prisma.join(this.buildLibraryFilters(dto), ' AND ');
 
@@ -246,12 +239,10 @@ export class LibraryService {
       })
       .filter((c): c is NonNullable<typeof c> => !!c);
 
-    const result = {
+    return {
       data,
       meta: { total, page, limit, totalPages: Math.ceil(total / limit) || 1 },
     };
-    this.listCache.set(cacheKey, result, this.listCache.libraryTtlMs);
-    return result;
   }
 
   /**

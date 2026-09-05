@@ -23,7 +23,7 @@ import { LoggerMiddleware } from './common/logger.middleware';
 import { APP_GUARD, APP_FILTER } from '@nestjs/core';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { CsrfGuard } from './auth/guards/csrf.guard';
-import { PrismaExceptionFilter } from './common/prisma-exception.filter';
+import { AllExceptionsFilter } from './common/all-exceptions.filter';
 import { ExcelModule } from './excel/excel.module';
 import { QuoteChatModule } from './quote-chat/quote-chat.module';
 import { RealtimeModule } from './realtime/realtime.module';
@@ -70,7 +70,7 @@ import { RealtimeModule } from './realtime/realtime.module';
     },
     {
       provide: APP_FILTER,
-      useClass: PrismaExceptionFilter,
+      useClass: AllExceptionsFilter,
     },
   ],
 })

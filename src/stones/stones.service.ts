@@ -9,8 +9,6 @@ import { StoneType } from '@prisma/client';
 import { CreateStoneDto, UpdateStoneDto } from './dto/stone.dto';
 import { APP_CONSTANTS } from '../common/constants';
 import { ExcelService } from '../excel/excel.service';
-import { CacheWithTtl } from '../common/cache-with-ttl.util';
-import { Stone } from '@prisma/client';
 
 function resolveStoneType(
   raw: string,
@@ -32,26 +30,16 @@ function parsePrice(raw: unknown): number | null {
 
 @Injectable()
 export class StonesService {
-  // Danh mục đá ít đổi, mọi user/role đều đọc — cache toàn bộ danh sách (không lọc), lọc theo
-  // stoneType ở tầng in-memory để khỏi phải quản lý nhiều cache key theo từng loại đá.
-  private readonly cache = new CacheWithTtl<Stone[]>(
-    APP_CONSTANTS.REFERENCE_DATA_TTL,
-  );
-
   constructor(
     private prisma: PrismaService,
     private excelService: ExcelService,
   ) {}
 
   async findAll(stoneType?: StoneType) {
-    let all = this.cache.get();
-    if (!all) {
-      all = await this.prisma.stone.findMany({
-        where: { isActive: true },
-        orderBy: { name: 'asc' },
-      });
-      this.cache.set(all);
-    }
+    const all = await this.prisma.stone.findMany({
+      where: { isActive: true },
+      orderBy: { name: 'asc' },
+    });
     return stoneType ? all.filter((s) => s.stoneType === stoneType) : all;
   }
 
@@ -106,7 +94,6 @@ export class StonesService {
         `Đá "${dto.name}"${dto.cut ? ` - ${dto.cut}` : ''}${dto.size ? ` - ${dto.size}` : ''} đã tồn tại trong danh mục, vui lòng sửa giá đá cũ thay vì thêm trùng`,
       );
     }
-    this.cache.clear();
     return this.prisma.stone.create({ data: dto });
   }
 
@@ -136,7 +123,6 @@ export class StonesService {
       );
     }
 
-    this.cache.clear();
     return this.prisma.stone.update({ where: { id }, data: dto });
   }
 
@@ -147,7 +133,6 @@ export class StonesService {
     });
     if (!existing) throw new NotFoundException('Không tìm thấy đá');
     await this.prisma.stone.delete({ where: { id } });
-    this.cache.clear();
     return { message: 'Đã xóa đá thành công' };
   }
 
@@ -175,7 +160,6 @@ export class StonesService {
         }),
       ),
     );
-    this.cache.clear();
     return { updated: items.length };
   }
 
@@ -185,7 +169,6 @@ export class StonesService {
     const result = await this.prisma.stone.deleteMany({
       where: { id: { in: ids } },
     });
-    this.cache.clear();
     return { deleted: result.count };
   }
 
@@ -221,7 +204,6 @@ export class StonesService {
       uniqueRows.length > 0
         ? await this.prisma.stone.createMany({ data: uniqueRows })
         : { count: 0 };
-    this.cache.clear();
     return { imported: created.count, skipped };
   }
 

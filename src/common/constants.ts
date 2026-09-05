@@ -76,10 +76,6 @@ export const APP_CONSTANTS = {
     'video/x-msvideo',
     'video/3gpp',
   ],
-  MATERIAL_TTL: 60_000,
-  // Dữ liệu tham chiếu ít đổi (giá kim loại, danh mục đá, cấu hình tính giá) — cache 1 phút
-  // để giảm truy vấn DB lặp lại (mỗi lần tính giá gọi getConfig()/getLatestAsync() nhiều lần).
-  REFERENCE_DATA_TTL: 60_000,
   MAX_IMPORT_ROWS: 1000,
   MAX_EXPORT_ROWS: 5000,
   QUOTE_STATUS_LABELS: {

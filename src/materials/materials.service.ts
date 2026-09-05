@@ -1,7 +1,5 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { APP_CONSTANTS } from '../common/constants';
-import { CacheWithTtl } from '../common/cache-with-ttl.util';
 import { Material, PricingFormula, BaseMetal } from '@prisma/client';
 
 type MaterialWithFormula = Material & {
@@ -24,10 +22,6 @@ function assertValidRatio(priceRatioPct: number | undefined) {
 
 @Injectable()
 export class MaterialsService {
-  private readonly cache = new CacheWithTtl<PlainMaterial[]>(
-    APP_CONSTANTS.MATERIAL_TTL,
-  );
-
   constructor(private prisma: PrismaService) {}
 
   // Prisma trả priceRatioPct dạng Decimal (serialize qua JSON thành string) — ép về number ngay ở
@@ -37,17 +31,12 @@ export class MaterialsService {
   }
 
   async findAll() {
-    const cached = this.cache.get();
-    if (cached) return cached;
-
     const data = await this.prisma.material.findMany({
       where: { isActive: true },
       orderBy: { name: 'asc' },
       include: { pricingFormula: true, baseMetal: true },
     });
-    const plain = data.map((m) => this.toPlain(m));
-    this.cache.set(plain);
-    return plain;
+    return data.map((m) => this.toPlain(m));
   }
 
   // pricingFormulaId bắt buộc — chất liệu mới phải trỏ ngay tới 1 công thức tính lãi có sẵn
@@ -65,7 +54,6 @@ export class MaterialsService {
         'Vui lòng chọn công thức tính lãi cho chất liệu',
       );
     }
-    this.cache.clear();
     const created = await this.prisma.material.create({
       data: {
         name,
@@ -90,7 +78,6 @@ export class MaterialsService {
     },
   ) {
     assertValidRatio(patch.priceRatioPct);
-    this.cache.clear();
     const updated = await this.prisma.material.update({
       where: { id },
       data: patch,

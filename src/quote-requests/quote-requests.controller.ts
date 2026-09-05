@@ -65,12 +65,14 @@ export class QuoteRequestsController {
   )
   async create(
     @CurrentUser('id') userId: string,
+    @CurrentUser('role') role: Role,
     @Body() dto: CreateQuoteRequestDto,
     @UploadedFiles()
     uploaded?: { files?: Express.Multer.File[]; video?: Express.Multer.File[] },
   ) {
     return this.quoteRequestsService.create(
       userId,
+      role,
       dto,
       uploaded?.files,
       uploaded?.video?.[0],
