@@ -36,8 +36,11 @@ export const REQUEST_DETAIL_INCLUDE = {
 } as const;
 
 // Select rút gọn cho 1 QuoteOption khi liệt kê nhiều request (findAll) — đủ dữ liệu để tính
-// productName/livePrice mà không kéo nguyên OPTION_DETAIL_INCLUDE (nặng hơn, dùng cho trang chi tiết).
-export const OPTION_SUMMARY_SELECT = {
+// productName/priceBreakdown mà không kéo nguyên OPTION_DETAIL_INCLUDE (nặng hơn, dùng cho trang
+// chi tiết). KHÔNG kèm mảng `stones`: bảng danh sách chỉ hiện giá bán + tách giá (priceBreakdown
+// suy từ cột scalar), kéo cả cây đá lồng cho từng phương án của từng dòng chỉ làm PostgreSQL tốn
+// thời gian dựng JSONB vô ích.
+export const OPTION_LIST_SELECT = {
   id: true,
   optionName: true,
   quotedPrice: true,
@@ -57,6 +60,12 @@ export const OPTION_SUMMARY_SELECT = {
       material: { select: { id: true, name: true } },
     },
   },
+} as const;
+
+// OPTION_LIST_SELECT + mảng `stones` — dùng cho Thư Viện Sản Phẩm và nhánh `withLivePrice` của
+// findAll (cần stoneId/quantity/unitPriceAtQuote để tính lại giá đá "sống" theo bảng giá hôm nay).
+export const OPTION_SUMMARY_SELECT = {
+  ...OPTION_LIST_SELECT,
   stones: {
     select: {
       stoneId: true,

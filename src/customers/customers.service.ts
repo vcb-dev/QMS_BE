@@ -40,6 +40,8 @@ export class CustomersService {
     private auditLog: AuditLogService,
   ) {}
 
+  // Chỉ phục vụ dropdown chọn khách trong CreateModal (FE tự cắt còn 10 dòng). Bắt buộc take để
+  // search rỗng / từ khoá phổ biến ("Khách") không kéo cả bảng + LATERAL join province/ward mọi dòng.
   async findAll(search?: string) {
     const where = search
       ? {
@@ -53,6 +55,7 @@ export class CustomersService {
       where,
       include: CUSTOMER_INCLUDE,
       orderBy: { createdAt: 'desc' },
+      take: 20,
     });
   }
 

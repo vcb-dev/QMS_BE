@@ -6,6 +6,7 @@ import { APP_CONSTANTS } from '../../common/constants';
 import {
   REQUEST_DETAIL_INCLUDE,
   OPTION_SUMMARY_SELECT,
+  OPTION_LIST_SELECT,
   mapQuoteRequestDetail,
   pickPrimaryOption,
   buildProductName,
@@ -40,25 +41,38 @@ export class QuoteQueryService {
     const skip = (pageNum - 1) * limitNum;
 
     const where = buildQuoteWhereClause(filterDto, _user);
-    // Counts phải bỏ status filter — nếu không, groupBy chỉ còn đúng status đang chọn,
-    // các ô trạng thái khác trên UI sẽ hiện 0 hết.
-    const countsWhere = buildQuoteWhereClause(
-      { ...filterDto, status: undefined },
-      _user,
-    );
 
-    const countsPromise = Promise.all([
-      this.prisma.quoteRequest.groupBy({
-        by: ['status'],
-        where: countsWhere,
-        _count: { _all: true },
-      }),
-      getMyReqCount(this.prisma, _user),
-    ]).then(([res, myReqCnt]) => countsFromGroupBy(res, myReqCnt));
+    // Counts sidebar = 2 query thêm (groupBy status + count MY_REQ). Chỉ tính khi FE xin
+    // (includeCounts=true) — phân trang thuần và socket refresh không đổi bộ lọc thì FE giữ counts
+    // cũ, khỏi mượn 2 connection mỗi lần. FE gửi flag khi: lần đầu, đổi bộ lọc, hoặc socket refresh.
+    // countsWhere bỏ status filter — nếu không, groupBy chỉ còn đúng status đang chọn, các ô trạng
+    // thái khác trên UI sẽ hiện 0 hết.
+    const wantCounts = filterDto.includeCounts === 'true';
+    const countsPromise = wantCounts
+      ? Promise.all([
+          this.prisma.quoteRequest.groupBy({
+            by: ['status'],
+            where: buildQuoteWhereClause(
+              { ...filterDto, status: undefined },
+              _user,
+            ),
+            _count: { _all: true },
+          }),
+          getMyReqCount(this.prisma, _user),
+        ]).then(([res, myReqCnt]) => countsFromGroupBy(res, myReqCnt))
+      : Promise.resolve(undefined);
 
     // Dashboard fetch 500 dòng chỉ để vẽ biểu đồ/thống kê — không cần customer/assignee/options
     // (quan hệ nặng nhất, không dùng tới), bỏ luôn cho nhẹ query.
     const isLite = filterDto.lite === 'true';
+
+    // Bảng danh sách không hiện chi tiết đá từng phương án — bỏ mảng `stones` khỏi select cho nhẹ
+    // câu query. Chỉ giữ khi FE xin giá "sống" (withLivePrice): attachLivePrices cần stoneId/quantity
+    // để tính lại giá đá theo bảng giá hôm nay.
+    const optionSelect =
+      filterDto.withLivePrice === 'true'
+        ? OPTION_SUMMARY_SELECT
+        : OPTION_LIST_SELECT;
 
     const [items, total, counts] = await Promise.all([
       this.prisma.quoteRequest.findMany({
@@ -105,13 +119,13 @@ export class QuoteQueryService {
                 options: {
                   orderBy: { createdAt: 'desc' },
                   take: 1,
-                  select: OPTION_SUMMARY_SELECT,
+                  select: optionSelect,
                 },
               }
             : {
                 options: {
                   orderBy: { createdAt: 'asc' },
-                  select: OPTION_SUMMARY_SELECT,
+                  select: optionSelect,
                 },
                 customer: {
                   select: {

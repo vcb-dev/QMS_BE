@@ -62,6 +62,7 @@ export class AuthController {
     };
   }
 
+  @SkipCsrf()
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
   async refresh(
@@ -82,6 +83,8 @@ export class AuthController {
     };
   }
 
+  // Logout chỉ xoá cookie + thu hồi refresh token hash — cùng lý do như refresh, bỏ CSRF.
+  @SkipCsrf()
   @Post('logout')
   @HttpCode(HttpStatus.OK)
   async logout(@Req() req: Request, @Res({ passthrough: true }) res: Response) {

@@ -32,6 +32,11 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   private readonly userCacheTtlMs =
     Number(process.env.JWT_USER_CACHE_TTL_MS) || 15_000;
 
+  // Gộp request song song CÙNG 1 user: mở 1 trang bắn nhiều API cùng lúc, tất cả cùng miss cache
+  // trước khi cái đầu kịp set -> N query user giống hệt qua pooler. Giữ promise đang bay theo id để
+  // các request sau chờ chung; xoá khỏi map khi xong (kể cả lỗi) để lần sau query lại bình thường.
+  private readonly inFlight = new Map<string, Promise<CachedAuthUser>>();
+
   constructor(
     config: ConfigService,
     private readonly prisma: PrismaService,
@@ -77,8 +82,21 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       return cached.user;
     }
 
+    const existing = this.inFlight.get(payload.sub);
+    if (existing) return existing;
+
+    const lookup = this.loadUser(payload.sub);
+    this.inFlight.set(payload.sub, lookup);
+    try {
+      return await lookup;
+    } finally {
+      this.inFlight.delete(payload.sub);
+    }
+  }
+
+  private async loadUser(userId: string): Promise<CachedAuthUser> {
     const user = await this.prisma.user.findUnique({
-      where: { id: payload.sub },
+      where: { id: userId },
       select: {
         id: true,
         email: true,
@@ -89,7 +107,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     });
 
     if (!user || !user.isActive || !user.isApproved) {
-      this.userCache.delete(payload.sub);
+      this.userCache.delete(userId);
       throw new UnauthorizedException(
         'Người dùng không hợp lệ hoặc chưa được phê duyệt',
       );
@@ -102,7 +120,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     };
     // Chặn Map phình vô hạn (nội bộ ít user, nhưng vẫn phòng): quá ngưỡng thì xóa sạch, TTL tự dựng lại.
     if (this.userCache.size > 5_000) this.userCache.clear();
-    this.userCache.set(payload.sub, { user: authUser, at: Date.now() });
+    this.userCache.set(userId, { user: authUser, at: Date.now() });
     return authUser;
   }
 }
