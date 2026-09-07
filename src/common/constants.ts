@@ -1,5 +1,9 @@
 import { QuoteStatus } from '@prisma/client/wasm';
 import 'dotenv/config';
+import {
+  LOCAL_DEV_ORIGINS,
+  parseOriginList,
+} from '../utils/cors-origin.util';
 
 function requiredEnv(name: string): string {
   const value = process.env[name]?.trim();
@@ -13,6 +17,29 @@ function requiredNumberEnv(name: string): number {
     throw new Error(`Environment variable ${name} must be a number`);
   return value;
 }
+
+function optionalBoolEnv(name: string, fallback: boolean): boolean {
+  const raw = process.env[name]?.trim().toLowerCase();
+  if (raw === 'true' || raw === '1') return true;
+  if (raw === 'false' || raw === '0') return false;
+  return fallback;
+}
+
+function parseCookieSameSite(
+  raw: string | undefined,
+  secure: boolean,
+): 'lax' | 'none' | 'strict' {
+  const value = raw?.trim().toLowerCase();
+  if (value === 'lax' || value === 'none' || value === 'strict') return value;
+  // FE Vercel + BE Railway là cross-site: SameSite=Lax khiến browser chặn cookie
+  // trên XHR/fetch, dễ bị nhìn nhầm thành lỗi CORS. HTTPS prod mặc định None.
+  return secure ? 'none' : 'lax';
+}
+
+const cookieSecure = optionalBoolEnv(
+  'COOKIE_SECURE',
+  process.env['NODE_ENV'] === 'production',
+);
 export interface VnGoldPriceItem {
   key: string;
   label: string;
@@ -31,11 +58,15 @@ export const APP_CONSTANTS = {
   JWT_SECRET: requiredEnv('JWT_SECRET'),
   JWT_ACCESS_EXPIRES: requiredEnv('JWT_ACCESS_EXPIRES'),
   JWT_REFRESH_EXPIRES: requiredEnv('JWT_REFRESH_EXPIRES'),
-  CORS_ORIGINS: requiredEnv('FRONTEND_URL')
-    .split(',')
-    .map((origin) => origin.trim())
-    .filter(Boolean),
-  COOKIE_SECURE: process.env['COOKIE_SECURE'] === 'true',
+  CORS_ORIGINS: [
+    ...parseOriginList(requiredEnv('CORS_ORIGIN')),
+    ...LOCAL_DEV_ORIGINS,
+  ].filter((origin, index, all) => all.indexOf(origin) === index),
+  COOKIE_SECURE: cookieSecure,
+  COOKIE_SAMESITE: parseCookieSameSite(
+    process.env['COOKIE_SAMESITE'],
+    cookieSecure,
+  ),
   THROTTLE_TTL: requiredNumberEnv('LOGIN_THROTTLE_TTL'),
   THROTTLE_LIMIT: requiredNumberEnv('LOGIN_THROTTLE_LIMIT'),
   // Lark OAuth (đăng nhập bằng tài khoản Lark) — flow v2, không cần app_access_token

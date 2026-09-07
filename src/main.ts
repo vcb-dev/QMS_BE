@@ -5,6 +5,7 @@ import { AppModule } from './app.module';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
 import { APP_CONSTANTS } from './common/constants';
+import { corsOriginDelegate } from './utils/cors-origin.util';
 
 import { json, urlencoded } from 'express';
 
@@ -35,13 +36,13 @@ async function bootstrap() {
   // Đọc HttpOnly Cookies từ request
   app.use(cookieParser());
 
-  // CORS hỗ trợ gửi/nhận Cookie từ Frontend
-  // Danh sách origin lấy từ APP_CONSTANTS.CORS_ORIGINS (requiredEnv('FRONTEND_URL') — thiếu env là
-  // crash ngay lúc khởi động, KHÔNG âm thầm rơi về localhost ở prod). Hỗ trợ nhiều origin phân tách
-  // bằng dấu phẩy.
+  // CORS allowlist lấy từ CORS_ORIGIN (nhiều origin cách nhau bằng dấu phẩy),
+  // cộng localhost dev + preview Vercel cùng project. FRONTEND_URL không dùng cho CORS.
   app.enableCors({
-    origin: APP_CONSTANTS.CORS_ORIGINS,
+    origin: corsOriginDelegate(APP_CONSTANTS.CORS_ORIGINS),
     credentials: true,
+    methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'X-CSRF-Token', 'Authorization'],
   });
 
   app.setGlobalPrefix('api');

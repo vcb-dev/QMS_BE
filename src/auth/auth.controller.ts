@@ -23,6 +23,7 @@ import { Throttle } from '@nestjs/throttler';
 import { randomBytes } from 'crypto';
 import { APP_CONSTANTS } from '../common/constants';
 import { SkipCsrf } from './decorators/skip-csrf.decorator';
+import { primaryFrontendUrl } from '../utils/cors-origin.util';
 
 const LARK_STATE_COOKIE = 'lark_oauth_state';
 
@@ -165,9 +166,7 @@ export class AuthController {
     const state = randomBytes(16).toString('hex');
     res.cookie(LARK_STATE_COOKIE, state, {
       httpOnly: true,
-      secure:
-        this.configService.get<string>('COOKIE_SECURE', 'false') === 'true',
-      sameSite: 'lax',
+      ...this.cookieAuthService.cookieFlags(),
       path: '/api/auth',
       maxAge: 10 * 60 * 1000, // 10 phút
     });
@@ -182,14 +181,13 @@ export class AuthController {
   async larkCallback(@Req() req: Request, @Res() res: Response) {
     const { code, error, state } = req.query;
     const frontendUrl =
-      this.configService.get<string>('FRONTEND_URL') || 'http://localhost:5173';
+      primaryFrontendUrl(this.configService.get<string>('FRONTEND_URL')) ||
+      'http://localhost:5173';
 
     const expectedState = req.cookies?.[LARK_STATE_COOKIE];
     res.clearCookie(LARK_STATE_COOKIE, {
       path: '/api/auth',
-      sameSite: 'lax',
-      secure:
-        this.configService.get<string>('COOKIE_SECURE', 'false') === 'true',
+      ...this.cookieAuthService.cookieFlags(),
     });
 
     if (error || !code) {

@@ -13,12 +13,19 @@ import {
 export class CookieAuthService {
   constructor(private readonly config: ConfigService) {}
 
+  cookieFlags(): Pick<CookieOptions, 'secure' | 'sameSite'> {
+    const sameSite = APP_CONSTANTS.COOKIE_SAMESITE;
+    return {
+      sameSite,
+      // SameSite=None bắt buộc Secure; ép true để browser không nuốt cookie.
+      secure: APP_CONSTANTS.COOKIE_SECURE || sameSite === 'none',
+    };
+  }
+
   private baseOptions(): CookieOptions {
-    const secure = this.config.get<string>('COOKIE_SECURE', 'false') === 'true';
     return {
       httpOnly: true,
-      secure,
-      sameSite: 'lax',
+      ...this.cookieFlags(),
       path: '/',
     };
   }
@@ -48,22 +55,20 @@ export class CookieAuthService {
 
     res.cookie(COOKIE_CSRF, csrf, {
       httpOnly: false,
-      secure: this.config.get<string>('COOKIE_SECURE', 'false') === 'true',
-      sameSite: 'lax',
+      ...this.cookieFlags(),
       path: '/',
       maxAge: refreshMaxAge,
     });
   }
 
   clearAuthCookies(res: Response) {
-    const secure = this.config.get<string>('COOKIE_SECURE', 'false') === 'true';
-    res.clearCookie(COOKIE_ACCESS, { path: '/', sameSite: 'lax', secure });
+    const flags = this.cookieFlags();
+    res.clearCookie(COOKIE_ACCESS, { path: '/', ...flags });
     res.clearCookie(COOKIE_REFRESH, {
       path: '/api/auth',
-      sameSite: 'lax',
-      secure,
+      ...flags,
     });
-    res.clearCookie(COOKIE_CSRF, { path: '/', sameSite: 'lax', secure });
+    res.clearCookie(COOKIE_CSRF, { path: '/', ...flags });
   }
 
   private parseDurationMs(value: string): number {

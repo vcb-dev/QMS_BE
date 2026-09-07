@@ -12,6 +12,7 @@ import { Prisma } from '@prisma/client';
 import { Subject, Observable } from 'rxjs';
 import { APP_CONSTANTS } from '../common/constants';
 import { formatVnd } from '../utils/currency.util';
+import { primaryFrontendUrl } from '../utils/cors-origin.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { QuoteChatService } from '../quote-chat/quote-chat.service';
 import { ChatMessageDto } from '../quote-chat/dto/quote-chat.types';
@@ -429,8 +430,8 @@ export class LarkService implements OnModuleInit {
     entityId: string | undefined,
   ): string | null {
     if (entityType !== 'QuoteRequest' || !entityId) return null;
-    const base = this.config.get<string>('FRONTEND_URL');
-    return base ? `${base.split(',')[0].trim()}/requests/${entityId}` : null;
+    const base = primaryFrontendUrl(this.config.get<string>('FRONTEND_URL'));
+    return base ? `${base}/requests/${entityId}` : null;
   }
 
   private toView(row: {
@@ -538,7 +539,9 @@ export class LarkService implements OnModuleInit {
       );
     }
 
-    const frontendUrl = this.config.get<string>('FRONTEND_URL');
+    const frontendUrl = primaryFrontendUrl(
+      this.config.get<string>('FRONTEND_URL'),
+    );
     const detailUrl =
       frontendUrl && data.requestId
         ? `${frontendUrl}/requests/${data.requestId}`
