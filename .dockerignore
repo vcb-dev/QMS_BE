@@ -1,0 +1,51 @@
+# Dependencies & build output
+node_modules
+dist
+build
+coverage
+.nyc_output
+generated
+
+# Git & IDE
+.git
+.gitignore
+.vscode
+.idea
+.project
+.classpath
+.c9
+.settings
+*.sublime-workspace
+.claude
+.windsurf
+.agents
+.gemini
+.ai
+.cursor
+
+# Env & secrets — inject at runtime, never bake into the image
+.env
+.env.*
+!.env.example
+
+# Tests (not needed to compile; tsconfig.build already excludes them)
+test
+**/*.spec.ts
+
+# Docs & misc
+doc
+*.md
+skills-lock.json
+pnpm-lock.yaml
+
+# Logs & OS
+logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.DS_Store
+.temp
+.tmp
+report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
