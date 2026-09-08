@@ -31,13 +31,12 @@ function preferWritableSessionUrl(url: string): string {
     .replace(/\?&/, '?');
 }
 
-// Ghép thêm connection_limit và pool_timeout vào DATABASE_URL runtime, nếu chưa có.
 function resolveRuntimeUrl(): string {
   const url = preferWritableSessionUrl(
     stripEnvQuotes(process.env.DATABASE_URL),
   );
   if (!url) return url;
-  const connectionLimit = Number(process.env.DB_CONNECTION_LIMIT) || 8;
+  const connectionLimit = Number(process.env.DB_CONNECTION_LIMIT) || 20;
   const poolTimeout = Number(process.env.DB_POOL_TIMEOUT) || 20;
   const parts: string[] = [];
   if (!url.includes('connection_limit='))
