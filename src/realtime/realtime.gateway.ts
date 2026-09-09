@@ -88,6 +88,11 @@ export class RealtimeGateway
 
       try {
         const payload = await this.jwtService.verifyAsync<JwtPayload>(token);
+        // Chỉ access token mới mở được socket — refresh token sống dài hơn nhiều.
+        if (payload.type === 'refresh') {
+          next(new Error('Unauthorized'));
+          return;
+        }
         socket.data.user = {
           id: payload.sub,
           email: payload.email,

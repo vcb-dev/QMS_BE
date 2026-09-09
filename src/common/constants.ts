@@ -90,6 +90,8 @@ export const APP_CONSTANTS = {
   TOKEN_TTL_MS: 13 * 24 * 60 * 60 * 1000, // Token vnappmob sống 15 ngày, an toàn refresh sớm hơn
 
   MAX_FILE_SIZE: 10 * 1024 * 1024, // 10MB
+  // SVG là XML thực thi được: mở trực tiếp trong tab mới (không qua thẻ <img>) thì script
+  // bên trong chạy dưới origin phục vụ file — danh sách này cố ý không nhận định dạng đó.
   ALLOWED_MIME_TYPES: [
     'image/jpeg',
     'image/png',
@@ -97,7 +99,6 @@ export const APP_CONSTANTS = {
     'image/gif',
     'image/heic',
     'image/heif',
-    'image/svg+xml',
   ],
   MAX_VIDEO_FILE_SIZE: 100 * 1024 * 1024, // 100MB
   ALLOWED_VIDEO_MIME_TYPES: [

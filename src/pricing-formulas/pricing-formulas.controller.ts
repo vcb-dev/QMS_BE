@@ -12,7 +12,11 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import { Role, PricingFormulaType } from '@prisma/client';
+import { Role } from '@prisma/client';
+import {
+  CreatePricingFormulaDto,
+  UpdatePricingFormulaDto,
+} from './dto/pricing-formula.dto';
 
 // Công thức tính lãi — lộ ra "cấu tạo giá vốn/lợi nhuận" nên chỉ ORDER/ADMIN được xem, giống pricing-config
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -30,30 +34,18 @@ export class PricingFormulasController {
 
   @Post()
   create(
-    @Body('name') name: string,
-    @Body('formulaType') formulaType: PricingFormulaType,
-    @Body('config') config: unknown,
-    @Body('isDefault') isDefault: boolean | undefined,
+    @Body() dto: CreatePricingFormulaDto,
     @CurrentUser('id') actorId: string,
   ) {
-    return this.pricingFormulasService.create(
-      { name, formulaType, config, isDefault },
-      actorId,
-    );
+    return this.pricingFormulasService.create(dto, actorId);
   }
 
   @Patch(':id')
   update(
     @Param('id') id: string,
-    @Body('name') name: string | undefined,
-    @Body('config') config: unknown,
-    @Body('isDefault') isDefault: boolean | undefined,
+    @Body() dto: UpdatePricingFormulaDto,
     @CurrentUser('id') actorId: string,
   ) {
-    return this.pricingFormulasService.update(
-      id,
-      { name, config, isDefault },
-      actorId,
-    );
+    return this.pricingFormulasService.update(id, dto, actorId);
   }
 }

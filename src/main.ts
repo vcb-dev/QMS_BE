@@ -54,33 +54,43 @@ async function bootstrap() {
     }),
   );
 
-  const config = new DocumentBuilder()
-    .setTitle('VCB QMS API Documentation')
-    .setDescription(
-      'Hệ thống Quản lý Yêu cầu & Báo giá Trang sức VCB QMS (NestJS + Prisma + PostgreSQL)',
-    )
-    .setVersion('1.0')
-    .addBearerAuth(
-      {
-        type: 'http',
-        scheme: 'bearer',
-        bearerFormat: 'JWT',
-        name: 'JWT',
-        description: 'Nhập token thu được sau khi đăng nhập',
-        in: 'header',
-      },
-      'JWT-auth',
-    )
-    .addCookieAuth('crmspd_at')
-    .build();
+  // Swagger là bản đồ đầy đủ của API — chỉ mở ở môi trường không phải production.
+  // Bật tạm trên prod bằng SWAGGER_ENABLED=true khi cần debug.
+  const swaggerEnabled =
+    process.env.NODE_ENV !== 'production' ||
+    process.env.SWAGGER_ENABLED === 'true';
 
-  const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('api/docs', app, document);
+  if (swaggerEnabled) {
+    const config = new DocumentBuilder()
+      .setTitle('VCB QMS API Documentation')
+      .setDescription(
+        'Hệ thống Quản lý Yêu cầu & Báo giá Trang sức VCB QMS (NestJS + Prisma + PostgreSQL)',
+      )
+      .setVersion('1.0')
+      .addBearerAuth(
+        {
+          type: 'http',
+          scheme: 'bearer',
+          bearerFormat: 'JWT',
+          name: 'JWT',
+          description: 'Nhập token thu được sau khi đăng nhập',
+          in: 'header',
+        },
+        'JWT-auth',
+      )
+      .addCookieAuth('crmspd_at')
+      .build();
+
+    const document = SwaggerModule.createDocument(app, config);
+    SwaggerModule.setup('api/docs', app, document);
+  }
 
   const port = process.env.PORT ?? 8000;
   await app.listen(port);
-  console.log(
-    `🚀 Swagger UI documentation running at http://localhost:${port}/api/docs`,
-  );
+  if (swaggerEnabled) {
+    console.log(
+      `🚀 Swagger UI documentation running at http://localhost:${port}/api/docs`,
+    );
+  }
 }
 bootstrap();

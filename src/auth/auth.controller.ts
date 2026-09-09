@@ -23,6 +23,7 @@ import { Throttle } from '@nestjs/throttler';
 import { randomBytes } from 'crypto';
 import { APP_CONSTANTS } from '../common/constants';
 import { SkipCsrf } from './decorators/skip-csrf.decorator';
+import { EmailThrottlerGuard } from './guards/email-throttler.guard';
 import { primaryFrontendUrl } from '../utils/cors-origin.util';
 
 const LARK_STATE_COOKIE = 'lark_oauth_state';
@@ -117,12 +118,9 @@ export class AuthController {
   }
 
   @SkipCsrf()
-  @Throttle({
-    default: {
-      ttl: APP_CONSTANTS.THROTTLE_TTL,
-      limit: APP_CONSTANTS.THROTTLE_LIMIT,
-    },
-  })
+  @UseGuards(EmailThrottlerGuard)
+  // 3 lần / 15 phút cho MỖI email — chặn spam gửi mail tới một địa chỉ.
+  @Throttle({ default: { ttl: 15 * 60 * 1000, limit: 3 } })
   @Post('forgot-password')
   @HttpCode(HttpStatus.OK)
   async forgotPassword(@Body() dto: ForgotPasswordDto) {
@@ -130,12 +128,10 @@ export class AuthController {
   }
 
   @SkipCsrf()
-  @Throttle({
-    default: {
-      ttl: APP_CONSTANTS.THROTTLE_TTL,
-      limit: APP_CONSTANTS.THROTTLE_LIMIT,
-    },
-  })
+  @UseGuards(EmailThrottlerGuard)
+  // 5 lần / 15 phút cho MỖI email. OTP sống 15 phút, nên trong trọn vòng đời một mã kẻ tấn
+  // công chỉ đoán được 5 lần trên 1.000.000 khả năng.
+  @Throttle({ default: { ttl: 15 * 60 * 1000, limit: 5 } })
   @Post('reset-password')
   @HttpCode(HttpStatus.OK)
   async resetPassword(@Body() dto: ResetPasswordDto) {

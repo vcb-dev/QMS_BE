@@ -1,4 +1,10 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  NotFoundException,
+  ForbiddenException,
+  ConflictException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateQuoteRequestDto } from './dto/create-quote-request.dto';
 import { UpdateQuoteRequestDto } from './dto/update-quote-request.dto';
@@ -136,6 +142,26 @@ export class QuoteRequestsService {
         : [];
   }
 
+  // Danh sách "chất liệu muốn chế tác" của một yêu cầu chỉ được nằm trong cùng một kim loại gốc:
+  // vàng nhiều tuổi thì ghép được, nhưng không trộn vàng/bạc/bạch kim. Chất liệu phi kim loại
+  // (baseMetalId null) mỗi cái là một nhóm riêng nên cũng không ghép với chất liệu khác.
+  private async assertMaterialsSameBaseMetal(
+    materialIds: string[],
+  ): Promise<void> {
+    const uniqueIds = [...new Set(materialIds.filter(Boolean))];
+    if (uniqueIds.length < 2) return;
+    const rows = await this.prisma.material.findMany({
+      where: { id: { in: uniqueIds } },
+      select: { id: true, baseMetalId: true },
+    });
+    const groupKeys = new Set(
+      rows.map((r) => r.baseMetalId ?? `__nonmetal__${r.id}`),
+    );
+    if (groupKeys.size > 1) {
+      throw new BadRequestException('Các chất liệu phải cùng một kim loại gốc');
+    }
+  }
+
   async create(
     userId: string,
     role: Role,
@@ -155,6 +181,10 @@ export class QuoteRequestsService {
       customerId,
       ...data
     } = dto;
+    await this.assertMaterialsSameBaseMetal([
+      ...(materialIds ?? []),
+      ...(materialId ? [materialId] : []),
+    ]);
     const code = this.generateCode();
     const finalCustomerId = await this.resolveWalkInCustomerId(customerId);
 
@@ -424,7 +454,32 @@ export class QuoteRequestsService {
     return mapped;
   }
 
-  async remove(id: string, userId: string) {
+  async remove(id: string, userId: string, role: Role) {
+    const existing = await this.prisma.quoteRequest.findUnique({
+      where: { id },
+      select: { requesterId: true, status: true },
+    });
+    if (!existing) {
+      throw new NotFoundException('Không tìm thấy yêu cầu báo giá');
+    }
+
+    // Cùng quy tắc sở hữu với update(): SALE chỉ thao tác trên đơn do mình tạo, ADMIN tự do.
+    if (role !== Role.ADMIN && existing.requesterId !== userId) {
+      throw new ForbiddenException(
+        'Bạn không có quyền hủy yêu cầu báo giá này',
+      );
+    }
+
+    // Đơn đã chốt / đã từ chối là hồ sơ lịch sử — không xóa cứng, kể cả với người tạo.
+    if (
+      existing.status === QuoteStatus.CLOSED ||
+      existing.status === QuoteStatus.REJECTED
+    ) {
+      throw new ConflictException(
+        'Yêu cầu đã chốt hoặc đã bị từ chối — không thể hủy, đây là hồ sơ lịch sử',
+      );
+    }
+
     // Xóa TRƯỚC rồi mới ghi audit — nếu delete lỗi (không tồn tại/ràng buộc FK) thì không ghi
     // nhầm "đã xóa" vào lịch sử.
     await this.prisma.quoteRequest.delete({ where: { id } });

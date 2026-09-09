@@ -184,11 +184,15 @@ export class QuoteRequestsController {
     );
   }
 
-  @ApiOperation({ summary: 'Hủy yêu cầu báo giá (SALE / ADMIN)' })
+  @ApiOperation({ summary: 'Hủy yêu cầu báo giá (người tạo hoặc ADMIN)' })
   @Roles(Role.SALE, Role.ADMIN)
   @Delete(':id')
-  async remove(@Param('id') id: string, @CurrentUser('id') userId: string) {
-    return this.quoteRequestsService.remove(id, userId);
+  async remove(
+    @Param('id') id: string,
+    @CurrentUser('id') userId: string,
+    @CurrentUser('role') role: Role,
+  ) {
+    return this.quoteRequestsService.remove(id, userId, role);
   }
 
   @ApiOperation({

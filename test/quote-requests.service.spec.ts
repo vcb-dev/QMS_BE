@@ -88,3 +88,56 @@ describe('QuoteRequestsService.resolveWalkInCustomerId — chống race', () => 
   });
 });
 
+describe('QuoteRequestsService.remove', () => {
+  let svc: any;
+  let prisma: any;
+  let auditLog: any;
+  let realtimeGateway: any;
+
+  beforeEach(() => {
+    prisma = {
+      quoteRequest: {
+        findUnique: jest.fn(),
+        delete: jest.fn(),
+      },
+    };
+    auditLog = { logActionByUserId: jest.fn() };
+    realtimeGateway = { broadcastStatusChanged: jest.fn() };
+
+    svc = new QuoteRequestsService(
+      prisma,
+      {} as any,
+      {} as any,
+      {} as any,
+      auditLog,
+      {} as any,
+      realtimeGateway,
+      {} as any,
+    );
+  });
+
+  it('SALE xóa đơn của chính mình, status: PENDING -> resolve, delete được gọi 1 lần', async () => {
+    prisma.quoteRequest.findUnique.mockResolvedValue({ requesterId: 'sale1', status: 'PENDING' });
+    await svc.remove('req1', 'sale1', 'SALE');
+    expect(prisma.quoteRequest.delete).toHaveBeenCalledTimes(1);
+    expect(auditLog.logActionByUserId).toHaveBeenCalledWith('sale1', 'DELETE_QUOTE', 'req1');
+  });
+
+  it('SALE xóa đơn có requesterId khác -> reject ForbiddenException, delete không được gọi', async () => {
+    prisma.quoteRequest.findUnique.mockResolvedValue({ requesterId: 'sale2', status: 'PENDING' });
+    await expect(svc.remove('req1', 'sale1', 'SALE')).rejects.toThrow('Bạn không có quyền hủy yêu cầu báo giá này');
+    expect(prisma.quoteRequest.delete).not.toHaveBeenCalled();
+  });
+
+  it('ADMIN xóa đơn của người khác, status: PROCESSING -> resolve', async () => {
+    prisma.quoteRequest.findUnique.mockResolvedValue({ requesterId: 'sale1', status: 'PROCESSING' });
+    await svc.remove('req1', 'admin1', 'ADMIN');
+    expect(prisma.quoteRequest.delete).toHaveBeenCalledTimes(1);
+  });
+
+  it('SALE (là người tạo) xóa đơn status: CLOSED -> reject ConflictException, delete không được gọi', async () => {
+    prisma.quoteRequest.findUnique.mockResolvedValue({ requesterId: 'sale1', status: 'CLOSED' });
+    await expect(svc.remove('req1', 'sale1', 'SALE')).rejects.toThrow('Yêu cầu đã chốt hoặc đã bị từ chối');
+    expect(prisma.quoteRequest.delete).not.toHaveBeenCalled();
+  });
+});

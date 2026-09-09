@@ -11,6 +11,8 @@ export interface JwtPayload {
   sub: string;
   email: string;
   role: string;
+  // Token phát trước khi triển khai claim này không có `type` — vẫn chấp nhận cho tới khi hết hạn.
+  type?: 'access' | 'refresh';
 }
 
 interface CachedAuthUser {
@@ -75,6 +77,12 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   async validate(payload: JwtPayload) {
     if (!payload || !payload.sub) {
       throw new UnauthorizedException('Token không hợp lệ');
+    }
+
+    // Refresh token sống dài hơn nhiều access token, và thu hồi refreshTokenHash trong DB
+    // không chặn được đường này (đường này không tra DB) — nên chặn thẳng ở đây.
+    if (payload.type === 'refresh') {
+      throw new UnauthorizedException('Token không hợp lệ cho thao tác này');
     }
 
     const cached = this.userCache.get(payload.sub);

@@ -13,9 +13,11 @@ import { RegisterDto } from './dto/register.dto';
 import { ForgotPasswordDto, ResetPasswordDto } from './dto/password-reset.dto';
 import { Role } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
-import { createHash } from 'crypto';
+import { createHash, randomInt } from 'crypto';
 import { MailService } from '../mail/mail.service';
 import { APP_CONSTANTS } from '../common/constants';
+
+export type TokenType = 'access' | 'refresh';
 
 @Injectable()
 export class AuthService {
@@ -70,14 +72,18 @@ export class AuthService {
       APP_CONSTANTS.JWT_REFRESH_EXPIRES,
     );
 
-    const payload = { sub: user.id, email: user.email, role: user.role };
+    const base = { sub: user.id, email: user.email, role: user.role };
 
-    const accessToken = this.jwtService.sign(payload, {
-      expiresIn: accessExpires as any,
-    });
-    const refreshToken = this.jwtService.sign(payload, {
-      expiresIn: refreshExpires as any,
-    });
+    // Claim `type` phân biệt 2 loại token: refresh sống dài hơn nhiều, không được dùng thay
+    // access token ở các route nghiệp vụ.
+    const accessToken = this.jwtService.sign(
+      { ...base, type: 'access' as TokenType },
+      { expiresIn: accessExpires as any },
+    );
+    const refreshToken = this.jwtService.sign(
+      { ...base, type: 'refresh' as TokenType },
+      { expiresIn: refreshExpires as any },
+    );
     const refreshTokenHash = this.hashSha256(refreshToken);
 
     return {
@@ -104,13 +110,18 @@ export class AuthService {
    * Xác thực Refresh Token
    */
   verifyRefreshToken(token: string) {
+    let payload: any;
     try {
-      return this.jwtService.verify(token);
+      payload = this.jwtService.verify(token);
     } catch {
       throw new UnauthorizedException(
         'Refresh Token không hợp lệ hoặc đã hết hạn',
       );
     }
+    if (payload?.type === 'access') {
+      throw new UnauthorizedException('Token không hợp lệ cho thao tác này');
+    }
+    return payload;
   }
 
   async loginWithLark(code: string) {
@@ -402,8 +413,9 @@ export class AuthService {
       };
     }
 
-    // Sinh mã OTP 6 chữ số
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    // Mã OTP 6 chữ số từ nguồn ngẫu nhiên mật mã — Math.random() đoán được nếu biết đủ
+    // output trước đó, không dùng cho giá trị bảo mật.
+    const otp = String(randomInt(100000, 1000000));
     const resetTokenHash = this.hashSha256(otp);
     const resetTokenExpires = new Date(Date.now() + 15 * 60 * 1000); // 15 phút
 

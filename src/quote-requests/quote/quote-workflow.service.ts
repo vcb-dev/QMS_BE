@@ -369,7 +369,26 @@ export class QuoteWorkflowService {
     return mapped;
   }
 
-  private async selectOption(id: string, optionId: string, role: Role) {
+  private async selectOption(
+    id: string,
+    optionId: string,
+    userId: string,
+    role: Role,
+  ) {
+    const quote = await this.prisma.quoteRequest.findUnique({
+      where: { id },
+      select: { requesterId: true },
+    });
+    if (!quote) {
+      throw new NotFoundException('Không tìm thấy yêu cầu báo giá');
+    }
+    // Sale chỉ chọn phương án trên đơn do CHÍNH MÌNH tạo — cùng quy tắc với markClosed().
+    if (role === Role.SALE && quote.requesterId !== userId) {
+      throw new ForbiddenException(
+        'Bạn chỉ được chọn phương án trên yêu cầu do mình tạo',
+      );
+    }
+
     const option = await this.prisma.quoteOption.findUnique({
       where: { id: optionId },
     });
@@ -584,14 +603,21 @@ export class QuoteWorkflowService {
    * Sale gửi lại yêu cầu sau khi đã bổ sung đủ thông tin.
    * Reset lại trạng thái về PENDING để Order tiếp nhận lại từ đầu.
    */
-  private async resubmitQuote(id: string, role: Role) {
+  private async resubmitQuote(id: string, userId: string, role: Role) {
     const curent = await this.prisma.quoteRequest.findUnique({
       where: { id },
-      select: { status: true },
+      select: { status: true, requesterId: true },
     });
 
     if (!curent) {
       throw new NotFoundException('Không tìm thấy yêu cầu báo giá');
+    }
+
+    // Sale chỉ gửi lại đơn do CHÍNH MÌNH tạo — cùng quy tắc với markClosed().
+    if (role === Role.SALE && curent.requesterId !== userId) {
+      throw new ForbiddenException(
+        'Bạn chỉ được gửi lại yêu cầu do mình tạo',
+      );
     }
 
     if (curent.status !== QuoteStatus.NEED_MORE_INFO) {
@@ -715,6 +741,7 @@ export class QuoteWorkflowService {
           [Role.ORDER, Role.ADMIN],
           'Chỉ có vai trò ORDER hoặc ADMIN mới được phép duyệt báo giá nhanh',
         );
+        await this.assertPricingCanProcess(id, userId, role);
         await this.auditLog.logAction(
           userId,
           role,
@@ -776,6 +803,7 @@ export class QuoteWorkflowService {
           [Role.ORDER, Role.ADMIN],
           'Chỉ có vai trò ORDER hoặc ADMIN mới được phép từ chối báo giá nhanh',
         );
+        await this.assertPricingCanProcess(id, userId, role);
         await this.auditLog.logAction(
           userId,
           role,
@@ -844,7 +872,7 @@ export class QuoteWorkflowService {
           'QuoteRequest',
           id,
         );
-        return this.resubmitQuote(id, role);
+        return this.resubmitQuote(id, userId, role);
 
       case QuoteAction.MARK_CLOSED:
         this.assertRole(
@@ -879,7 +907,7 @@ export class QuoteWorkflowService {
           'QuoteRequest',
           id,
         );
-        return this.selectOption(id, dto.optionId, role);
+        return this.selectOption(id, dto.optionId, userId, role);
 
       default:
         throw new BadRequestException(

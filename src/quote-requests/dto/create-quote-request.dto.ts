@@ -79,6 +79,7 @@ export class CreateQuoteRequestDto {
   customerMeasurements?: string;
 
   @IsOptional()
+  @Type(() => Number)
   @IsNumber({}, { message: 'Tỷ lệ chốt phải là dạng số' })
   @Min(0)
   @Max(100)

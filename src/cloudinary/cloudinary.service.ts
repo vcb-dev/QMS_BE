@@ -3,6 +3,70 @@ import { v2 as cloudinary, UploadApiResponse } from 'cloudinary';
 import { APP_CONSTANTS } from 'src/common/constants';
 import { Readable } from 'stream';
 
+export function isSupportedImageBuffer(buffer: Buffer): boolean {
+  if (!buffer || buffer.length < 12) return false;
+
+  // JPG: FF D8 FF
+  if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
+    return true;
+  }
+
+  // PNG: 89 50 4E 47 0D 0A 1A 0A
+  if (
+    buffer[0] === 0x89 &&
+    buffer[1] === 0x50 &&
+    buffer[2] === 0x4e &&
+    buffer[3] === 0x47 &&
+    buffer[4] === 0x0d &&
+    buffer[5] === 0x0a &&
+    buffer[6] === 0x1a &&
+    buffer[7] === 0x0a
+  ) {
+    return true;
+  }
+
+  // GIF: GIF87a (47 49 46 38 37 61) hoặc GIF89a (47 49 46 38 39 61)
+  if (
+    buffer[0] === 0x47 &&
+    buffer[1] === 0x49 &&
+    buffer[2] === 0x46 &&
+    buffer[3] === 0x38 &&
+    (buffer[4] === 0x37 || buffer[4] === 0x39) &&
+    buffer[5] === 0x61
+  ) {
+    return true;
+  }
+
+  // WEBP: RIFF ... WEBP
+  if (
+    buffer[0] === 0x52 &&
+    buffer[1] === 0x49 &&
+    buffer[2] === 0x46 &&
+    buffer[3] === 0x46 &&
+    buffer[8] === 0x57 &&
+    buffer[9] === 0x45 &&
+    buffer[10] === 0x42 &&
+    buffer[11] === 0x50
+  ) {
+    return true;
+  }
+
+  // HEIC/HEIF: 4 byte đầu (độ dài), tiếp theo ftyp (66 74 79 70)
+  if (
+    buffer[4] === 0x66 &&
+    buffer[5] === 0x74 &&
+    buffer[6] === 0x79 &&
+    buffer[7] === 0x70
+  ) {
+    const brand = buffer.subarray(8, 12).toString('ascii');
+    if (['heic', 'heix', 'mif1', 'msf1'].includes(brand)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 @Injectable()
 export class CloudinaryService {
   private readonly logger = new Logger(CloudinaryService.name);
@@ -20,6 +84,19 @@ export class CloudinaryService {
     });
 
     this.logger.log(`☁️ Cloudinary initialized with Cloud Name: ${cloudName}`);
+  }
+
+  private isOwnCloudinaryUrl(urlStr: string): boolean {
+    try {
+      const url = new URL(urlStr);
+      const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
+      return (
+        url.hostname === 'res.cloudinary.com' &&
+        url.pathname.includes(`/${cloudName}/`)
+      );
+    } catch {
+      return false;
+    }
   }
 
   /**
@@ -47,6 +124,10 @@ export class CloudinaryService {
       throw new BadRequestException(
         `Định dạng tệp ${file.mimetype} không được hỗ trợ. Vui lòng chỉ tải lên tập tin ảnh (PNG, JPG, WEBP, GIF, HEIC)`,
       );
+    }
+
+    if (!isSupportedImageBuffer(file.buffer)) {
+      throw new BadRequestException('Nội dung tập tin không phải là ảnh hợp lệ (fake MIME type)');
     }
 
     // 3. Upload Stream lên Cloudinary
@@ -92,9 +173,12 @@ export class CloudinaryService {
   async uploadBase64OrUrl(input: string): Promise<string> {
     if (!input || typeof input !== 'string') return '';
 
-    // Nếu đã là Cloudinary URL hoặc HTTP URL hợp lệ
     if (input.startsWith('http://') || input.startsWith('https://')) {
-      return input;
+      if (this.isOwnCloudinaryUrl(input)) {
+        return input;
+      }
+      this.logger.warn(`Từ chối lưu URL không thuộc Cloudinary của dự án: ${input}`);
+      return '';
     }
 
     // Nếu là Data URL Base64

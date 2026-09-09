@@ -313,9 +313,10 @@ model QuoteRequest {
 
   @@index([status, finalPrice])
   @@index([status, createdAt(sort: Desc)])
-  @@index([requesterId])
+  @@index([createdAt(sort: Desc)])
+  @@index([requesterId, createdAt(sort: Desc)])
   @@index([requesterId, status])
-  @@index([assigneeId])
+  @@index([assigneeId, createdAt(sort: Desc)])
   @@index([assigneeId, status])
   @@index([customerId])
   @@index([categoryId])
@@ -342,6 +343,7 @@ model Stone {
 
   // Thư viện sản phẩm lọc + gộp nhóm nặng theo (stoneType, name) — đá chủ MAIN định danh sản phẩm.
   @@index([stoneType, name])
+  @@index([isActive, name])
   @@map("stones")
 }
 
@@ -418,6 +420,7 @@ model QuoteOption {
   updatedAt DateTime @updatedAt @map("updated_at")
 
   @@index([quoteRequestId])
+  @@index([quoteRequestId, createdAt])
   @@index([dedupKey])
   @@index([libraryGroupKey])
   @@map("quote_options")

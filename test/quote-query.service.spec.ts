@@ -163,6 +163,23 @@ describe('LibraryService.getLibraryProducts — gộp nhóm + phân trang phía 
         LibraryService,
         { provide: PrismaService, useValue: prisma },
         {
+          provide: QuoteQueryService,
+          useValue: {
+            stripCostFieldsForSale: (opts: any[]) =>
+              opts?.map(
+                ({
+                  laborCost,
+                  stoneCost,
+                  totalMetalCost,
+                  metalRawCost,
+                  stonePrice,
+                  costBreakdown,
+                  ...rest
+                }) => rest,
+              ),
+          },
+        },
+        {
           provide: QuoteOptionsService,
           useValue: {
             batchComputeLivePrices: jest.fn(
@@ -398,6 +415,23 @@ describe('LibraryService.getLibraryProductHistory — lịch sử báo giá 1 s�
         LibraryService,
         { provide: PrismaService, useValue: prisma },
         {
+          provide: QuoteQueryService,
+          useValue: {
+            stripCostFieldsForSale: (opts: any[]) =>
+              opts?.map(
+                ({
+                  laborCost,
+                  stoneCost,
+                  totalMetalCost,
+                  metalRawCost,
+                  stonePrice,
+                  costBreakdown,
+                  ...rest
+                }) => rest,
+              ),
+          },
+        },
+        {
           provide: QuoteOptionsService,
           useValue: {
             batchComputeLivePrices: jest.fn(
@@ -515,7 +549,7 @@ describe('QuoteQueryService — priceBreakdown tách giá chất liệu / giá �
   });
 
   it('buildHistoryEntry gắn priceBreakdown mỗi option', () => {
-    const svc = new LibraryService({} as any, {} as any);
+    const svc = new LibraryService({} as any, {} as any, {} as any);
     const entry = svc['buildHistoryEntry']([
       {
         quoteRequest: {

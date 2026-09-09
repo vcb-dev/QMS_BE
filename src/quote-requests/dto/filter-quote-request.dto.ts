@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsEnum, IsInt, IsOptional, IsString, Min } from 'class-validator';
+import { IsEnum, IsInt, IsOptional, IsString, Min, MaxLength } from 'class-validator';
 import { QuoteStatus } from '@prisma/client';
 
 export class FilterQuoteRequestDto {
@@ -9,6 +9,8 @@ export class FilterQuoteRequestDto {
 
   @IsOptional()
   @IsString()
+  // Chuỗi tìm kiếm chạy ILIKE '%x%' qua 9 nhánh OR có join — chuỗi rất dài là đường DoS rẻ.
+  @MaxLength(200, { message: 'Từ khóa tìm kiếm tối đa 200 ký tự' })
   search?: string;
 
   @IsOptional()

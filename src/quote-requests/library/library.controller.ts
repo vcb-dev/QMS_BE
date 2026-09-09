@@ -3,6 +3,7 @@ import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../../auth/guards/roles.guard';
 import { Roles } from '../../auth/decorators/roles.decorator';
+import { CurrentUser } from '../../auth/decorators/current-user.decorator';
 import { Role } from '@prisma/client';
 import {
   LibraryProductsQueryDto,
@@ -27,8 +28,11 @@ export class LibraryController {
   })
   @Roles(Role.SALE, Role.ORDER, Role.ADMIN)
   @Get('library-products')
-  async getLibraryProducts(@Query() dto: LibraryProductsQueryDto) {
-    return this.libraryService.getLibraryProducts(dto);
+  async getLibraryProducts(
+    @Query() dto: LibraryProductsQueryDto,
+    @CurrentUser('role') role: Role,
+  ) {
+    return this.libraryService.getLibraryProducts(dto, role);
   }
 
   @ApiOperation({

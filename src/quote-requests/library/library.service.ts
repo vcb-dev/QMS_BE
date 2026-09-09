@@ -5,7 +5,7 @@
 // rất khác findAll. Không cache RAM — query thẳng DB mỗi lần.
 
 import { Injectable } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { Prisma, Role } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   LibraryProductsQueryDto,
@@ -23,12 +23,14 @@ import {
 } from '../../utils/option-mapper.util';
 import { resolveDateRange } from '../../utils/date-range.util';
 import { QuoteOptionsService } from '../quote-option/quote-options.service';
+import { QuoteQueryService } from '../quote/quote-query.service';
 
 @Injectable()
 export class LibraryService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly quoteOptionsService: QuoteOptionsService,
+    private readonly queryService: QuoteQueryService,
   ) {}
 
   // Bộ lọc SQL dùng chung cho danh sách Thư Viện + lịch sử báo giá 1 sản phẩm. Alias: qo =
@@ -105,7 +107,7 @@ export class LibraryService {
    * option thuộc các nhóm CỦA TRANG này. Sort PRICE_ASC/DESC theo giá ĐÃ BÁO (quoted_price); card
    * vẫn hiển thị giá sống. Không cache RAM — query thẳng DB mỗi lần.
    */
-  async getLibraryProducts(dto: LibraryProductsQueryDto) {
+  async getLibraryProducts(dto: LibraryProductsQueryDto, role?: Role) {
     const page = dto.page ?? 1;
     const limit = dto.limit ?? 8;
     const offset = (page - 1) * limit;
@@ -238,6 +240,15 @@ export class LibraryService {
         });
       })
       .filter((c): c is NonNullable<typeof c> => !!c);
+
+    // SALE chỉ được xem Giá bán — cắt cấu thành giá vốn khỏi phương án đại diện của mỗi thẻ,
+    // giống findAll/findOne. Cắt SAU khi attachPriceBreakdowns đã chạy, vì livePriceMin/Max
+    // được tính từ chính các field này.
+    if (role === Role.SALE) {
+      for (const card of data) {
+        card.option = this.queryService.stripCostFieldsForSale([card.option])![0];
+      }
+    }
 
     return {
       data,

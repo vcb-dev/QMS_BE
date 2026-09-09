@@ -36,6 +36,22 @@ import {
   type NotifiableActionInfo,
 } from '../common/audit-actions';
 
+const LARK_WEBHOOK_HOSTS = ['open.larksuite.com', 'open.feishu.cn'];
+
+function assertLarkWebhookHost(urlStr: string) {
+  let url;
+  try {
+    url = new URL(urlStr);
+  } catch (e) {
+    throw new BadRequestException('Webhook URL không hợp lệ (lỗi cú pháp)');
+  }
+  if (!LARK_WEBHOOK_HOSTS.includes(url.hostname)) {
+    throw new BadRequestException(
+      `Webhook URL phải thuộc Lark (${LARK_WEBHOOK_HOSTS.join(', ')}). Bị chặn: ${url.hostname}`,
+    );
+  }
+}
+
 interface RouteRow {
   webhookUrl: string;
   webhookSecret: string | null;
@@ -205,6 +221,7 @@ export class LarkService implements OnModuleInit {
     userId: string,
   ): Promise<LarkWebhookView> {
     const actions = this.normalizeActions(dto.actions);
+    assertLarkWebhookHost(dto.webhookUrl.trim());
     try {
       const created = await this.prisma.larkWebhook.create({
         data: {
@@ -245,7 +262,10 @@ export class LarkService implements OnModuleInit {
     };
     if (dto.chatName !== undefined) data.chatName = dto.chatName.trim();
     if (dto.botName !== undefined) data.botName = dto.botName.trim() || null;
-    if (dto.webhookUrl !== undefined) data.webhookUrl = dto.webhookUrl.trim();
+    if (dto.webhookUrl !== undefined) {
+      assertLarkWebhookHost(dto.webhookUrl);
+      data.webhookUrl = dto.webhookUrl.trim();
+    }
     if (dto.isEnabled !== undefined) data.isEnabled = dto.isEnabled;
     // webhookSecret: bỏ field = giữ nguyên; '' = xóa; chuỗi khác = đặt mới
     if (dto.webhookSecret !== undefined) {
@@ -692,21 +712,18 @@ export class LarkService implements OnModuleInit {
         body: JSON.stringify(body),
       });
       if (!res.ok) {
-        const msg = `Lark webhook trả về lỗi HTTP ${res.status}`;
-        this.logger.warn(msg);
-        return { ok: false, message: msg };
+        this.logger.warn(`Lark webhook trả về lỗi HTTP ${res.status}`);
+        return { ok: false, message: 'Không gửi được tin tới Lark' };
       }
       const data: any = await res.json().catch(() => null);
       if (data && data.code !== 0) {
-        const msg = `Lark webhook từ chối: ${data.msg || JSON.stringify(data)}`;
-        this.logger.warn(msg);
-        return { ok: false, message: msg };
+        this.logger.warn(`Lark webhook từ chối: ${data.msg || JSON.stringify(data)}`);
+        return { ok: false, message: 'Lark từ chối tin nhắn thử' };
       }
       return { ok: true, message: 'Đã gửi tin tới Lark' };
     } catch (err) {
-      const msg = `Không gửi được thông báo Lark: ${err instanceof Error ? err.message : err}`;
-      this.logger.warn(msg);
-      return { ok: false, message: msg };
+      this.logger.warn(`Không gửi được thông báo Lark: ${err instanceof Error ? err.message : err}`);
+      return { ok: false, message: 'Không gửi được tin tới Lark' };
     }
   }
 

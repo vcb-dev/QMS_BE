@@ -11,15 +11,6 @@ type PlainMaterial = Omit<MaterialWithFormula, 'priceRatioPct'> & {
   priceRatioPct: number;
 };
 
-// % tính giá hợp lệ — validate ở backend, không chỉ FE, vì @Body('priceRatioPct') là param rời
-// nên ValidationPipe/class-validator toàn cục không tự chạy qua đây (chỉ áp cho @Body() cả DTO).
-function assertValidRatio(priceRatioPct: number | undefined) {
-  if (priceRatioPct === undefined) return;
-  if (priceRatioPct < 0 || priceRatioPct > 1000) {
-    throw new BadRequestException('% tính giá phải trong khoảng 0-1000');
-  }
-}
-
 @Injectable()
 export class MaterialsService {
   constructor(private prisma: PrismaService) {}
@@ -48,7 +39,6 @@ export class MaterialsService {
     priceRatioPct?: number,
     baseMetalId?: string,
   ) {
-    assertValidRatio(priceRatioPct);
     if (!pricingFormulaId) {
       throw new BadRequestException(
         'Vui lòng chọn công thức tính lãi cho chất liệu',
@@ -77,7 +67,6 @@ export class MaterialsService {
       baseMetalId?: string | null;
     },
   ) {
-    assertValidRatio(patch.priceRatioPct);
     const updated = await this.prisma.material.update({
       where: { id },
       data: patch,

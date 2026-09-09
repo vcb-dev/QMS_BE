@@ -15,16 +15,20 @@ import { CreateCustomerDto } from './dto/create-customer.dto';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
 import { CustomerStatsQueryDto } from './dto/customer-stats-query.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Role } from '@prisma/client';
 
 @ApiTags('Customers - Quản lý Khách hàng')
 @ApiBearerAuth('JWT-auth')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('customers')
 export class CustomersController {
   constructor(private readonly customersService: CustomersService) {}
 
+  // Ô tìm khách trong CreateModal của Sale — cố ý KHÔNG giới hạn role. RolesGuard cho qua
+  // khi route không khai @Roles.
   @ApiOperation({ summary: 'Lấy danh sách khách hàng (Có lọc tìm kiếm)' })
   @Get()
   async findAll(@Query('search') search?: string) {
@@ -35,6 +39,7 @@ export class CustomersController {
     summary:
       'Số liệu tổng hợp theo khách hàng (tổng đơn/đã chốt/giá trị/đơn gần nhất) — phân trang & sort thật ở SQL',
   })
+  @Roles(Role.ADMIN)
   @Get('stats')
   async getStats(@Query() dto: CustomerStatsQueryDto) {
     return this.customersService.getStats(dto);
@@ -44,6 +49,7 @@ export class CustomersController {
     summary:
       'So sánh KPI tháng này với tháng trước (số khách hoạt động + giá trị đã chốt) cho card đầu trang',
   })
+  @Roles(Role.ADMIN)
   @Get('stats/month-comparison')
   async getMonthComparison(
     @Query('provinceId') provinceId?: string,
@@ -53,11 +59,13 @@ export class CustomersController {
   }
 
   @ApiOperation({ summary: 'Lấy chi tiết khách hàng theo ID' })
+  @Roles(Role.ADMIN)
   @Get(':id')
   async findOne(@Param('id') id: string) {
     return this.customersService.findOne(id);
   }
 
+  // Sale tạo khách mới ngay trong luồng tạo yêu cầu báo giá — cố ý KHÔNG giới hạn role.
   @ApiOperation({
     summary:
       'Tạo mới khách hàng (Tách biệt tỉnh/thành và phường/xã/quận/huyện)',
@@ -72,6 +80,7 @@ export class CustomersController {
   }
 
   @ApiOperation({ summary: 'Cập nhật thông tin khách hàng' })
+  @Roles(Role.ADMIN)
   @Patch(':id')
   async update(
     @Param('id') id: string,
@@ -83,6 +92,7 @@ export class CustomersController {
   }
 
   @ApiOperation({ summary: 'Xóa khách hàng' })
+  @Roles(Role.ADMIN)
   @Delete(':id')
   async remove(
     @Param('id') id: string,

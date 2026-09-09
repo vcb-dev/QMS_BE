@@ -8,6 +8,7 @@ import {
   Min,
   Max,
   MaxLength,
+  ArrayMaxSize,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -105,12 +106,14 @@ export class QuoteOptionItemDto {
 
   @IsOptional()
   @IsArray()
+  @ArrayMaxSize(20)
   @ValidateNested({ each: true })
   @Type(() => MaterialWeightItemDto)
   materials?: MaterialWeightItemDto[];
 
   @IsOptional()
   @IsArray()
+  @ArrayMaxSize(30)
   @ValidateNested({ each: true })
   @Type(() => StoneSelectionItemDto)
   stones?: StoneSelectionItemDto[];

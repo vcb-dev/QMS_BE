@@ -7,6 +7,7 @@ import {
   IsString,
   ValidateNested,
   ArrayMinSize,
+  ArrayMaxSize,
   Min,
   Max,
 } from 'class-validator';
@@ -60,6 +61,7 @@ export class CalculatePriceInput {
   // thì `stoneCost` scalar là tổng tiền đá nhập tay.
   @IsOptional()
   @IsArray()
+  @ArrayMaxSize(30, { message: 'Tối đa 30 loại đá' })
   @ValidateNested({ each: true })
   @Type(() => CalculateMultiStoneItem)
   stones?: CalculateMultiStoneItem[];
@@ -130,6 +132,7 @@ export class CalculateBatchItem {
   // Xem chú thích ở CalculatePriceInput.stones — BE tự cộng tổng tiền đá cho phương án này.
   @IsOptional()
   @IsArray()
+  @ArrayMaxSize(30, { message: 'Tối đa 30 loại đá' })
   @ValidateNested({ each: true })
   @Type(() => CalculateMultiStoneItem)
   stones?: CalculateMultiStoneItem[];
@@ -148,6 +151,9 @@ export class CalculateBatchInput {
 
   @IsArray()
   @ArrayMinSize(1, { message: 'Cần ít nhất 1 phương án để tính' })
+  // Mỗi phương án là một lần tính giá thuần CPU; Node chạy 1 luồng nên mảng lớn khóa cả
+  // event loop.
+  @ArrayMaxSize(50, { message: 'Tối đa 50 phương án trong một lần tính' })
   @ValidateNested({ each: true })
   @Type(() => CalculateBatchItem)
   items: CalculateBatchItem[];
@@ -207,6 +213,7 @@ export class CalculateMultiStoneItem {
 export class CalculateMultiInput {
   @IsArray()
   @ArrayMinSize(1, { message: 'Cần ít nhất 1 chất liệu để tính giá' })
+  @ArrayMaxSize(20, { message: 'Tối đa 20 loại chất liệu' })
   @ValidateNested({ each: true })
   @Type(() => CalculateMultiMaterialItem)
   materials: CalculateMultiMaterialItem[];
@@ -241,6 +248,7 @@ export class CalculateMultiInput {
 
   @IsOptional()
   @IsArray()
+  @ArrayMaxSize(30, { message: 'Tối đa 30 loại đá' })
   @ValidateNested({ each: true })
   @Type(() => CalculateMultiStoneItem)
   stones?: CalculateMultiStoneItem[];

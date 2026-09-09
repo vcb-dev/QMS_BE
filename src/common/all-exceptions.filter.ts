@@ -71,6 +71,9 @@ function mapPrismaError(
         const target = (exception.meta?.target as string[] | undefined)?.join(
           ', ',
         );
+        logger.warn(
+          `Prisma P2002 unique conflict: ${JSON.stringify(exception.meta)}`,
+        );
         return {
           status: HttpStatus.CONFLICT,
           message: target
@@ -79,11 +82,17 @@ function mapPrismaError(
         };
       }
       case 'P2025':
+        logger.warn(
+          `Prisma P2025 record not found: ${JSON.stringify(exception.meta)}`,
+        );
         return {
           status: HttpStatus.NOT_FOUND,
           message: 'Không tìm thấy bản ghi cần thao tác',
         };
       case 'P2003':
+        logger.error(
+          `Prisma P2003 FK violation: ${JSON.stringify(exception.meta)}`,
+        );
         return {
           status: HttpStatus.BAD_REQUEST,
           message:

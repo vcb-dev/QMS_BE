@@ -15,7 +15,7 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { StonesService } from './stones.service';
-import { CreateStoneDto, UpdateStoneDto } from './dto/stone.dto';
+import { CreateStoneDto, UpdateStoneDto, UpdateStonePricesDto, DeleteStonesDto } from './dto/stone.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -74,8 +74,8 @@ export class StonesController {
   @UseGuards(RolesGuard)
   @Roles(Role.ORDER, Role.ADMIN)
   @Patch('prices')
-  async updatePrices(@Body('items') items: { id: string; price: number }[]) {
-    return this.stonesService.updateManyPrices(items);
+  async updatePrices(@Body() dto: UpdateStonePricesDto) {
+    return this.stonesService.updateManyPrices(dto.items);
   }
 
   @UseGuards(RolesGuard)
@@ -89,7 +89,7 @@ export class StonesController {
   @UseGuards(RolesGuard)
   @Roles(Role.ORDER, Role.ADMIN)
   @Post('delete-many')
-  async removeMany(@Body('ids') ids: string[]) {
-    return this.stonesService.removeMany(ids);
+  async removeMany(@Body() dto: DeleteStonesDto) {
+    return this.stonesService.removeMany(dto.ids);
   }
 }

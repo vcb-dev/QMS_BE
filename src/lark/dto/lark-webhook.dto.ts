@@ -7,6 +7,7 @@ import {
   IsNotEmpty,
   IsOptional,
   IsString,
+  IsUrl,
   Min,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -62,6 +63,10 @@ export class CreateLarkWebhookDto {
   @ApiProperty({ description: 'Webhook URL của Custom Bot Lark (duy nhất)' })
   @IsString()
   @IsNotEmpty({ message: 'Webhook URL không được để trống' })
+  @IsUrl(
+    { protocols: ['https'], require_protocol: true },
+    { message: 'Webhook URL phải là địa chỉ https hợp lệ' },
+  )
   webhookUrl: string;
 
   @ApiPropertyOptional({
@@ -104,6 +109,10 @@ export class UpdateLarkWebhookDto {
   @IsOptional()
   @IsString()
   @IsNotEmpty({ message: 'Webhook URL không được để trống' })
+  @IsUrl(
+    { protocols: ['https'], require_protocol: true },
+    { message: 'Webhook URL phải là địa chỉ https hợp lệ' },
+  )
   webhookUrl?: string;
 
   @ApiPropertyOptional({
