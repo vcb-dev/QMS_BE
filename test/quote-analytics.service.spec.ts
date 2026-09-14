@@ -270,11 +270,11 @@ describe('QuoteAnalyticsService.getStaffPerformance', () => {
     );
   });
 
-  it('pricerStats tính avgQuoteMs từ finalOptionId.quotedDate - acceptedAt', async () => {
+  it('pricerStats tính medianQuoteMs từ finalOptionId.quotedDate - acceptedAt', async () => {
     const result = await service.getStaffPerformance();
     const pricer = result.pricerStats.find((p) => p.id === 'order-1');
     expect(pricer?.totalHandled).toBe(1);
-    expect(pricer?.avgQuoteMs).toBe(5 * 60 * 60 * 1000); // 5 giờ
-    expect(pricer?.avgProcessMs).toBe(5 * 60 * 60 * 1000);
+    expect(pricer?.medianQuoteMs).toBe(5 * 60 * 60 * 1000); // 5 giờ
+    expect(pricer?.medianProcessMs).toBe(5 * 60 * 60 * 1000);
   });
 });
