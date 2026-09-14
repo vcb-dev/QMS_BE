@@ -48,24 +48,6 @@ export class ExcelService {
   }
 
   /**
-   * Đọc file Multer Excel và trả về mảng dữ liệu JSON thô (dòng 1 = header cột)
-   */
-  parseExcelFile(file?: Express.Multer.File): Record<string, unknown>[] {
-    const sheet = this.readFirstSheet(file);
-    const rawRows: Record<string, unknown>[] = XLSX.utils.sheet_to_json(sheet, {
-      defval: '',
-    });
-
-    if (rawRows.length === 0) {
-      throw new BadRequestException(
-        'File Excel không có dòng dữ liệu nào (chỉ có header hoặc trống)',
-      );
-    }
-
-    return rawRows;
-  }
-
-  /**
    * Đọc file Multer Excel có dòng tiêu đề (tên) riêng ở trên header cột — bố cục dòng 1 = tên
    * (VD "KIM CƯƠNG LAB GROWN", 1 ô bất kỳ trong dòng), dòng 2 = header cột, dòng 3+ = dữ liệu.
    * Dùng cho các bảng giá đá theo lưới shape/size (đá không có cột "Tên" riêng từng dòng).
@@ -103,7 +85,9 @@ export class ExcelService {
         });
         return obj;
       })
-      .filter((row) => Object.values(row).some((v) => String(v ?? '').trim() !== ''));
+      .filter((row) =>
+        Object.values(row).some((v) => String(v ?? '').trim() !== ''),
+      );
 
     if (rows.length === 0) {
       throw new BadRequestException(

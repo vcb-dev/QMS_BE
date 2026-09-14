@@ -15,14 +15,18 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { StonesService } from './stones.service';
-import { CreateStoneDto, UpdateStoneDto, UpdateStonePricesDto, DeleteStonesDto } from './dto/stone.dto';
+import {
+  CreateStoneDto,
+  UpdateStoneDto,
+  UpdateStonePricesDto,
+  DeleteStonesDto,
+} from './dto/stone.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { Role, StoneType } from '@prisma/client';
 
-// Chặn ngay ở tầng multer (đuôi file + kích thước) trước khi vào service verify chi tiết từng dòng
-// — dùng chung cho cả 2 route import Excel (bảng giá tự do + bảng giá lưới shape/size).
+// Chặn ngay ở tầng multer (đuôi file + kích thước) trước khi vào service verify chi tiết từng dòng.
 const stoneExcelFileInterceptor = FileInterceptor('file', {
   limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
   fileFilter: (_req, file, cb) => {
@@ -53,20 +57,10 @@ export class StonesController {
     return this.stonesService.create(dto);
   }
 
-  // Import bảng giá đá từ file Excel (.xlsx/.xls) — cột Loại/Tên/Cut/Size/Giá, mỗi dòng 1 viên
-  // đá đặt tên riêng (VD Ruby, Sapphire...), stoneType đọc từ cột "Loại" trong file.
-  @UseGuards(RolesGuard)
-  @Roles(Role.ORDER, Role.ADMIN)
-  @Post('import')
-  @UseInterceptors(stoneExcelFileInterceptor)
-  async importFromExcel(@UploadedFile() file?: Express.Multer.File) {
-    return this.stonesService.importFromExcel(file);
-  }
-
   // Import bảng giá đá theo lưới shape/size (VD kim cương: dòng 1 = tên đá, dòng 2 = header cột
   // Shape/Size/Đơn giá·carat/Trọng lượng ước tính/Thành tiền) — không có cột Loại/Tên riêng từng
   // dòng, stoneType lấy từ nút bấm (đá chủ/đá tấm) qua query, không đọc từ file. Trùng shape/size
-  // với đá đã có thì đè giá mới (khác /import: bỏ qua dòng trùng).
+  // với đá đã có thì đè giá mới.
   @UseGuards(RolesGuard)
   @Roles(Role.ORDER, Role.ADMIN)
   @Post('import-price-grid')
