@@ -207,6 +207,131 @@ export class StonesService {
     return { imported: created.count, skipped };
   }
 
+  // Lưu 1 lô đá từ bảng giá lưới shape/size — khác importMany (bỏ qua dòng trùng): trùng
+  // (stoneType, name, cut, size) thì ĐÈ giá mới lên (bảng giá kim cương đổi theo thị trường,
+  // import lại file mới nhất là để cập nhật giá, không phải chặn trùng).
+  async importPriceGridRows(rows: CreateStoneDto[]) {
+    if (!rows || rows.length === 0) return { imported: 0, updated: 0 };
+
+    const existing = await this.prisma.stone.findMany({
+      select: { id: true, stoneType: true, name: true, cut: true, size: true },
+    });
+    const existingByKey = new Map(
+      existing.map((s) => [
+        this.stoneDedupKey(s.stoneType, s.name, s.cut, s.size),
+        s.id,
+      ]),
+    );
+
+    // File có thể có 2 dòng cùng shape/size (lỗi nhập liệu) — giữ giá dòng SAU CÙNG trong file.
+    const rowByKey = new Map<string, CreateStoneDto>();
+    for (const row of rows) {
+      rowByKey.set(
+        this.stoneDedupKey(row.stoneType, row.name, row.cut, row.size),
+        row,
+      );
+    }
+
+    const toCreate: CreateStoneDto[] = [];
+    const updates: { id: string; price: number }[] = [];
+    for (const [key, row] of rowByKey) {
+      const existingId = existingByKey.get(key);
+      if (existingId) updates.push({ id: existingId, price: row.price });
+      else toCreate.push(row);
+    }
+
+    await this.prisma.$transaction([
+      ...updates.map((u) =>
+        this.prisma.stone.update({
+          where: { id: u.id },
+          data: { price: u.price },
+        }),
+      ),
+      ...(toCreate.length > 0
+        ? [this.prisma.stone.createMany({ data: toCreate })]
+        : []),
+    ]);
+
+    return { imported: toCreate.length, updated: updates.length };
+  }
+
+  // Import bảng giá đá theo lưới shape/size (VD kim cương: dòng 1 = tên đá, dòng 2 = header cột
+  // Shape/Size/Đơn giá·carat/Trọng lượng ước tính/Thành tiền, dòng 3+ = data) — không có cột
+  // Loại/Tên riêng từng dòng như importFromExcel: `stoneType` do người dùng chọn qua nút bấm
+  // (đá chủ/đá tấm), `name` lấy từ dòng tên; chỉ lưu "Thành tiền" (giá/viên) vào price, không lưu
+  // đơn giá/carat hay trọng lượng ước tính (không có field, không cần tính lại sau).
+  async importPriceGridFromExcel(file: Express.Multer.File | undefined, stoneType: StoneType) {
+    const { title, rows: rawRows } =
+      this.excelService.parseExcelFileWithTitleRow(file);
+    if (rawRows.length > APP_CONSTANTS.MAX_IMPORT_ROWS) {
+      throw new BadRequestException(
+        `File Excel có quá nhiều dòng dữ liệu (${rawRows.length} > ${APP_CONSTANTS.MAX_IMPORT_ROWS})`,
+      );
+    }
+
+    const firstRowKeys = Object.keys(rawRows[0] || {});
+    const findKey = (candidates: string[]) =>
+      firstRowKeys.find((k) =>
+        candidates.includes(this.excelService.normalizeHeader(k)),
+      );
+    const keyShape = findKey(['shape', 'hinh dang']);
+    const keySize = findKey(['size (mm)', 'size mm', 'size', 'kich thuoc (mm)', 'kich thuoc']);
+    const keyFinalPrice = findKey(['thanh tien (vnd)', 'thanh tien', 'gia tien', 'thanh tien vnd']);
+    const missingCols: string[] = [];
+    if (!keyShape) missingCols.push('Shape');
+    if (!keyFinalPrice) missingCols.push('Thành tiền (VND)');
+    if (missingCols.length > 0) {
+      throw new BadRequestException(
+        `File Excel thiếu cột dữ liệu bắt buộc: ${missingCols.join(', ')}`,
+      );
+    }
+
+    const errors: string[] = [];
+    const validRows: CreateStoneDto[] = [];
+    rawRows.forEach((row, idx) => {
+      const excelRowNum = idx + 3; // +2 dòng tên/header ở trên
+      const shapeRaw = String(row[keyShape!] ?? '').trim();
+      const sizeRaw = keySize ? String(row[keySize] ?? '').trim() : '';
+      const priceRaw = row[keyFinalPrice!];
+
+      if (!shapeRaw && !sizeRaw && !priceRaw) return; // Bỏ qua dòng trống
+
+      if (!shapeRaw) {
+        errors.push(`Dòng ${excelRowNum}: thiếu "Shape"`);
+        return;
+      }
+
+      const price = parsePrice(priceRaw);
+      if (price === null) {
+        errors.push(
+          `Dòng ${excelRowNum}: "Thành tiền" phải là số lớn hơn 0 (đang là "${String(priceRaw)}")`,
+        );
+        return;
+      }
+
+      validRows.push({
+        stoneType,
+        name: title,
+        cut: shapeRaw,
+        size: sizeRaw || undefined,
+        price,
+      });
+    });
+    if (errors.length > 0) {
+      throw new BadRequestException({
+        message: `File có ${errors.length} dòng lỗi, chưa import dòng nào. Sửa xong upload lại.`,
+        errors,
+      });
+    }
+    if (validRows.length === 0) {
+      throw new BadRequestException(
+        'Không có dòng dữ liệu hợp lệ nào trong file',
+      );
+    }
+
+    return this.importPriceGridRows(validRows);
+  }
+
   async importFromExcel(file?: Express.Multer.File) {
     const rawRows = this.excelService.parseExcelFile(file);
     if (rawRows.length > APP_CONSTANTS.MAX_IMPORT_ROWS) {
