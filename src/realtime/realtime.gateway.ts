@@ -52,9 +52,12 @@ export class RealtimeGateway
   private static readonly MAX_MESSAGES = 5;
   private messageTimestamps = new Map<string, number[]>();
 
-  // Mỗi socket chỉ ở 1 phòng chat tại 1 thời điểm — tránh giữ mapping room thừa khi client
-  // chuyển qua lại giữa nhiều yêu cầu báo giá mà không ngắt kết nối socket.
-  private currentChatRoom = new Map<string, string>();
+  // Đơn đang THỰC SỰ mở xem (không phải chỉ join để nhận badge) — tối đa 1 đơn/socket tại 1 thời
+  // điểm, set khi client đọc tin (markRead, tức đã mở popup chat) hoặc join không đánh dấu passive
+  // (DetailPage xem 1 đơn, hoặc bấm mở chat thẳng từ bảng Danh Sách). Dùng RIÊNG để quyết định có
+  // bắc cầu Lark DM hay không (maybeBridgeToLark) — KHÔNG suy từ việc socket có ở trong phòng
+  // socket.io hay không nữa, vì giờ 1 socket có thể ở NHIỀU phòng cùng lúc (xem dưới).
+  private activeChatRequest = new Map<string, string>(); // clientId -> quoteRequestId
 
   constructor(
     private readonly quoteChatService: QuoteChatService,
@@ -71,7 +74,7 @@ export class RealtimeGateway
 
   handleDisconnect(client: AuthedSocket) {
     this.messageTimestamps.delete(client.id);
-    this.currentChatRoom.delete(client.id);
+    this.activeChatRequest.delete(client.id);
   }
   //Tự động chạy máy chủ Socket và xác thực socket bằng JWT (từ cookie hoặc từ token trong handshake.auth) — nếu không hợp lệ thì từ chối kết nối.
   afterInit(server: Server) {
@@ -123,11 +126,16 @@ export class RealtimeGateway
   private roomName(quoteRequestId: string) {
     return `quote-chat:${quoteRequestId}`;
   }
-  // Xử lý sự kiện joinRequest từ client FE: xác thực user, kiểm tra quyền truy cập cuộc trò chuyện, tham gia phòng chat tương ứng.
+  // Xử lý sự kiện joinRequest từ client FE: xác thực user, kiểm tra quyền truy cập cuộc trò chuyện,
+  // tham gia phòng chat tương ứng (socket.io room — chỉ để NHẬN broadcast, 1 socket có thể ở nhiều
+  // phòng cùng lúc, VD bảng Danh Sách join hết các đơn đang hiển thị để nhận badge tin chưa đọc
+  // real-time). `passive: true` = join kiểu đó (không tính "đang xem", không reset Lark pending) —
+  // mặc định (không truyền hoặc false) = đang THỰC SỰ mở xem đúng đơn này (DetailPage, hoặc bấm mở
+  // chat thẳng từ Danh Sách), set activeChatRequest + báo Lark biết user đã tương tác.
   @SubscribeMessage('joinRequest')
   async handleJoin(
     @ConnectedSocket() client: AuthedSocket,
-    @MessageBody() data: { quoteRequestId: string },
+    @MessageBody() data: { quoteRequestId: string; passive?: boolean },
   ) {
     const userId = client.data.user?.id;
     if (!userId) return;
@@ -137,12 +145,11 @@ export class RealtimeGateway
         data.quoteRequestId,
         userId,
       );
-      const newRoom = this.roomName(data.quoteRequestId);
-      const oldRoom = this.currentChatRoom.get(client.id);
-      if (oldRoom && oldRoom !== newRoom) client.leave(oldRoom);
-      client.join(newRoom);
-      this.currentChatRoom.set(client.id, newRoom);
-      void this.lark.onRecipientEngaged(data.quoteRequestId, userId);
+      client.join(this.roomName(data.quoteRequestId));
+      if (!data.passive) {
+        this.activeChatRequest.set(client.id, data.quoteRequestId);
+        void this.lark.onRecipientEngaged(data.quoteRequestId, userId);
+      }
     } catch {
       client.emit('error', {
         message: 'Bạn không có quyền xem cuộc trò chuyện này',
@@ -210,6 +217,8 @@ export class RealtimeGateway
 
     try {
       await this.quoteChatService.markRead(data.quoteRequestId, userId);
+      // Đọc tin = chắc chắn đang mở xem đúng đơn này — cùng tín hiệu với joinRequest không passive.
+      this.activeChatRequest.set(client.id, data.quoteRequestId);
       void this.lark.onRecipientEngaged(data.quoteRequestId, userId);
     } catch (err: any) {
       this.logger.warn(
@@ -218,8 +227,12 @@ export class RealtimeGateway
     }
   }
 
-  // Sau khi lưu tin web: nếu người còn lại KHÔNG đang mở room này thì bắc cầu DM sang Lark.
-  // Không đặt `private` để test đơn vị gọi trực tiếp. Fire-and-forget: tự nuốt lỗi.
+  // Sau khi lưu tin web: nếu người còn lại KHÔNG đang THỰC SỰ mở xem đúng đơn này thì bắc cầu DM
+  // sang Lark. Không đặt `private` để test đơn vị gọi trực tiếp. Fire-and-forget: tự nuốt lỗi.
+  //
+  // Dò qua activeChatRequest (đơn đang mở xem của từng socket) thay vì fetchSockets() trong phòng
+  // socket.io — phòng giờ có thể chứa cả socket chỉ join "passive" để nhận badge (bảng Danh Sách),
+  // không có nghĩa họ đang thực sự xem đúng đơn này.
   async maybeBridgeToLark(
     quoteRequestId: string,
     senderId: string,
@@ -231,11 +244,10 @@ export class RealtimeGateway
       const recipientId = senderId === requesterId ? assigneeId : requesterId;
       if (!recipientId) return;
 
-      const sockets = await this.server
-        .in(this.roomName(quoteRequestId))
-        .fetchSockets();
-      const recipientInRoom = sockets.some(
-        (s) => (s.data as AuthedSocket['data'])?.user?.id === recipientId,
+      const recipientInRoom = [...this.server.sockets.sockets.values()].some(
+        (s) =>
+          (s as AuthedSocket).data?.user?.id === recipientId &&
+          this.activeChatRequest.get(s.id) === quoteRequestId,
       );
 
       await this.lark.onWebMessage(message, recipientId, recipientInRoom);
