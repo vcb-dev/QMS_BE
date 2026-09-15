@@ -30,6 +30,7 @@ describe('AppController', () => {
       await expect(appController.health()).resolves.toEqual({
         status: 'ok',
         db: 'up',
+        build: process.env.GIT_SHA ?? 'unknown',
       });
     });
 

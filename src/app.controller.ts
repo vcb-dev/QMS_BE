@@ -23,7 +23,11 @@ export class AppController {
   async health() {
     try {
       await this.prisma.$queryRaw`SELECT 1`;
-      return { status: 'ok', db: 'up' };
+      return {
+        status: 'ok',
+        db: 'up',
+        build: process.env.GIT_SHA ?? 'unknown',
+      };
     } catch {
       throw new ServiceUnavailableException({ status: 'error', db: 'down' });
     }
