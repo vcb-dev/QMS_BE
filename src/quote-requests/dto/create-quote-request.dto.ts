@@ -79,6 +79,11 @@ export class CreateQuoteRequestDto {
   customerMeasurements?: string;
 
   @IsOptional()
+  @IsString()
+  @MaxLength(2000, { message: 'Ghi chú tối đa 2000 ký tự' })
+  note?: string; // Ghi chú thêm của Sale — có thể chứa link ảnh/video để Order bấm xem
+
+  @IsOptional()
   @Type(() => Number)
   @IsNumber({}, { message: 'Tỷ lệ chốt phải là dạng số' })
   @Min(0)
