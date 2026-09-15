@@ -28,8 +28,11 @@ FROM node:22-bookworm-slim AS runner
 
 WORKDIR /app
 
+ARG GIT_SHA=unknown
+
 ENV NODE_ENV=production \
-    PORT=8000
+    PORT=8000 \
+    GIT_SHA=${GIT_SHA}
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends openssl ca-certificates \
