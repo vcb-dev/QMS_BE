@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Patch,
+  Delete,
   Param,
   Body,
   UseGuards,
@@ -47,5 +48,10 @@ export class PricingFormulasController {
     @CurrentUser('id') actorId: string,
   ) {
     return this.pricingFormulasService.update(id, dto, actorId);
+  }
+
+  @Delete(':id')
+  remove(@Param('id') id: string) {
+    return this.pricingFormulasService.remove(id);
   }
 }
