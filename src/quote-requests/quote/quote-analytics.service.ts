@@ -408,8 +408,16 @@ export class QuoteAnalyticsService {
       durationsByAssignee.set(r.assigneeId, bucket);
     }
 
-    const avg = (arr: number[]) =>
-      arr.length > 0 ? arr.reduce((s, v) => s + v, 0) / arr.length : null;
+    // Trung vị thay vì trung bình — 1 đơn báo giá bất thường lâu (VD chờ khách phản hồi) không kéo
+    // lệch số của cả nhân sự như trung bình cộng.
+    const median = (arr: number[]) => {
+      if (arr.length === 0) return null;
+      const sorted = [...arr].sort((a, b) => a - b);
+      const mid = Math.floor(sorted.length / 2);
+      return sorted.length % 2 !== 0
+        ? sorted[mid]
+        : (sorted[mid - 1] + sorted[mid]) / 2;
+    };
     const pricerStats = pricerUsers
       .map((u) => {
         const b = durationsByAssignee.get(u.id) || { quote: [], process: [] };
@@ -417,8 +425,8 @@ export class QuoteAnalyticsService {
           id: u.id,
           name: u.name,
           totalHandled: handledCountByAssignee.get(u.id) || 0,
-          avgQuoteMs: avg(b.quote),
-          avgProcessMs: avg(b.process),
+          medianQuoteMs: median(b.quote),
+          medianProcessMs: median(b.process),
         };
       })
       .sort((a, b) => b.totalHandled - a.totalHandled);
