@@ -2,7 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { PricingFormulasService } from '../src/pricing-formulas/pricing-formulas.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { PricingFormulaType } from '@prisma/client';
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 
 describe('PricingFormulasService', () => {
   let service: PricingFormulasService;
@@ -20,6 +20,9 @@ describe('PricingFormulasService', () => {
               update: jest.fn(),
               findUnique: jest.fn(),
               updateMany: jest.fn(),
+            },
+            material: {
+              count: jest.fn().mockResolvedValue(0),
             },
           },
         },
@@ -110,6 +113,46 @@ describe('PricingFormulasService', () => {
           data: expect.objectContaining({ name: 'X' }),
         }),
       );
+    });
+  });
+
+  describe('remove', () => {
+    it('throws NotFoundException khi không tìm thấy công thức', async () => {
+      (prisma.pricingFormula.findUnique as jest.Mock).mockResolvedValue(null);
+      await expect(service.remove('id1')).rejects.toThrow(NotFoundException);
+    });
+
+    it('chặn xóa công thức đang đặt mặc định', async () => {
+      (prisma.pricingFormula.findUnique as jest.Mock).mockResolvedValue({
+        id: 'id1',
+        isDefault: true,
+      });
+      await expect(service.remove('id1')).rejects.toThrow(BadRequestException);
+      expect(prisma.pricingFormula.update).not.toHaveBeenCalled();
+    });
+
+    it('chặn xóa công thức còn chất liệu active đang dùng', async () => {
+      (prisma.pricingFormula.findUnique as jest.Mock).mockResolvedValue({
+        id: 'id1',
+        isDefault: false,
+      });
+      (prisma.material.count as jest.Mock).mockResolvedValue(2);
+      await expect(service.remove('id1')).rejects.toThrow(BadRequestException);
+      expect(prisma.pricingFormula.update).not.toHaveBeenCalled();
+    });
+
+    it('xóa mềm (isActive=false) khi không phải mặc định và không còn chất liệu dùng', async () => {
+      (prisma.pricingFormula.findUnique as jest.Mock).mockResolvedValue({
+        id: 'id1',
+        isDefault: false,
+      });
+      (prisma.material.count as jest.Mock).mockResolvedValue(0);
+      const result = await service.remove('id1');
+      expect(prisma.pricingFormula.update).toHaveBeenCalledWith({
+        where: { id: 'id1' },
+        data: { isActive: false },
+      });
+      expect(result).toEqual({ message: 'Đã xóa công thức thành công' });
     });
   });
 });

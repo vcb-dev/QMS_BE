@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Patch,
+  Delete,
   Param,
   Body,
   UseGuards,
@@ -41,5 +42,11 @@ export class MaterialsController {
   @Patch(':id')
   async update(@Param('id') id: string, @Body() dto: UpdateMaterialDto) {
     return this.materialsService.update(id, dto);
+  }
+
+  @Roles(Role.ORDER, Role.ADMIN)
+  @Delete(':id')
+  async remove(@Param('id') id: string) {
+    return this.materialsService.remove(id);
   }
 }
