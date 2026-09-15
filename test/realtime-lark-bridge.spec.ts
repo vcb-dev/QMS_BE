@@ -15,7 +15,7 @@ describe('RealtimeGateway — cầu Lark DM', () => {
     reply$: Subject<ChatMessageDto>;
   };
   let emit: jest.Mock;
-  let fetchSockets: jest.Mock;
+  let socketsMap: Map<string, { id: string; data: { user: { id: string } } }>;
 
   const MSG = {
     id: 'm1',
@@ -35,7 +35,7 @@ describe('RealtimeGateway — cầu Lark DM', () => {
       reply$: new Subject<ChatMessageDto>(),
     };
     emit = jest.fn();
-    fetchSockets = jest.fn().mockResolvedValue([]);
+    socketsMap = new Map();
 
     const moduleRef = await Test.createTestingModule({
       providers: [
@@ -49,12 +49,12 @@ describe('RealtimeGateway — cầu Lark DM', () => {
     gateway = moduleRef.get(RealtimeGateway);
     gateway.server = {
       to: jest.fn().mockReturnValue({ emit }),
-      in: jest.fn().mockReturnValue({ fetchSockets }),
+      sockets: { sockets: socketsMap },
       emit: jest.fn(),
     } as never;
   });
 
-  it('maybeBridgeToLark: recipient = người còn lại, không có socket => onWebMessage(..., false)', async () => {
+  it('maybeBridgeToLark: recipient = người còn lại, không có socket nào đang xem => onWebMessage(..., false)', async () => {
     quoteChat.assertParticipant.mockResolvedValue({
       requesterId: 'sale-1',
       assigneeId: 'order-1',
@@ -63,14 +63,34 @@ describe('RealtimeGateway — cầu Lark DM', () => {
     expect(bridge.onWebMessage).toHaveBeenCalledWith(MSG, 'order-1', false);
   });
 
-  it('maybeBridgeToLark: recipient đang có socket trong room => true', async () => {
+  it('maybeBridgeToLark: recipient đang THỰC SỰ mở xem đúng đơn này (activeChatRequest khớp) => true', async () => {
     quoteChat.assertParticipant.mockResolvedValue({
       requesterId: 'sale-1',
       assigneeId: 'order-1',
     });
-    fetchSockets.mockResolvedValue([{ data: { user: { id: 'order-1' } } }]);
+    socketsMap.set('socket-order-1', {
+      id: 'socket-order-1',
+      data: { user: { id: 'order-1' } },
+    });
+    (gateway as any).activeChatRequest.set('socket-order-1', 'q1');
     await gateway.maybeBridgeToLark('q1', 'sale-1', MSG);
     expect(bridge.onWebMessage).toHaveBeenCalledWith(MSG, 'order-1', true);
+  });
+
+  it('maybeBridgeToLark: recipient CÓ socket kết nối nhưng chỉ join passive (badge) — không phải đang xem => false', async () => {
+    quoteChat.assertParticipant.mockResolvedValue({
+      requesterId: 'sale-1',
+      assigneeId: 'order-1',
+    });
+    // Có socket của order-1 kết nối (VD đang mở bảng Danh Sách, join passive nhận badge cho đơn
+    // khác) nhưng activeChatRequest KHÔNG khớp q1 — không tính là đang xem đơn q1.
+    socketsMap.set('socket-order-1', {
+      id: 'socket-order-1',
+      data: { user: { id: 'order-1' } },
+    });
+    (gateway as any).activeChatRequest.set('socket-order-1', 'q-other');
+    await gateway.maybeBridgeToLark('q1', 'sale-1', MSG);
+    expect(bridge.onWebMessage).toHaveBeenCalledWith(MSG, 'order-1', false);
   });
 
   it('maybeBridgeToLark: assignee null => không gọi bridge', async () => {

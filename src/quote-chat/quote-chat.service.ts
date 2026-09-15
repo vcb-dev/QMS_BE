@@ -111,6 +111,54 @@ export class QuoteChatService {
     return { messages, unreadCount };
   }
 
+  /**
+   * Số tin chưa đọc của user cho NHIỀU đơn cùng lúc — dùng cho badge nhỏ ở bảng Danh Sách (khỏi
+   * phải mở từng đơn mới biết có tin mới). Đơn nào user không phải requester/assignee thì bỏ qua
+   * lặng lẽ (không throw) — trả object chỉ gồm đơn có số > 0 để payload gọn.
+   */
+  async getUnreadCounts(
+    userId: string,
+    quoteRequestIds: string[],
+  ): Promise<Record<string, number>> {
+    if (quoteRequestIds.length === 0) return {};
+
+    const participantRequests = await this.prisma.quoteRequest.findMany({
+      where: {
+        id: { in: quoteRequestIds },
+        OR: [{ requesterId: userId }, { assigneeId: userId }],
+      },
+      select: { id: true },
+    });
+    const participantIds = participantRequests.map((r) => r.id);
+    if (participantIds.length === 0) return {};
+
+    const [reads, messages] = await Promise.all([
+      this.prisma.quoteChatRead.findMany({
+        where: { userId, quoteRequestId: { in: participantIds } },
+        select: { quoteRequestId: true, lastReadAt: true },
+      }),
+      this.prisma.quoteChatMessage.findMany({
+        where: {
+          quoteRequestId: { in: participantIds },
+          senderId: { not: userId },
+        },
+        select: { quoteRequestId: true, createdAt: true },
+      }),
+    ]);
+    const lastReadMap = new Map(
+      reads.map((r) => [r.quoteRequestId, r.lastReadAt]),
+    );
+
+    const counts: Record<string, number> = {};
+    for (const m of messages) {
+      const since = lastReadMap.get(m.quoteRequestId) ?? new Date(0);
+      if (m.createdAt > since) {
+        counts[m.quoteRequestId] = (counts[m.quoteRequestId] ?? 0) + 1;
+      }
+    }
+    return counts;
+  }
+
   async markRead(quoteRequestId: string, userId: string): Promise<void> {
     await this.assertParticipant(quoteRequestId, userId);
 

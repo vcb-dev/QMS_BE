@@ -6,26 +6,37 @@ import { PrismaService } from '../src/prisma/prisma.service';
 describe('QuoteChatService', () => {
   let service: QuoteChatService;
   let prisma: {
-    quoteRequest: { findUnique: jest.Mock };
+    quoteRequest: { findUnique: jest.Mock; findMany: jest.Mock };
     quoteChatMessage: {
       findMany: jest.Mock;
       count: jest.Mock;
       create: jest.Mock;
     };
-    quoteChatRead: { findUnique: jest.Mock; upsert: jest.Mock };
+    quoteChatRead: {
+      findUnique: jest.Mock;
+      findMany: jest.Mock;
+      upsert: jest.Mock;
+    };
   };
 
   const REQUEST = { requesterId: 'sale-1', assigneeId: 'order-1' };
 
   beforeEach(async () => {
     prisma = {
-      quoteRequest: { findUnique: jest.fn().mockResolvedValue(REQUEST) },
+      quoteRequest: {
+        findUnique: jest.fn().mockResolvedValue(REQUEST),
+        findMany: jest.fn(),
+      },
       quoteChatMessage: {
         findMany: jest.fn(),
         count: jest.fn(),
         create: jest.fn(),
       },
-      quoteChatRead: { findUnique: jest.fn(), upsert: jest.fn() },
+      quoteChatRead: {
+        findUnique: jest.fn(),
+        findMany: jest.fn(),
+        upsert: jest.fn(),
+      },
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -132,6 +143,47 @@ describe('QuoteChatService', () => {
         },
       });
       expect(result.unreadCount).toBe(2);
+    });
+  });
+
+  describe('getUnreadCounts', () => {
+    it('trả object rỗng khi danh sách id rỗng — không gọi DB', async () => {
+      const result = await service.getUnreadCounts('order-1', []);
+      expect(result).toEqual({});
+      expect(prisma.quoteRequest.findMany).not.toHaveBeenCalled();
+    });
+
+    it('bỏ qua đơn user không phải requester/assignee — không có trong kết quả', async () => {
+      prisma.quoteRequest.findMany.mockResolvedValue([]);
+      const result = await service.getUnreadCounts('nguoi-la-1', ['req-1']);
+      expect(result).toEqual({});
+      expect(prisma.quoteChatRead.findMany).not.toHaveBeenCalled();
+    });
+
+    it('đếm đúng theo lastReadAt riêng từng đơn, bỏ qua tin của chính mình', async () => {
+      prisma.quoteRequest.findMany.mockResolvedValue([
+        { id: 'req-1' },
+        { id: 'req-2' },
+      ]);
+      prisma.quoteChatRead.findMany.mockResolvedValue([
+        { quoteRequestId: 'req-1', lastReadAt: new Date('2026-08-20T09:00:00Z') },
+      ]);
+      prisma.quoteChatMessage.findMany.mockResolvedValue([
+        { quoteRequestId: 'req-1', createdAt: new Date('2026-08-20T10:00:00Z') }, // sau lastReadAt -> tính
+        { quoteRequestId: 'req-1', createdAt: new Date('2026-08-20T08:00:00Z') }, // trước lastReadAt -> bỏ
+        { quoteRequestId: 'req-2', createdAt: new Date('2026-08-20T10:00:00Z') }, // chưa có lastReadAt -> tính
+      ]);
+
+      const result = await service.getUnreadCounts('order-1', ['req-1', 'req-2']);
+
+      expect(result).toEqual({ 'req-1': 1, 'req-2': 1 });
+      expect(prisma.quoteChatMessage.findMany).toHaveBeenCalledWith({
+        where: {
+          quoteRequestId: { in: ['req-1', 'req-2'] },
+          senderId: { not: 'order-1' },
+        },
+        select: { quoteRequestId: true, createdAt: true },
+      });
     });
   });
 

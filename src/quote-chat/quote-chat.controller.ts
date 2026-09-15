@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Param,
+  Query,
   UseGuards,
   UseInterceptors,
   UploadedFile,
@@ -21,6 +22,20 @@ export class QuoteChatController {
     private readonly quoteChatService: QuoteChatService,
     private readonly cloudinaryService: CloudinaryService,
   ) {}
+
+  // Đứng TRƯỚC route :quoteRequestId/messages cho dễ đọc, nhưng không xung đột — path này chỉ 1
+  // segment sau /quote-chat, còn route kia bắt buộc 2 segment (/:id/messages).
+  @Get('unread-counts')
+  async getUnreadCounts(
+    @Query('ids') ids: string | undefined,
+    @CurrentUser('id') userId: string,
+  ) {
+    const quoteRequestIds = (ids || '')
+      .split(',')
+      .map((id) => id.trim())
+      .filter(Boolean);
+    return this.quoteChatService.getUnreadCounts(userId, quoteRequestIds);
+  }
 
   @Get(':quoteRequestId/messages')
   async getMessages(
