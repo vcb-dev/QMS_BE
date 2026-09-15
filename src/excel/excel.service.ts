@@ -17,9 +17,9 @@ export class ExcelService {
   }
 
   /**
-   * Đọc file Multer Excel và trả về mảng dữ liệu JSON thô
+   * Đọc buffer Multer thành sheet Excel đầu tiên — dùng chung cho mọi cách đọc dữ liệu bên dưới.
    */
-  parseExcelFile(file?: Express.Multer.File): Record<string, unknown>[] {
+  private readFirstSheet(file?: Express.Multer.File): XLSX.WorkSheet {
     if (!file || !file.buffer || file.buffer.length === 0) {
       throw new BadRequestException('Vui lòng chọn file Excel để import');
     }
@@ -44,18 +44,58 @@ export class ExcelService {
     if (!sheetName) {
       throw new BadRequestException('File Excel không có sheet dữ liệu nào');
     }
-    const sheet = workbook.Sheets[sheetName];
-    const rawRows: Record<string, unknown>[] = XLSX.utils.sheet_to_json(sheet, {
+    return workbook.Sheets[sheetName];
+  }
+
+  /**
+   * Đọc file Multer Excel có dòng tiêu đề (tên) riêng ở trên header cột — bố cục dòng 1 = tên
+   * (VD "KIM CƯƠNG LAB GROWN", 1 ô bất kỳ trong dòng), dòng 2 = header cột, dòng 3+ = dữ liệu.
+   * Dùng cho các bảng giá đá theo lưới shape/size (đá không có cột "Tên" riêng từng dòng).
+   */
+  parseExcelFileWithTitleRow(file?: Express.Multer.File): {
+    title: string;
+    rows: Record<string, unknown>[];
+  } {
+    const sheet = this.readFirstSheet(file);
+    const aoa: unknown[][] = XLSX.utils.sheet_to_json(sheet, {
+      header: 1,
       defval: '',
     });
 
-    if (rawRows.length === 0) {
+    if (aoa.length < 3) {
       throw new BadRequestException(
-        'File Excel không có dòng dữ liệu nào (chỉ có header hoặc trống)',
+        'File Excel thiếu dòng tên đá, dòng header cột, hoặc dòng dữ liệu',
       );
     }
 
-    return rawRows;
+    const title = String(
+      (aoa[0] || []).find((c) => String(c ?? '').trim() !== '') ?? '',
+    ).trim();
+    if (!title) {
+      throw new BadRequestException('File Excel thiếu tên đá ở dòng đầu');
+    }
+
+    const headers = (aoa[1] || []).map((h) => String(h ?? '').trim());
+    const rows = aoa
+      .slice(2)
+      .map((r) => {
+        const obj: Record<string, unknown> = {};
+        headers.forEach((h, i) => {
+          if (h) obj[h] = r[i] ?? '';
+        });
+        return obj;
+      })
+      .filter((row) =>
+        Object.values(row).some((v) => String(v ?? '').trim() !== ''),
+      );
+
+    if (rows.length === 0) {
+      throw new BadRequestException(
+        'File Excel không có dòng dữ liệu nào (chỉ có tên/header hoặc trống)',
+      );
+    }
+
+    return { title, rows };
   }
 
   /**
