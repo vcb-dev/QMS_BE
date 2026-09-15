@@ -1,9 +1,11 @@
 # CI: lint, unit tests, nest build on PRs and main.
-# CD: linux/amd64 image -> Docker Hub (viejhaf/qms-be:latest) after CI on main.
+# CD: linux/amd64 image -> Docker Hub, then railway redeploy to pull :latest.
 #
 # GitHub repo secrets (Settings → Secrets and variables → Actions):
-#   DOCKERHUB_USERNAME   Docker Hub username (viejhaf)
-#   DOCKERHUB_TOKEN      Docker Hub access token (Read, Write, Delete)
+#   DOCKERHUB_USERNAME     Docker Hub username (viejhaf)
+#   DOCKERHUB_TOKEN        Docker Hub access token (Read, Write, Delete)
+#   RAILWAY_TOKEN          Project Token (Railway project → Settings → Tokens)
+#   RAILWAY_SERVICE_ID     qms-be service ID (service Settings, or URL /service/<id>)
 name: CI/CD
 
 on:
@@ -118,3 +120,27 @@ jobs:
             echo "${{ steps.meta.outputs.tags }}"
             echo "\`\`\`"
           } >> "$GITHUB_STEP_SUMMARY"
+
+  railway:
+    name: Redeploy Railway
+    needs: docker
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    container: ghcr.io/railwayapp/cli:latest
+    steps:
+      - name: Check Railway secrets
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_SERVICE_ID }}
+        run: |
+          if [ -z "$RAILWAY_TOKEN" ] || [ -z "$RAILWAY_SERVICE_ID" ]; then
+            echo "::error::Add repository secrets RAILWAY_TOKEN (Project Token) and RAILWAY_SERVICE_ID."
+            exit 1
+          fi
+
+      - name: Pull latest image on Railway
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_SERVICE_ID }}
+        run: railway redeploy --yes --service "$RAILWAY_SERVICE_ID"
