@@ -117,11 +117,11 @@ export class QuoteWorkflowService {
   // Sale: thông tin đơn + ảnh sản phẩm + từng phương án (chất liệu/khối lượng/đá) + giá bán (giá chất
   // liệu = quotedPrice - stonePrice, giá đá = stonePrice, KHÔNG lộ giá vốn), tổng = phương án đại diện.
   private buildQuoteCardData(quote: any): QuoteCardData {
-    // Card Lark chỉ đưa PHƯƠNG ÁN BÁO GIÁ CHÍNH (CLOSED > SELECTED > giá mới nhất) — bỏ các phương
-    // án phụ / so sánh loại vàng khác (locked). Nhóm Lark chỉ cần đúng phương án chốt với khách.
+    // Card Lark đưa TẤT CẢ phương án đã có giá (không chỉ phương án chính) để nhóm Lark thấy hết các
+    // lựa chọn đã báo — phương án đại diện (CLOSED > SELECTED > giá mới nhất) được đánh dấu riêng.
     const primaryOpt = pickPrimaryOption(quote);
-    const priced =
-      primaryOpt && primaryOpt.quotedPrice != null ? [primaryOpt] : [];
+    const allOptions = Array.isArray(quote.options) ? quote.options : [];
+    const priced = allOptions.filter((o: any) => o?.quotedPrice != null);
 
     const options = priced.map((opt: any, idx: number) => {
       const mats = Array.isArray(opt.materials) ? opt.materials : [];
@@ -156,10 +156,17 @@ export class QuoteWorkflowService {
               .join(', ')
           : 'Không đính đá';
 
+      const baseName = (opt.optionName || `Phương án ${idx + 1}`)
+        .split(/\s*·\s*Công/i)[0]
+        .trim();
+      // Nhiều hơn 1 phương án đã báo giá -> đánh dấu phương án đại diện để Lark biết đâu là giá chốt.
+      const name =
+        priced.length > 1 && primaryOpt && opt.id === primaryOpt.id
+          ? `${baseName} ✅ (Đã chọn)`
+          : baseName;
+
       return {
-        name: (opt.optionName || `Phương án ${idx + 1}`)
-          .split(/\s*·\s*Công/i)[0]
-          .trim(),
+        name,
         materialText,
         materialPrice,
         stoneText,
@@ -265,7 +272,6 @@ export class QuoteWorkflowService {
     userId: string,
     dto: CompleteQuoteInput,
   ) {
-
     // FE luôn gửi kèm options đầy đủ (mỗi phương án tự mang materials/stones riêng) —
     // categoryId + tra cứu material/stone gộp chung 1 nhịp Promise.all thay vì chờ nối tiếp.
     const opts = dto.options ?? [];
@@ -615,9 +621,7 @@ export class QuoteWorkflowService {
 
     // Sale chỉ gửi lại đơn do CHÍNH MÌNH tạo — cùng quy tắc với markClosed().
     if (role === Role.SALE && curent.requesterId !== userId) {
-      throw new ForbiddenException(
-        'Bạn chỉ được gửi lại yêu cầu do mình tạo',
-      );
+      throw new ForbiddenException('Bạn chỉ được gửi lại yêu cầu do mình tạo');
     }
 
     if (curent.status !== QuoteStatus.NEED_MORE_INFO) {
