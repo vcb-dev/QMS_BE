@@ -1,4 +1,8 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { Material, PricingFormula, BaseMetal } from '@prisma/client';
 
@@ -73,5 +77,19 @@ export class MaterialsService {
       include: { pricingFormula: true, baseMetal: true },
     });
     return this.toPlain(updated);
+  }
+
+  // Xóa mềm (isActive=false) — không xóa cứng để không vỡ FK từ QuoteOptionMaterial cũ, giống Stone.
+  async remove(id: string) {
+    const existing = await this.prisma.material.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+    if (!existing) throw new NotFoundException('Không tìm thấy chất liệu');
+    await this.prisma.material.update({
+      where: { id },
+      data: { isActive: false },
+    });
+    return { message: 'Đã xóa chất liệu thành công' };
   }
 }

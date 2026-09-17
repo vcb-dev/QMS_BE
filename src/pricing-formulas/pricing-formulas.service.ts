@@ -128,4 +128,35 @@ export class PricingFormulasService {
       },
     });
   }
+
+  // Xóa mềm (isActive=false) — chặn nếu đang là công thức mặc định (getDefault() phụ thuộc luôn
+  // phải có 1 công thức mặc định) hoặc còn chất liệu đang active trỏ tới (pricingFormulaId bắt
+  // buộc trên Material, xóa sẽ để lại chất liệu trỏ tới công thức không tồn tại).
+  async remove(id: string) {
+    const formula = await this.prisma.pricingFormula.findUnique({
+      where: { id },
+      select: { id: true, isDefault: true },
+    });
+    if (!formula) {
+      throw new NotFoundException('Không tìm thấy công thức tính lãi');
+    }
+    if (formula.isDefault) {
+      throw new BadRequestException(
+        'Không thể xóa công thức đang đặt làm mặc định — đặt công thức khác làm mặc định trước',
+      );
+    }
+    const inUseCount = await this.prisma.material.count({
+      where: { pricingFormulaId: id, isActive: true },
+    });
+    if (inUseCount > 0) {
+      throw new BadRequestException(
+        `Không thể xóa — còn ${inUseCount} chất liệu đang dùng công thức này`,
+      );
+    }
+    await this.prisma.pricingFormula.update({
+      where: { id },
+      data: { isActive: false },
+    });
+    return { message: 'Đã xóa công thức thành công' };
+  }
 }
