@@ -217,6 +217,7 @@ export function buildOptionCreateInput(
           create: opt.materials.map((m: any) => ({
             materialId: m.materialId,
             weightChi: m.weightChi != null ? m.weightChi : opt.weightChi,
+            rawCost: m.rawCost != null ? m.rawCost : undefined,
           })),
         }
       : undefined,

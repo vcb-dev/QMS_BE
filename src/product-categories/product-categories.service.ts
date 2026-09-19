@@ -32,7 +32,10 @@ export class ProductCategoriesService {
     // Tên trùng 1 danh mục đã xóa mềm (isActive=false) — bật lại thay vì báo "đã tồn tại", tránh
     // Admin bị kẹt không thêm lại được tên đã lỡ xóa trước đó.
     const existingInactive = await this.prisma.productCategory.findFirst({
-      where: { name: { equals: trimmed, mode: 'insensitive' }, isActive: false },
+      where: {
+        name: { equals: trimmed, mode: 'insensitive' },
+        isActive: false,
+      },
     });
     if (existingInactive) {
       return this.prisma.productCategory.update({

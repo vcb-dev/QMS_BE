@@ -21,6 +21,14 @@ export class MaterialWeightItemDto {
   @IsNumber()
   @Min(0, { message: 'Khối lượng không được là số âm' })
   weightChi?: number;
+
+  // Giá vốn kim loại thô RIÊNG của dòng chất liệu này — BE tính sẵn lúc tính giá (calculate-multi/
+  // calculate-batch), FE gửi lại nguyên văn lúc lưu, KHÔNG tự tính công thức nào.
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0, { message: 'Giá vốn không được là số âm' })
+  rawCost?: number;
 }
 
 export class StoneSelectionItemDto {
