@@ -237,6 +237,13 @@ export class QuoteQueryService {
         costBreakdown,
         ...rest
       } = opt;
+      // materials[].rawCost = giá vốn thô riêng từng kim loại — cùng nhóm giá vốn, cắt luôn.
+      if (Array.isArray(rest.materials)) {
+        rest.materials = rest.materials.map((m: any) => {
+          const { rawCost, ...restMat } = m;
+          return restMat;
+        });
+      }
       return rest;
     });
   }
