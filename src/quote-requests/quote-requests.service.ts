@@ -196,6 +196,14 @@ export class QuoteRequestsService {
       });
       if (existing) {
         finalCategoryId = existing.id;
+        // Tên trùng 1 danh mục Admin đã xóa mềm trước đó — bật lại để nó hiện lại trong Cấu Hình
+        // Giá, không âm thầm gán đơn vào danh mục đang ẩn mà Admin không biết đang được dùng lại.
+        if (!existing.isActive) {
+          await this.prisma.productCategory.update({
+            where: { id: existing.id },
+            data: { isActive: true },
+          });
+        }
       } else {
         try {
           const createdCat = await this.prisma.productCategory.create({

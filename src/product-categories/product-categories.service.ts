@@ -28,10 +28,26 @@ export class ProductCategoriesService {
     if (!name || !name.trim()) {
       throw new BadRequestException('Tên danh mục không được để trống');
     }
+    const trimmed = name.trim();
+    // Tên trùng 1 danh mục đã xóa mềm (isActive=false) — bật lại thay vì báo "đã tồn tại", tránh
+    // Admin bị kẹt không thêm lại được tên đã lỡ xóa trước đó.
+    const existingInactive = await this.prisma.productCategory.findFirst({
+      where: { name: { equals: trimmed, mode: 'insensitive' }, isActive: false },
+    });
+    if (existingInactive) {
+      return this.prisma.productCategory.update({
+        where: { id: existingInactive.id },
+        data: {
+          isActive: true,
+          laborCost: laborCost ?? existingInactive.laborCost,
+          vatRate: vatRate ?? existingInactive.vatRate,
+        },
+      });
+    }
     try {
       return await this.prisma.productCategory.create({
         data: {
-          name: name.trim(),
+          name: trimmed,
           laborCost: laborCost ?? 0,
           vatRate: vatRate ?? 10,
         },
@@ -44,6 +60,9 @@ export class ProductCategoriesService {
     }
   }
 
+  // Xóa mềm (isActive=false) — không xóa cứng để không vỡ FK từ QuoteRequest.categoryId đã có
+  // (khớp cách làm với Material/PricingFormula). Danh mục Sale tạo bừa vẫn xóa (ẩn) được dù đã
+  // có đơn dùng, chỉ ẩn khỏi danh sách chọn chứ không phá dữ liệu đơn cũ.
   async remove(id: string) {
     const existing = await this.prisma.productCategory.findUnique({
       where: { id },
@@ -51,35 +70,23 @@ export class ProductCategoriesService {
     });
     if (!existing)
       throw new NotFoundException('Không tìm thấy danh mục sản phẩm');
-    try {
-      await this.prisma.productCategory.delete({ where: { id } });
-      return { message: 'Đã xóa danh mục sản phẩm thành công' };
-    } catch (err) {
-      if (this.isPrismaError(err, 'P2003')) {
-        throw new BadRequestException(
-          'Danh mục này đang được dùng trong yêu cầu báo giá, không thể xóa',
-        );
-      }
-      throw err;
-    }
+    await this.prisma.productCategory.update({
+      where: { id },
+      data: { isActive: false },
+    });
+    return { message: 'Đã xóa danh mục sản phẩm thành công' };
   }
 
-  // Xóa nhiều danh mục cùng lúc — xóa từng cái riêng (không dùng deleteMany) để danh mục nào
-  // đang bị ràng buộc FK (đã có yêu cầu báo giá dùng) không làm hỏng các danh mục khác xóa được
+  // Xóa mềm nhiều danh mục cùng lúc — 1 câu updateMany, không còn cần try/catch từng cái vì
+  // xóa mềm không bao giờ vỡ FK.
   async removeMany(ids: string[]) {
     if (!ids || ids.length === 0)
       return { deleted: 0, failedIds: [] as string[] };
-    let deleted = 0;
-    const failedIds: string[] = [];
-    for (const id of ids) {
-      try {
-        await this.prisma.productCategory.delete({ where: { id } });
-        deleted++;
-      } catch {
-        failedIds.push(id);
-      }
-    }
-    return { deleted, failedIds };
+    const result = await this.prisma.productCategory.updateMany({
+      where: { id: { in: ids } },
+      data: { isActive: false },
+    });
+    return { deleted: result.count, failedIds: [] as string[] };
   }
 
   async update(id: string, patch: { laborCost?: number; vatRate?: number }) {
