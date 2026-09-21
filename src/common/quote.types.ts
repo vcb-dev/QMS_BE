@@ -27,7 +27,7 @@ export type OptionInput = Partial<QuoteOptionItemDto> & {
   optionName?: string;
   materialName?: string;
   isSelected?: boolean;
-  materials?: { materialId: string; weightChi?: number | null }[];
+  materials?: { materialId: string; weightChi?: number | null; rawCost?: number | null }[];
   stones?: { stoneId: string; quantity: number }[];
   weightChi?: number | null;
 };
