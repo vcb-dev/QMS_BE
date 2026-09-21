@@ -27,6 +27,7 @@ export enum AuditAction {
   MARK_CLOSED = 'MARK_CLOSED', // Sale đánh dấu Đã chốt
   SELECT_OPTION = 'SELECT_OPTION', // Sale chọn phương án
   DELETE_QUOTE_OPTION = 'DELETE_QUOTE_OPTION',
+  EDIT_QUOTED_PRICE = 'EDIT_QUOTED_PRICE', // ORDER/ADMIN sửa lại giá đã báo (đơn QUOTED/CLOSED)
 
   // ----- Khách hàng (entityType: Customer) -----
   CREATE_CUSTOMER = 'CREATE_CUSTOMER',
@@ -59,6 +60,7 @@ export const AUDIT_ACTION_LABELS: Record<AuditAction, string> = {
   [AuditAction.MARK_CLOSED]: 'Đánh dấu đã chốt',
   [AuditAction.SELECT_OPTION]: 'Chọn phương án báo giá',
   [AuditAction.DELETE_QUOTE_OPTION]: 'Xóa phương án báo giá',
+  [AuditAction.EDIT_QUOTED_PRICE]: 'Sửa giá đã báo',
   [AuditAction.CREATE_CUSTOMER]: 'Thêm khách hàng',
   [AuditAction.UPDATE_CUSTOMER]: 'Cập nhật khách hàng',
   [AuditAction.DELETE_CUSTOMER]: 'Xóa khách hàng',
@@ -76,6 +78,7 @@ export const AUDIT_ACTION_LABELS: Record<AuditAction, string> = {
 export const RICH_CARD_ACTIONS: ReadonlySet<AuditAction> = new Set([
   AuditAction.QUOTE_PRICE,
   AuditAction.QUICK_APPROVE,
+  AuditAction.EDIT_QUOTED_PRICE,
 ]);
 
 /**
