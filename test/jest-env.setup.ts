@@ -14,4 +14,5 @@ process.env.VNAPPMOB_API_KEY ??= 'ci';
 process.env.VNAPPMOB_GOLD_URL ??= 'https://example.com/gold';
 process.env.VANG_TODAY_URL ??= 'https://example.com/vang';
 process.env.DATABASE_URL ??= 'postgresql://ci:ci@127.0.0.1:5432/ci';
+process.env.DIRECT_URL ??= process.env.DATABASE_URL;
 process.env.COOKIE_SECURE ??= 'false';
