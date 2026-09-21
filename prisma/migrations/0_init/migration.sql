@@ -205,7 +205,6 @@ CREATE TABLE "quote_options" (
     "labor_cost" DECIMAL(14,2),
     "stone_cost" DECIMAL(14,2),
     "total_metal_cost" DECIMAL(14,2),
-    "metal_raw_cost" DECIMAL(14,2),
     "stone_price" DECIMAL(14,2),
     "vat" DECIMAL(5,2),
     "quoted_price" DECIMAL(14,2),
@@ -227,7 +226,6 @@ CREATE TABLE "quote_option_materials" (
     "option_id" TEXT NOT NULL,
     "material_id" TEXT NOT NULL,
     "weight_chi" DECIMAL(8,3),
-    "raw_cost" DECIMAL(14,2),
     "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "quote_option_materials_pkey" PRIMARY KEY ("id")
