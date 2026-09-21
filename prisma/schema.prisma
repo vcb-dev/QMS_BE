@@ -438,6 +438,10 @@ model QuoteOptionMaterial {
   material   Material    @relation(fields: [materialId], references: [id])
   materialId String      @map("material_id")
   weightChi  Decimal?    @map("weight_chi") @db.Decimal(8, 3)
+  // Giá vốn kim loại thô RIÊNG của dòng chất liệu này lúc chốt giá (weightChi × đơn giá kim loại
+  // × tỷ lệ áp dụng), đóng băng tại thời điểm báo giá — khác metalRawCost trên QuoteOption là TỔNG
+  // của tất cả chất liệu cộng lại. NULL ở record cũ tạo trước khi có cột này.
+  rawCost    Decimal?    @map("raw_cost") @db.Decimal(14, 2)
 
   createdAt DateTime @default(now()) @map("created_at")
 
