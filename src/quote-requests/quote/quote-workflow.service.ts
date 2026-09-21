@@ -375,6 +375,105 @@ export class QuoteWorkflowService {
     return mapped;
   }
 
+  /**
+   * Sửa lại giá đã báo cho 1 yêu cầu ĐÃ CÓ giá (QUOTED/CLOSED) — dùng khi Order/Admin tính nhầm
+   * hoặc khách yêu cầu điều chỉnh. CHỈ cập nhật đúng phương án đang là "giá chính" (CLOSED >
+   * SELECTED > mới nhất, theo pickPrimaryOption) tại chỗ — giữ nguyên id + selectionStatus của nó
+   * (đơn CLOSED sửa giá thì vẫn CLOSED, KHÔNG bị completeQuote-kiểu xóa hết option/đổi status như
+   * lúc báo giá lần đầu). Các phương án khác trong đơn không đụng tới.
+   */
+  private async editQuotedPrice(
+    id: string,
+    userId: string,
+    role: Role,
+    opt: CompleteQuoteInput['options'][number],
+    expectedVersion?: number,
+  ) {
+    const quote = await this.prisma.quoteRequest.findUnique({
+      where: { id },
+      include: REQUEST_DETAIL_INCLUDE,
+    });
+    if (!quote) {
+      throw new NotFoundException('Không tìm thấy yêu cầu báo giá');
+    }
+    if (
+      quote.status !== QuoteStatus.QUOTED &&
+      quote.status !== QuoteStatus.CLOSED
+    ) {
+      throw new ConflictException(
+        'Chỉ sửa được giá cho yêu cầu đã báo giá (đang QUOTED hoặc CLOSED)',
+      );
+    }
+    if (role === Role.ORDER && quote.assigneeId !== userId) {
+      throw new ForbiddenException(
+        'Bạn chỉ được sửa giá trên yêu cầu do mình báo giá',
+      );
+    }
+    if (expectedVersion != null && quote.version !== expectedVersion) {
+      throw new ConflictException(
+        'Yêu cầu đã được cập nhật bởi người khác, vui lòng tải lại trang',
+      );
+    }
+
+    const target = pickPrimaryOption(quote as any) as { id: string } | null;
+    if (!target) {
+      throw new ConflictException('Không tìm thấy phương án báo giá để sửa');
+    }
+
+    const keyMaps = await this.quoteOptionsService.buildOptionLookupMaps([opt]);
+    const built: any = buildOptionCreateInput(
+      opt,
+      0,
+      quote.categoryId,
+      keyMaps.stonePriceMap,
+      keyMaps,
+    );
+
+    await this.prisma.$transaction([
+      this.prisma.quoteOptionMaterial.deleteMany({
+        where: { optionId: target.id },
+      }),
+      this.prisma.quoteOptionStone.deleteMany({
+        where: { optionId: target.id },
+      }),
+      this.prisma.quoteOption.update({
+        where: { id: target.id },
+        data: {
+          optionName: built.optionName,
+          weightChi: built.weightChi,
+          laborCost: built.laborCost,
+          stoneCost: built.stoneCost,
+          totalMetalCost: built.totalMetalCost,
+          metalRawCost: built.metalRawCost,
+          stonePrice: built.stonePrice,
+          vat: built.vat,
+          quotedPrice: built.quotedPrice,
+          quotedDate: new Date(),
+          note: built.note,
+          stoneDescription: built.stoneDescription,
+          dedupKey: built.dedupKey,
+          libraryGroupKey: built.libraryGroupKey,
+          // KHÔNG đổi selectionStatus — giữ nguyên CLOSED/SELECTED hiện có, sửa giá không phải
+          // hành động chọn lại phương án chính.
+          materials: built.materials,
+          stones: built.stones,
+        },
+      }),
+      this.prisma.quoteRequest.update({
+        where: { id },
+        data: { version: { increment: 1 } },
+      }),
+    ]);
+
+    const updated = await this.prisma.quoteRequest.findUniqueOrThrow({
+      where: { id },
+      include: REQUEST_DETAIL_INCLUDE,
+    });
+    const mapped = mapQuoteRequestDetail(updated);
+    this.notifySaleQuoteCompleted(mapped, AuditAction.EDIT_QUOTED_PRICE);
+    return mapped;
+  }
+
   private async selectOption(
     id: string,
     optionId: string,
@@ -912,6 +1011,33 @@ export class QuoteWorkflowService {
           id,
         );
         return this.selectOption(id, dto.optionId, userId, role);
+
+      case QuoteAction.EDIT_PRICE: {
+        this.assertRole(
+          role,
+          [Role.ORDER, Role.ADMIN],
+          'Chỉ có vai trò ORDER hoặc ADMIN mới được phép sửa giá đã báo',
+        );
+        if (!dto.options?.length) {
+          throw new BadRequestException(
+            'Vui lòng truyền phương án cần sửa giá (options[0])',
+          );
+        }
+        await this.auditLog.logAction(
+          userId,
+          role,
+          'EDIT_QUOTED_PRICE',
+          'QuoteRequest',
+          id,
+        );
+        return this.editQuotedPrice(
+          id,
+          userId,
+          role,
+          dto.options[0],
+          dto.version,
+        );
+      }
 
       default:
         throw new BadRequestException(
