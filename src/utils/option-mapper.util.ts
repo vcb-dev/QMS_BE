@@ -1,4 +1,4 @@
-// Chi tiết material/stone của 1 QuoteOption chỉ sống ở QuoteOptionMaterial/QuoteOptionStone
+﻿// Chi tiết material/stone của 1 QuoteOption chỉ sống ở QuoteOptionMaterial/QuoteOptionStone
 // (structured) — không còn lưu sẵn text tóm tắt. Include + map ở đây, dùng chung cho mọi service
 // trả QuoteOption/QuoteRequest ra ngoài, để tránh mỗi service tự viết include khác nhau.
 
@@ -18,12 +18,13 @@ export const OPTION_DETAIL_INCLUDE = {
 export const REQUEST_DETAIL_INCLUDE = {
   customer: true,
   category: true,
+  department: true,
   requester: {
     select: {
       id: true,
       name: true,
       email: true,
-      department: true,
+
       larkOpenId: true,
     },
   },

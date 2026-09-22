@@ -100,13 +100,14 @@ export class QuoteQueryService {
           categoryId: true,
           requesterId: true,
           assigneeId: true,
+          departmentId: true,
+          department: { select: { id: true, name: true } },
           category: { select: { id: true, name: true, vatRate: true } },
           requester: {
             select: {
               id: true,
               name: true,
               email: true,
-              department: { select: { id: true, name: true } },
             },
           },
           images: {
@@ -300,13 +301,13 @@ export class QuoteQueryService {
         returnedAt: true,
         createdAt: true,
         updatedAt: true,
+        department: { select: { id: true, name: true } },
         category: { select: { id: true, name: true } },
         requester: {
           select: {
             id: true,
             name: true,
             email: true,
-            department: { select: { id: true, name: true } },
           },
         },
         customer: {

@@ -1,4 +1,4 @@
-import { PrismaClient, Role, StoneType } from '@prisma/client';
+﻿import { PrismaClient, Role, StoneType } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -37,7 +37,7 @@ async function main() {
       email: 'admin@vcb.vn',
       name: 'Ban Giám Đốc',
       role: Role.ADMIN,
-      departmentId: deptBGD.id,
+      
       isApproved: true,
       isActive: true,
       passwordHash,
@@ -46,7 +46,7 @@ async function main() {
       email: 'sale@vcb.vn',
       name: 'Nguyễn Văn Sale',
       role: Role.SALE,
-      departmentId: deptSale.id,
+      
       isApproved: true,
       isActive: true,
       passwordHash,
@@ -55,7 +55,7 @@ async function main() {
       email: 'pricing@vcb.vn',
       name: 'Trần Văn Order',
       role: Role.ORDER,
-      departmentId: deptPricing.id,
+      
       isApproved: true,
       isActive: true,
       passwordHash,
@@ -68,7 +68,7 @@ async function main() {
       update: {
         name: u.name,
         role: u.role,
-        departmentId: u.departmentId,
+        
         isApproved: true,
         isActive: true,
         passwordHash: u.passwordHash,

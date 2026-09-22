@@ -1,4 +1,4 @@
-import {
+﻿import {
   Injectable,
   NotFoundException,
   BadRequestException,
@@ -17,7 +17,6 @@ const USER_BASE_FIELDS = {
   avatar: true,
   isApproved: true,
   isActive: true,
-  department: true,
 } as const;
 
 const USER_LIST_SELECT = { ...USER_BASE_FIELDS, createdAt: true } as const;
@@ -49,16 +48,11 @@ export class UsersService {
 
   async getStats(query?: TimeRangeQueryDto) {
     const dateWhere = this.dateWhere(query);
-    const [totalUsers, roleGroups, deptGroups, pendingCount] =
+    const [totalUsers, roleGroups, pendingCount] =
       await Promise.all([
         this.prisma.user.count({ where: dateWhere }),
         this.prisma.user.groupBy({
           by: ['role'],
-          where: dateWhere,
-          _count: { _all: true },
-        }),
-        this.prisma.user.groupBy({
-          by: ['departmentId'],
           where: dateWhere,
           _count: { _all: true },
         }),
@@ -73,26 +67,7 @@ export class UsersService {
         byRole[g.role as keyof typeof byRole] = g._count._all;
     }
 
-    const deptIds = deptGroups
-      .map((g) => g.departmentId)
-      .filter((id): id is string => !!id);
-    const depts = deptIds.length
-      ? await this.prisma.department.findMany({
-          where: { id: { in: deptIds } },
-          select: { id: true, name: true },
-        })
-      : [];
-    const deptNameById = new Map(depts.map((d) => [d.id, d.name]));
-    const byDept = deptGroups
-      .map((g) => ({
-        name:
-          (g.departmentId && deptNameById.get(g.departmentId)) ||
-          'Chưa gán bộ phận',
-        count: g._count._all,
-      }))
-      .sort((a, b) => b.count - a.count);
-
-    return { totalUsers, byRole, byDept, pendingCount };
+    return { totalUsers, byRole, byDept: [], pendingCount };
   }
 
   async findPending() {
