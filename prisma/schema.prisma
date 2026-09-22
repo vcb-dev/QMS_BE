@@ -59,8 +59,6 @@ model User {
   isApproved        Boolean     @default(false) @map("is_approved")
   isActive          Boolean     @default(true) @map("is_active") // false = bị Admin khóa (block), không đăng nhập được
   role              Role
-  department        Department? @relation(fields: [departmentId], references: [id])
-  departmentId      String?     @map("department_id")
 
   // Quan hệ ngược - 1 user có thể đóng nhiều vai trong quote_requests
   requestedQuotes       QuoteRequest[]          @relation("Requester")
@@ -76,7 +74,6 @@ model User {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  @@index([departmentId])
   @@map("users")
 }
 
@@ -85,9 +82,9 @@ model User {
 // ==========================
 
 model Department {
-  id    String @id @default(cuid())
-  name  String @unique
-  users User[]
+  id            String         @id @default(cuid())
+  name          String         @unique
+  quoteRequests QuoteRequest[]
 
   @@map("departments")
 }
@@ -276,6 +273,8 @@ model QuoteRequest {
   code String @unique // 1. Mã hỏi Giá - vd QG-2026-0001
 
   status               QuoteStatus         @default(PENDING) // 3. Trạng thái
+  department           Department?         @relation(fields: [departmentId], references: [id])
+  departmentId         String?             @map("department_id")
   requester            User                @relation("Requester", fields: [requesterId], references: [id])
   requesterId          String              @map("requester_id")
   customer             Customer            @relation(fields: [customerId], references: [id])
@@ -321,6 +320,7 @@ model QuoteRequest {
   @@index([assigneeId, status])
   @@index([customerId])
   @@index([categoryId])
+  @@index([departmentId])
   @@map("quote_requests")
 }
 

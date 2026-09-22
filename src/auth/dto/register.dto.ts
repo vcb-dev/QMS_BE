@@ -1,4 +1,4 @@
-import {
+﻿import {
   IsEmail,
   IsIn,
   IsNotEmpty,
@@ -43,8 +43,5 @@ export class RegisterDto {
   })
   role?: Role;
 
-  @ApiPropertyOptional({ description: 'ID phòng ban' })
-  @IsOptional()
-  @IsString()
-  departmentId?: string;
 }
+

@@ -1,4 +1,4 @@
-import {
+﻿import {
   Injectable,
   UnauthorizedException,
   ConflictException,
@@ -182,7 +182,7 @@ export class AuthService {
     // 3. Map user — ưu tiên khớp theo larkOpenId (định danh chắc chắn từ Lark).
     let user = await this.prisma.user.findFirst({
       where: { larkOpenId: open_id },
-      include: { department: true },
+      
     });
 
     // Chưa từng đăng nhập Lark: thử khớp theo email, NHƯNG chỉ auto-link khi tài khoản đó CHƯA đặt
@@ -191,7 +191,7 @@ export class AuthService {
     if (!user && email) {
       const byEmail = await this.prisma.user.findUnique({
         where: { email },
-        include: { department: true },
+        
       });
       if (byEmail) {
         if (byEmail.passwordHash) {
@@ -212,7 +212,7 @@ export class AuthService {
             larkOpenId: open_id,
             avatar: avatar_url,
           },
-          include: { department: true },
+          
         });
       }
     } else {
@@ -227,7 +227,7 @@ export class AuthService {
           isActive: true,
           role: Role.SALE,
         },
-        include: { department: true },
+        
       });
 
       // Gửi email chào mừng nếu có email thật
@@ -263,7 +263,7 @@ export class AuthService {
     const { email, password } = loginDto;
     const user = await this.prisma.user.findUnique({
       where: { email },
-      include: { department: true },
+      
     });
 
     if (!user || !user.passwordHash) {
@@ -340,7 +340,7 @@ export class AuthService {
   async getProfile(userId: string) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
-      include: { department: true },
+      
     });
     if (!user) {
       throw new UnauthorizedException('User not found');
@@ -356,7 +356,7 @@ export class AuthService {
   }
 
   async register(registerDto: RegisterDto) {
-    const { email, password, name, role, departmentId } = registerDto;
+    const { email, password, name, role,  } = registerDto;
 
     const existingUser = await this.prisma.user.findUnique({
       where: { email },
@@ -377,9 +377,9 @@ export class AuthService {
         passwordHash,
         isApproved: false, // Chờ ADMIN phê duyệt
         role: role || Role.SALE,
-        departmentId: departmentId || undefined,
+        
       },
-      include: { department: true },
+      
     });
 
     // Gửi email chào mừng & thông báo đăng ký

@@ -35,6 +35,10 @@ export class CreateQuoteRequestDto {
 
   @IsOptional()
   @IsString()
+  departmentId?: string;
+
+  @IsOptional()
+  @IsString()
   @MaxLength(300, { message: 'Tên sản phẩm tối đa 300 ký tự' })
   productName?: string;
 
