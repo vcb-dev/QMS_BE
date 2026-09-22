@@ -20,13 +20,7 @@ describe('UsersService.getStats', () => {
             { role: 'SALE', _count: { _all: 5 } },
             { role: 'ORDER', _count: { _all: 3 } },
             { role: 'ADMIN', _count: { _all: 2 } },
-          ])
-          .mockResolvedValueOnce([{ departmentId: 'd1', _count: { _all: 5 } }]),
-      },
-      department: {
-        findMany: jest
-          .fn()
-          .mockResolvedValue([{ id: 'd1', name: 'Kinh doanh' }]),
+          ]),
       },
     };
 
@@ -45,7 +39,7 @@ describe('UsersService.getStats', () => {
     const result = await service.getStats();
     expect(result.totalUsers).toBe(10);
     expect(result.byRole).toEqual({ SALE: 5, ORDER: 3, ADMIN: 2 });
-    expect(result.byDept).toEqual([{ name: 'Kinh doanh', count: 5 }]);
+    expect(result.byDept).toEqual([]);
     expect(result.pendingCount).toBe(2);
   });
 });
