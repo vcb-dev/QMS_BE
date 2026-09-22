@@ -45,9 +45,33 @@ const stoneExcelFileInterceptor = FileInterceptor('file', {
 export class StonesController {
   constructor(private readonly stonesService: StonesService) {}
 
+  @Get('stats')
+  async getStats(@Query('stoneType') stoneType?: StoneType) {
+    return this.stonesService.getStats(stoneType);
+  }
+
   @Get()
-  async findAll(@Query('stoneType') stoneType?: StoneType) {
-    return this.stonesService.findAll(stoneType);
+  async findAll(
+    @Query('stoneType') stoneType?: StoneType,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('search') search?: string,
+    @Query('cut') cut?: string,
+    @Query('name') name?: string,
+    @Query('status') status?: string,
+  ) {
+    if (!page || !limit) {
+      return this.stonesService.findAll(stoneType);
+    }
+    return this.stonesService.findAllPaginated(
+      stoneType,
+      parseInt(page, 10),
+      parseInt(limit, 10),
+      search,
+      cut,
+      name,
+      status,
+    );
   }
 
   @UseGuards(RolesGuard)

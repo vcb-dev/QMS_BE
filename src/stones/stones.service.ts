@@ -25,12 +25,91 @@ export class StonesService {
     private excelService: ExcelService,
   ) {}
 
+  async getStats(stoneType?: StoneType) {
+    const whereClause: any = { isActive: true };
+    if (stoneType) {
+      whereClause.stoneType = stoneType;
+    }
+    
+    const groupByResult = await this.prisma.stone.groupBy({
+      by: ['name', 'stoneType'],
+      where: whereClause,
+      _count: { _all: true },
+    });
+
+    return groupByResult.map(g => ({
+      name: g.name,
+      type: g.stoneType,
+      count: g._count._all
+    })).sort((a, b) => a.name.localeCompare(b.name));
+  }
+
   async findAll(stoneType?: StoneType) {
     const all = await this.prisma.stone.findMany({
-      where: { isActive: true },
+      where: {
+        isActive: true,
+        ...(stoneType ? { stoneType } : {}),
+      },
       orderBy: { name: 'asc' },
     });
-    return stoneType ? all.filter((s) => s.stoneType === stoneType) : all;
+    return all;
+  }
+
+  async findAllPaginated(
+    stoneType?: StoneType,
+    page: number = 1,
+    limit: number = 50,
+    search?: string,
+    cut?: string,
+    name?: string,
+    status?: string,
+  ) {
+    const where: any = { isActive: true };
+    if (stoneType) where.stoneType = stoneType;
+    if (name) where.name = name;
+    if (cut) where.cut = cut;
+    if (status) {
+      if (status === 'LOCKED') where.isActive = false;
+      if (status === 'UNLOCKED') where.isActive = true;
+      if (status === 'ALL') delete where.isActive;
+    }
+    if (search) {
+      const searchNum = parseFloat(search.replace(/\D/g, ''));
+      const isNum = !isNaN(searchNum) && searchNum > 0;
+      
+      if (isNum) {
+        where.OR = [
+          { size: { contains: search, mode: 'insensitive' } },
+          { price: { equals: searchNum } }
+        ];
+      } else {
+        where.size = { contains: search, mode: 'insensitive' };
+      }
+    }
+
+    const skip = (page - 1) * limit;
+    
+    // Sort logic mimics frontend: by size numerically if possible, else alphabetically
+    // Since Prisma cannot cast string to float in orderBy easily, we will pull all matches if we need numerical sorting.
+    // Wait, since we are doing backend pagination, we should order by name asc, then size asc.
+    // But size is a string in the DB (e.g., "5.0mm"). We can just order alphabetically for now, or fetch and sort if limit is large.
+    // Let's stick to standard DB ordering to keep it efficient.
+    const [data, total] = await Promise.all([
+      this.prisma.stone.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: [{ name: 'asc' }, { size: 'asc' }],
+      }),
+      this.prisma.stone.count({ where })
+    ]);
+
+    return {
+      data,
+      total,
+      page,
+      totalPages: Math.ceil(total / limit)
+    };
   }
 
   // "Cùng đá" = cùng loại (chủ/tấm) + cùng tên + cùng giác cắt + cùng size, so sánh không phân
