@@ -25,15 +25,15 @@ describe('QuoteRequestsService.buildEffectiveOptions', () => {
     expect(out[0].vat).toBe(10);
   });
 
-  it('không options nhưng có materialIds → 1 option "Yêu cầu ban đầu"', () => {
+  it('không options nhưng có nhiều materialIds → mỗi chất liệu 1 option độc lập', () => {
     const out = build({ materialIds: ['m1', 'm2'], defaultVat: 8 });
-    expect(out).toHaveLength(1);
-    expect(out[0].optionName).toBe('Yêu cầu ban đầu');
-    expect(out[0].materials).toEqual([
-      { materialId: 'm1' },
-      { materialId: 'm2' },
-    ]);
+    expect(out).toHaveLength(2);
+    expect(out[0].optionName).toBe('Yêu cầu ban đầu (Phương án 1)');
+    expect(out[0].materials).toEqual([{ materialId: 'm1' }]);
     expect(out[0].vat).toBe(8);
+    expect(out[1].optionName).toBe('Yêu cầu ban đầu (Phương án 2)');
+    expect(out[1].materials).toEqual([{ materialId: 'm2' }]);
+    expect(out[1].vat).toBe(8);
   });
 
   it('materialId đơn lẻ vẫn vào fallbackMaterials', () => {

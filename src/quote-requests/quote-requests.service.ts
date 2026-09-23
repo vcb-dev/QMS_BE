@@ -130,7 +130,7 @@ export class QuoteRequestsService {
         }))
       : fallbackMaterials.length > 0
         ? fallbackMaterials.map((mat, idx) => ({
-            optionName: fallbackMaterials.length > 1 ? `Yêu cầu ban đầu (Phương án )` : 'Yêu cầu ban đầu',
+            optionName: fallbackMaterials.length > 1 ? `Yêu cầu ban đầu (Phương án ${idx + 1})` : 'Yêu cầu ban đầu',
             laborCost: defaultLaborCost,
             vat: defaultVat,
             materials: [mat],
