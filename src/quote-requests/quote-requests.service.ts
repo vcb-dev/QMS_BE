@@ -1,4 +1,4 @@
-import {
+﻿import {
   Injectable,
   BadRequestException,
   NotFoundException,
@@ -128,40 +128,30 @@ export class QuoteRequestsService {
                 ? fallbackStones
                 : undefined,
         }))
-      : fallbackMaterials.length > 0 || fallbackStones.length > 0
-        ? [
-            {
-              optionName: 'Yêu cầu ban đầu',
-              laborCost: defaultLaborCost,
-              vat: defaultVat,
-              materials:
-                fallbackMaterials.length > 0 ? fallbackMaterials : undefined,
-              stones: fallbackStones.length > 0 ? fallbackStones : undefined,
-            },
-          ]
-        : [];
+      : fallbackMaterials.length > 0
+        ? fallbackMaterials.map((mat, idx) => ({
+            optionName: fallbackMaterials.length > 1 ? `Yêu cầu ban đầu (Phương án ${idx + 1})` : 'Yêu cầu ban đầu',
+            laborCost: defaultLaborCost,
+            vat: defaultVat,
+            materials: [mat],
+            stones: fallbackStones.length > 0 ? fallbackStones : undefined,
+          }))
+        : fallbackStones.length > 0
+          ? [
+              {
+                optionName: 'Yêu cầu ban đầu',
+                laborCost: defaultLaborCost,
+                vat: defaultVat,
+                materials: undefined,
+                stones: fallbackStones.length > 0 ? fallbackStones : undefined,
+              },
+            ]
+          : [];
   }
 
   // Danh sách "chất liệu muốn chế tác" của một yêu cầu chỉ được nằm trong cùng một kim loại gốc:
   // vàng nhiều tuổi thì ghép được, nhưng không trộn vàng/bạc/bạch kim. Chất liệu phi kim loại
   // (baseMetalId null) mỗi cái là một nhóm riêng nên cũng không ghép với chất liệu khác.
-  private async assertMaterialsSameBaseMetal(
-    materialIds: string[],
-  ): Promise<void> {
-    const uniqueIds = [...new Set(materialIds.filter(Boolean))];
-    if (uniqueIds.length < 2) return;
-    const rows = await this.prisma.material.findMany({
-      where: { id: { in: uniqueIds } },
-      select: { id: true, baseMetalId: true },
-    });
-    const groupKeys = new Set(
-      rows.map((r) => r.baseMetalId ?? `__nonmetal__${r.id}`),
-    );
-    if (groupKeys.size > 1) {
-      throw new BadRequestException('Các chất liệu phải cùng một kim loại gốc');
-    }
-  }
-
   async create(
     userId: string,
     role: Role,
@@ -181,10 +171,6 @@ export class QuoteRequestsService {
       customerId,
       ...data
     } = dto;
-    await this.assertMaterialsSameBaseMetal([
-      ...(materialIds ?? []),
-      ...(materialId ? [materialId] : []),
-    ]);
     const code = this.generateCode();
     const finalCustomerId = await this.resolveWalkInCustomerId(customerId);
 
@@ -564,3 +550,4 @@ export class QuoteRequestsService {
     );
   }
 }
+
