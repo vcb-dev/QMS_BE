@@ -539,23 +539,8 @@ export class LarkService implements OnModuleInit {
     return wrapCard('grey', input.actionLabel, elements);
   }
 
-  // Dựng payload card "đã báo giá": header xanh, ảnh sản phẩm 2 cột, từng phương án + giá,
-  // nút "Xem chi tiết". Upload ảnh trước — hỏng thì card vẫn dựng, chỉ thiếu ảnh.
+  // Dựng payload card "đã báo giá" — header xanh + 1 dòng tóm tắt + tổng giá + nút "Xem chi tiết".
   async buildQuoteCardPayload(data: QuoteCardData): Promise<LarkCard> {
-    if (!data.imageUrl) {
-      this.logger.warn(
-        'Lark card: đơn không có ảnh sản phẩm (quote.images rỗng)',
-      );
-    }
-    const imgKey = data.imageUrl
-      ? await this.uploadImageFromUrl(data.imageUrl)
-      : null;
-    if (data.imageUrl && !imgKey) {
-      this.logger.warn(
-        `Lark card: có ảnh nhưng không lấy được image_key — ${data.imageUrl.slice(0, 80)}`,
-      );
-    }
-
     const frontendUrl = primaryFrontendUrl(
       this.config.get<string>('FRONTEND_URL'),
     );
@@ -564,84 +549,21 @@ export class LarkService implements OnModuleInit {
         ? `${frontendUrl}/requests/${data.requestId}`
         : null;
 
-    return this.buildQuoteCard(data, imgKey, detailUrl);
+    return this.buildQuoteCard(data, detailUrl);
   }
 
   // card v1 cho custom bot. Nhúng ảnh chỉ khi có imgKey (upload thành công).
-  private buildQuoteCard(
-    data: QuoteCardData,
-    imgKey: string | null,
-    detailUrl: string | null,
-  ): LarkCard {
-    const elements: LarkElement[] = [];
-
-    // Thông tin đơn — 1 khối text, mỗi field 1 dòng (để đặt vừa cột hẹp bên phải ảnh).
-    const infoDiv = md(
-      [
-        `**Danh mục:** ${data.categoryName || '—'}`,
-        `**Sản phẩm:** ${data.productName || '—'}`,
-        `**Khách hàng:** ${data.customerName || '—'}`,
-        `**Sale:** ${this.saleMention(data)}`,
-        `**Order:** ${data.orderName || '—'}`,
-        `**Ngày tạo:** ${this.fmtDate(data.createdAt)}`,
-        `**Ngày báo giá:** ${this.fmtDate(data.quotedAt)}`,
-      ].join('\n'),
-    );
-
-    if (imgKey) {
-      // Ảnh trái (cỡ nhỏ, co theo cột, giữ đúng tỉ lệ) — thông tin đơn ở cột phải.
-      elements.push({
-        tag: 'column_set',
-        flex_mode: 'none',
-        columns: [
-          {
-            tag: 'column',
-            width: 'weighted',
-            weight: 2,
-            vertical_align: 'top',
-            elements: [
-              {
-                tag: 'img',
-                img_key: imgKey,
-                alt: { tag: 'plain_text', content: 'Ảnh sản phẩm' },
-                mode: 'fit_horizontal',
-                preview: true,
-              },
-            ],
-          },
-          {
-            tag: 'column',
-            width: 'weighted',
-            weight: 3,
-            vertical_align: 'top',
-            elements: [infoDiv],
-          },
-        ],
-      });
-    } else {
-      elements.push(infoDiv);
-    }
-
-    // Chỉ dựng phương án BÁO GIÁ CHÍNH (data.options đã lọc ở buildQuoteCardData còn đúng 1 phương
-    // án chính, bỏ các phương án phụ / so sánh loại vàng khác).
-    data.options.forEach((opt) => {
-      const lines = [`**${opt.name}**`];
-      if (opt.materialText) lines.push(`• Chất liệu: ${opt.materialText}`);
-      lines.push(`• Giá chất liệu: ${formatVnd(opt.materialPrice)}`);
-      lines.push(`• Đá: ${opt.stoneText}`);
-      if (opt.stonePrice > 0)
-        lines.push(`• Giá đá: ${formatVnd(opt.stonePrice)}`);
-      lines.push(`• Giá báo: ${formatVnd(opt.quotedPrice)}`);
-      elements.push(hr());
-      elements.push(md(lines.join('\n')));
-    });
-
-    elements.push(hr());
-    elements.push(
+  // Gọn thành 1 dòng + tổng giá — bỏ ảnh, bỏ khối 7 field, bỏ breakdown từng phương án. Header
+  // "Đã báo giá · <mã>" đã đủ ngữ cảnh, thân thẻ chỉ cần biết sản phẩm/khách/ai báo giá/tổng bao nhiêu.
+  private buildQuoteCard(data: QuoteCardData, detailUrl: string | null): LarkCard {
+    const elements: LarkElement[] = [
       md(
-        `**TỔNG BÁO GIÁ**\n<font color="green">**${formatVnd(data.totalPrice)}**</font>`,
+        `${data.categoryName || '—'} — Khách hàng: ${data.customerName || '—'} — Người báo giá: ${data.orderName || '—'}`,
       ),
-    );
+      md(
+        `**Tổng báo giá:** <font color="green">**${formatVnd(data.totalPrice)}**</font>`,
+      ),
+    ];
 
     if (detailUrl) elements.push(linkBtn('Xem chi tiết', detailUrl, 'primary'));
 
