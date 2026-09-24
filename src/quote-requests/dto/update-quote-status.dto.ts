@@ -6,6 +6,7 @@ import {
   IsString,
   IsArray,
   MaxLength,
+  Min,
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -55,4 +56,11 @@ export class UpdateQuoteStatusDto {
   @IsOptional()
   @IsString()
   optionId?: string;
+
+  // Tiền kiểm định Order nhập lúc báo giá (QUOTE) hoặc sửa giá (EDIT_PRICE) — lưu trên QuoteRequest,
+  // đã được cộng sẵn vào quotedPrice của từng option qua /quote-options/calculate-batch.
+  @IsOptional()
+  @IsNumber()
+  @Min(0, { message: 'Tiền kiểm định không được là số âm' })
+  inspectionFee?: number;
 }
