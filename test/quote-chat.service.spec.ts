@@ -17,6 +17,7 @@ describe('QuoteChatService', () => {
       findMany: jest.Mock;
       upsert: jest.Mock;
     };
+    user: { findUnique: jest.Mock };
   };
 
   const REQUEST = { requesterId: 'sale-1', assigneeId: 'order-1' };
@@ -37,6 +38,10 @@ describe('QuoteChatService', () => {
         findMany: jest.fn(),
         upsert: jest.fn(),
       },
+      // Mặc định user không có role (không phải ORDER/ADMIN) — giữ đúng hành vi cũ (chỉ
+      // requester/assignee) cho các test không quan tâm tới group chat. Test group chat tự
+      // mockResolvedValueOnce role ORDER/ADMIN khi cần.
+      user: { findUnique: jest.fn().mockResolvedValue(null) },
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -65,6 +70,27 @@ describe('QuoteChatService', () => {
     it('chặn user không phải participant', async () => {
       await expect(
         service.assertParticipant('req-1', 'nguoi-la-1'),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('cho qua ORDER khác không phải assignee của đơn — group chat', async () => {
+      prisma.user.findUnique.mockResolvedValueOnce({ role: 'ORDER' });
+      await expect(
+        service.assertParticipant('req-1', 'order-khac-1'),
+      ).resolves.toEqual(REQUEST);
+    });
+
+    it('cho qua ADMIN bất kỳ — group chat', async () => {
+      prisma.user.findUnique.mockResolvedValueOnce({ role: 'ADMIN' });
+      await expect(
+        service.assertParticipant('req-1', 'admin-1'),
+      ).resolves.toEqual(REQUEST);
+    });
+
+    it('vẫn chặn SALE khác không liên quan đơn', async () => {
+      prisma.user.findUnique.mockResolvedValueOnce({ role: 'SALE' });
+      await expect(
+        service.assertParticipant('req-1', 'sale-khac-1'),
       ).rejects.toThrow(ForbiddenException);
     });
 
@@ -184,6 +210,23 @@ describe('QuoteChatService', () => {
         },
         select: { quoteRequestId: true, createdAt: true },
       });
+    });
+
+    it('ORDER/ADMIN thấy mọi đơn, không lọc theo requester/assignee — group chat', async () => {
+      prisma.user.findUnique.mockResolvedValueOnce({ role: 'ORDER' });
+      prisma.quoteRequest.findMany.mockResolvedValue([{ id: 'req-1' }]);
+      prisma.quoteChatRead.findMany.mockResolvedValue([]);
+      prisma.quoteChatMessage.findMany.mockResolvedValue([
+        { quoteRequestId: 'req-1', createdAt: new Date('2026-08-20T10:00:00Z') },
+      ]);
+
+      const result = await service.getUnreadCounts('order-khac-1', ['req-1']);
+
+      expect(prisma.quoteRequest.findMany).toHaveBeenCalledWith({
+        where: { id: { in: ['req-1'] } },
+        select: { id: true },
+      });
+      expect(result).toEqual({ 'req-1': 1 });
     });
   });
 
