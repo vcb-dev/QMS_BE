@@ -114,14 +114,8 @@ function buildSearchCondition(trimmed: string) {
       },
       { requester: { name: { contains: trimmed, mode: 'insensitive' } } },
       {
-        requester: {
-          department: { name: { contains: trimmed, mode: 'insensitive' } },
-        },
-      },
-      {
-        assignee: {
-          department: { name: { contains: trimmed, mode: 'insensitive' } },
-        },
+        // department là quan hệ của chính QuoteRequest (departmentId), User không có field này.
+        department: { name: { contains: trimmed, mode: 'insensitive' } },
       },
       ...(matchedStatuses.length ? [{ status: { in: matchedStatuses } }] : []),
     ],
