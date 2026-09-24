@@ -308,6 +308,7 @@ export class LarkService implements OnModuleInit {
       entityType: null,
       entityCode: null,
       entityId: null,
+      productName: null,
       detailUrl: null,
       at: new Date(),
     });
@@ -322,9 +323,9 @@ export class LarkService implements OnModuleInit {
     const targets = await this.webhooksForAction(action);
     if (targets.length === 0) return;
 
-    const [actorName, entityCode] = await Promise.all([
+    const [actorName, entityInfo] = await Promise.all([
       this.resolveActorName(ctx.actorId),
-      this.resolveEntityCode(ctx.entityType, ctx.entityId),
+      this.resolveEntityInfo(ctx.entityType, ctx.entityId),
     ]);
     const detailUrl = this.buildEntityUrl(ctx.entityType, ctx.entityId);
 
@@ -332,8 +333,9 @@ export class LarkService implements OnModuleInit {
       actionLabel: AUDIT_ACTION_LABELS[action as AuditAction] || action,
       actorName,
       entityType: ctx.entityType ?? null,
-      entityCode,
+      entityCode: entityInfo.code,
       entityId: ctx.entityId ?? null,
+      productName: entityInfo.productName,
       detailUrl,
       at: new Date(),
     });
@@ -434,15 +436,20 @@ export class LarkService implements OnModuleInit {
     return u?.name || 'Không rõ';
   }
 
-  private async resolveEntityCode(
+  private async resolveEntityInfo(
     entityType: string | undefined,
     entityId: string | undefined,
-  ): Promise<string | null> {
-    if (entityType !== 'QuoteRequest' || !entityId) return null;
+  ): Promise<{ code: string | null; productName: string | null }> {
+    if (entityType !== 'QuoteRequest' || !entityId) {
+      return { code: null, productName: null };
+    }
     const q = await this.prisma.quoteRequest
-      .findUnique({ where: { id: entityId }, select: { code: true } })
+      .findUnique({
+        where: { id: entityId },
+        select: { code: true, category: { select: { name: true } } },
+      })
       .catch(() => null);
-    return q?.code ?? null;
+    return { code: q?.code ?? null, productName: q?.category?.name ?? null };
   }
 
   private buildEntityUrl(
@@ -514,28 +521,18 @@ export class LarkService implements OnModuleInit {
 
   // Thẻ tóm tắt generic cho các hành động không phải "đã báo giá"
   // (từ chối, trả lại, tạo yêu cầu, xuất Excel, tin thử...). Header xám.
+  // Gọn thành 1 dòng tự nhiên kiểu "<hành động>: <mã> (<sản phẩm>) — người thực hiện: <tên>" thay
+  // vì khối 3 dòng label/value — dễ đọc lướt qua trên Lark, không cần mở rộng thẻ mới thấy hết.
   private buildSummaryCard(input: SummaryCardInput): LarkCard {
-    const at = input.at.toLocaleString('vi-VN', {
-      hour: '2-digit',
-      minute: '2-digit',
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-    });
     const target =
       input.entityCode ||
       (input.entityType && input.entityId
         ? `${input.entityType} #${input.entityId}`
         : input.entityType || '—');
+    const productSuffix = input.productName ? ` (${input.productName})` : '';
 
     const elements = [
-      md(
-        [
-          `**Người thực hiện:** ${input.actorName}`,
-          `**Đối tượng:** ${target}`,
-          `**Thời điểm:** ${at}`,
-        ].join('\n'),
-      ),
+      md(`${input.actionLabel}: ${target}${productSuffix} — người thực hiện: ${input.actorName}`),
     ];
     if (input.detailUrl)
       elements.push(linkBtn('Xem chi tiết', input.detailUrl));
