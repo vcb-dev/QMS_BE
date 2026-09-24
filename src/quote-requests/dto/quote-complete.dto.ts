@@ -135,4 +135,5 @@ export class QuoteOptionItemDto {
 
 export class CompleteQuoteInput {
   options: QuoteOptionItemDto[];
+  inspectionFee?: number;
 }

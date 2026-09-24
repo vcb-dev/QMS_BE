@@ -296,6 +296,9 @@ export class QuoteWorkflowService {
           status: QuoteStatus.QUOTED,
           assigneeId: userId,
           version: { increment: 1 },
+          ...(dto.inspectionFee != null
+            ? { inspectionFee: dto.inspectionFee }
+            : {}),
         },
         include: REQUEST_DETAIL_INCLUDE,
       });
@@ -352,6 +355,9 @@ export class QuoteWorkflowService {
           status: QuoteStatus.QUOTED,
           assigneeId: userId,
           version: { increment: 1 },
+          ...(dto.inspectionFee != null
+            ? { inspectionFee: dto.inspectionFee }
+            : {}),
         },
       }),
       this.prisma.quoteOption.createMany({
@@ -388,6 +394,7 @@ export class QuoteWorkflowService {
     role: Role,
     opt: CompleteQuoteInput['options'][number],
     expectedVersion?: number,
+    inspectionFee?: number,
   ) {
     const quote = await this.prisma.quoteRequest.findUnique({
       where: { id },
@@ -461,7 +468,10 @@ export class QuoteWorkflowService {
       }),
       this.prisma.quoteRequest.update({
         where: { id },
-        data: { version: { increment: 1 } },
+        data: {
+          version: { increment: 1 },
+          ...(inspectionFee != null ? { inspectionFee } : {}),
+        },
       }),
     ]);
 
@@ -789,7 +799,10 @@ export class QuoteWorkflowService {
           'QuoteRequest',
           id,
         );
-        return this.completeQuote(id, userId, { options: dto.options! });
+        return this.completeQuote(id, userId, {
+          options: dto.options!,
+          inspectionFee: dto.inspectionFee,
+        });
       }
 
       case QuoteAction.QUICK_QUOTE: {
@@ -1036,6 +1049,7 @@ export class QuoteWorkflowService {
           role,
           dto.options[0],
           dto.version,
+          dto.inspectionFee,
         );
       }
 
