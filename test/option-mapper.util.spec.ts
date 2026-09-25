@@ -1,6 +1,7 @@
 import {
   computeFinalOption,
   buildOptionCreateInput,
+  buildStoneRowsWithGroup,
   buildLibraryProductName,
   computeLibraryGroupKey,
   computePriceBreakdown,
@@ -315,5 +316,138 @@ describe('buildOptionCreateInput — dedupKey', () => {
       'cat-3',
     );
     expect(result.dedupKey).toBe('cat-3|:1|Kim cương 2 ly');
+  });
+});
+
+describe('buildStoneRowsWithGroup — nhóm đá tấm (SIDE) theo đá chủ (MAIN) qua parentIndex', () => {
+  it('đá chủ không có parentStoneId, đá tấm resolve đúng id thật của đá chủ nó trỏ tới', () => {
+    const rows = buildStoneRowsWithGroup([
+      { stoneId: 'main-1', quantity: 1 },
+      { stoneId: 'side-1', quantity: 2, parentIndex: 0 },
+    ]);
+    expect(rows).toHaveLength(2);
+    const main = rows.find((r) => r.stoneId === 'main-1')!;
+    const side = rows.find((r) => r.stoneId === 'side-1')!;
+    expect(main.parentStoneId).toBeUndefined();
+    expect(side.parentStoneId).toBe(main.id);
+    expect(main.id).not.toBe(side.id);
+  });
+
+  it('nhiều đá chủ, mỗi đá tấm chỉ trỏ đúng đá chủ CỦA NÓ (không lẫn sang đá chủ khác)', () => {
+    const rows = buildStoneRowsWithGroup([
+      { stoneId: 'main-A', quantity: 1 },
+      { stoneId: 'side-A', quantity: 1, parentIndex: 0 },
+      { stoneId: 'main-B', quantity: 1 },
+      { stoneId: 'side-B', quantity: 1, parentIndex: 2 },
+    ]);
+    const mainA = rows.find((r) => r.stoneId === 'main-A')!;
+    const sideA = rows.find((r) => r.stoneId === 'side-A')!;
+    const mainB = rows.find((r) => r.stoneId === 'main-B')!;
+    const sideB = rows.find((r) => r.stoneId === 'side-B')!;
+    expect(sideA.parentStoneId).toBe(mainA.id);
+    expect(sideB.parentStoneId).toBe(mainB.id);
+    expect(sideA.parentStoneId).not.toBe(mainB.id);
+  });
+
+  it('không có parentIndex -> parentStoneId undefined (đá chủ hoặc đá tấm orphan dùng chung)', () => {
+    const rows = buildStoneRowsWithGroup([
+      { stoneId: 's1', quantity: 1 },
+      { stoneId: 's2', quantity: 1 },
+    ]);
+    expect(rows.every((r) => r.parentStoneId === undefined)).toBe(true);
+  });
+
+  it('sắp lại: dòng KHÔNG có parentStoneId luôn đứng TRƯỚC dòng có parentStoneId — kể cả khi mảng đầu vào liệt kê đá tấm trước đá chủ (tránh vỡ FK tự tham chiếu lúc insert)', () => {
+    const rows = buildStoneRowsWithGroup([
+      { stoneId: 'side-1', quantity: 1, parentIndex: 1 },
+      { stoneId: 'main-1', quantity: 1 },
+    ]);
+    expect(rows[0].stoneId).toBe('main-1');
+    expect(rows[0].parentStoneId).toBeUndefined();
+    expect(rows[1].stoneId).toBe('side-1');
+    expect(rows[1].parentStoneId).toBe(rows[0].id);
+  });
+
+  it('unitPriceAtQuote lấy từ stonePriceMap theo stoneId', () => {
+    const priceMap = new Map([
+      ['main-1', 5_000_000],
+      ['side-1', 800_000],
+    ]);
+    const rows = buildStoneRowsWithGroup(
+      [
+        { stoneId: 'main-1', quantity: 1 },
+        { stoneId: 'side-1', quantity: 2, parentIndex: 0 },
+      ],
+      priceMap,
+    );
+    expect(rows.find((r) => r.stoneId === 'main-1')!.unitPriceAtQuote).toBe(
+      5_000_000,
+    );
+    expect(rows.find((r) => r.stoneId === 'side-1')!.unitPriceAtQuote).toBe(
+      800_000,
+    );
+  });
+});
+
+describe('mapOptionDetail — trả thêm id + parentStoneId cho từng dòng đá', () => {
+  it('gắn id và parentStoneId (null nếu không set) vào từng dòng đá', () => {
+    const out = mapOptionDetail({
+      quotedPrice: 5_000_000,
+      stonePrice: 1_000_000,
+      materials: [],
+      stones: [
+        {
+          id: 'row-main',
+          stoneId: 'main-1',
+          quantity: 1,
+          parentStoneId: null,
+          stone: { name: 'Kim cương', stoneType: 'MAIN', price: 100 },
+        },
+        {
+          id: 'row-side',
+          stoneId: 'side-1',
+          quantity: 2,
+          parentStoneId: 'row-main',
+          stone: { name: 'Đá tấm', stoneType: 'SIDE', price: 10 },
+        },
+      ],
+    });
+    expect(out.stones).toEqual([
+      {
+        id: 'row-main',
+        stoneId: 'main-1',
+        stoneName: 'Kim cương',
+        stoneType: 'MAIN',
+        quantity: 1,
+        parentStoneId: null,
+        price: 100,
+      },
+      {
+        id: 'row-side',
+        stoneId: 'side-1',
+        stoneName: 'Đá tấm',
+        stoneType: 'SIDE',
+        quantity: 2,
+        parentStoneId: 'row-main',
+        price: 10,
+      },
+    ]);
+  });
+
+  it('record cũ không có parentStoneId trên DB -> fallback null', () => {
+    const out = mapOptionDetail({
+      quotedPrice: 1,
+      stonePrice: 0,
+      materials: [],
+      stones: [
+        {
+          id: 'row-1',
+          stoneId: 's1',
+          quantity: 1,
+          stone: { name: 'Đá', stoneType: 'MAIN', price: 5 },
+        },
+      ],
+    });
+    expect(out.stones![0].parentStoneId).toBeNull();
   });
 });

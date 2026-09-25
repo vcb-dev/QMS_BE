@@ -23,6 +23,7 @@ import { QuoteOptionsService } from '../quote-option/quote-options.service';
 import {
   REQUEST_DETAIL_INCLUDE,
   buildOptionCreateInput,
+  buildStoneRowsWithGroup,
   mapQuoteRequestDetail,
   pickPrimaryOption,
 } from '../../utils/option-mapper.util';
@@ -335,12 +336,15 @@ export class QuoteWorkflowService {
         weightChi: m.weightChi != null ? m.weightChi : opt.weightChi,
       })),
     );
+    // Sinh id thật cho từng dòng đá + resolve parentIndex (vị trí đá chủ trong CHÍNH mảng
+    // opt.stones này, không phải id thật) thành parentStoneId thật qua buildStoneRowsWithGroup —
+    // dùng chung với buildOptionCreateInput (editQuotedPrice/quick-quote/quick-approve) để 2 đường
+    // lưu đá luôn khôi phục đúng nhóm MAIN/SIDE giống nhau. Nhờ sinh id trước, đá tấm tham chiếu
+    // đúng id thật của đá chủ ngay trong CÙNG 1 lần createMany, không cần round-trip lấy id sau khi insert.
     const stoneRows = optionWrites.flatMap(({ id: optionId, opt }) =>
-      (opt.stones ?? []).map((s: any) => ({
+      buildStoneRowsWithGroup(opt.stones ?? [], stonePriceMap).map((row) => ({
         optionId,
-        stoneId: s.stoneId,
-        quantity: s.quantity,
-        unitPriceAtQuote: stonePriceMap.get(s.stoneId),
+        ...row,
       })),
     );
 
