@@ -309,6 +309,7 @@ export class LarkService implements OnModuleInit {
       entityCode: null,
       entityId: null,
       productName: null,
+      requesterName: null,
       detailUrl: null,
       at: new Date(),
     });
@@ -336,6 +337,7 @@ export class LarkService implements OnModuleInit {
       entityCode: entityInfo.code,
       entityId: ctx.entityId ?? null,
       productName: entityInfo.productName,
+      requesterName: entityInfo.requesterName,
       detailUrl,
       at: new Date(),
     });
@@ -439,17 +441,29 @@ export class LarkService implements OnModuleInit {
   private async resolveEntityInfo(
     entityType: string | undefined,
     entityId: string | undefined,
-  ): Promise<{ code: string | null; productName: string | null }> {
+  ): Promise<{
+    code: string | null;
+    productName: string | null;
+    requesterName: string | null;
+  }> {
     if (entityType !== 'QuoteRequest' || !entityId) {
-      return { code: null, productName: null };
+      return { code: null, productName: null, requesterName: null };
     }
     const q = await this.prisma.quoteRequest
       .findUnique({
         where: { id: entityId },
-        select: { code: true, category: { select: { name: true } } },
+        select: {
+          code: true,
+          category: { select: { name: true } },
+          requester: { select: { name: true } },
+        },
       })
       .catch(() => null);
-    return { code: q?.code ?? null, productName: q?.category?.name ?? null };
+    return {
+      code: q?.code ?? null,
+      productName: q?.category?.name ?? null,
+      requesterName: q?.requester?.name ?? null,
+    };
   }
 
   private buildEntityUrl(
@@ -523,6 +537,8 @@ export class LarkService implements OnModuleInit {
   // (từ chối, trả lại, tạo yêu cầu, xuất Excel, tin thử...). Header xám.
   // Gọn thành 1 dòng tự nhiên kiểu "<hành động>: <mã> (<sản phẩm>) — người thực hiện: <tên>" thay
   // vì khối 3 dòng label/value — dễ đọc lướt qua trên Lark, không cần mở rộng thẻ mới thấy hết.
+  // Kèm "người tạo yêu cầu" khi khác người thực hiện (VD: Order từ chối yêu cầu Sale tạo) — bằng
+  // nhau (Sale tự tạo) thì không lặp lại thừa.
   private buildSummaryCard(input: SummaryCardInput): LarkCard {
     const target =
       input.entityCode ||
@@ -530,9 +546,15 @@ export class LarkService implements OnModuleInit {
         ? `${input.entityType} #${input.entityId}`
         : input.entityType || '—');
     const productSuffix = input.productName ? ` (${input.productName})` : '';
+    const requesterSuffix =
+      input.requesterName && input.requesterName !== input.actorName
+        ? ` — người tạo yêu cầu: ${input.requesterName}`
+        : '';
 
     const elements = [
-      md(`${input.actionLabel}: ${target}${productSuffix} — người thực hiện: ${input.actorName}`),
+      md(
+        `${input.actionLabel}: ${target}${productSuffix} — người thực hiện: ${input.actorName}${requesterSuffix}`,
+      ),
     ];
     if (input.detailUrl)
       elements.push(linkBtn('Xem chi tiết', input.detailUrl));
@@ -555,7 +577,10 @@ export class LarkService implements OnModuleInit {
   // card v1 cho custom bot. Nhúng ảnh chỉ khi có imgKey (upload thành công).
   // Gọn thành 1 dòng + tổng giá — bỏ ảnh, bỏ khối 7 field, bỏ breakdown từng phương án. Header
   // "Đã báo giá · <mã>" đã đủ ngữ cảnh, thân thẻ chỉ cần biết sản phẩm/khách/ai báo giá/tổng bao nhiêu.
-  private buildQuoteCard(data: QuoteCardData, detailUrl: string | null): LarkCard {
+  private buildQuoteCard(
+    data: QuoteCardData,
+    detailUrl: string | null,
+  ): LarkCard {
     const elements: LarkElement[] = [
       md(
         `${data.categoryName || '—'} — Khách hàng: ${data.customerName || '—'} — Người báo giá: ${data.orderName || '—'}`,
@@ -636,12 +661,16 @@ export class LarkService implements OnModuleInit {
       }
       const data: any = await res.json().catch(() => null);
       if (data && data.code !== 0) {
-        this.logger.warn(`Lark webhook từ chối: ${data.msg || JSON.stringify(data)}`);
+        this.logger.warn(
+          `Lark webhook từ chối: ${data.msg || JSON.stringify(data)}`,
+        );
         return { ok: false, message: 'Lark từ chối tin nhắn thử' };
       }
       return { ok: true, message: 'Đã gửi tin tới Lark' };
     } catch (err) {
-      this.logger.warn(`Không gửi được thông báo Lark: ${err instanceof Error ? err.message : err}`);
+      this.logger.warn(
+        `Không gửi được thông báo Lark: ${err instanceof Error ? err.message : err}`,
+      );
       return { ok: false, message: 'Không gửi được tin tới Lark' };
     }
   }
