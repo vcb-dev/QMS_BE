@@ -17,6 +17,7 @@ export function buildQuoteWhereClause(
     customerId,
     requesterId,
     assigneeId,
+    departmentId,
     categoryId,
     materialId,
     ownerId,
@@ -32,7 +33,7 @@ export function buildQuoteWhereClause(
     andConditions.push({ customerId });
   }
 
-  const targetOwner = ownerId || requesterId;
+  const targetOwner = ownerId;
   if (targetOwner) {
     if (_user?.role === Role.ORDER) {
       andConditions.push({ assigneeId: targetOwner });
@@ -45,8 +46,16 @@ export function buildQuoteWhereClause(
     andConditions.push({ status: status });
   }
 
+  if (requesterId) {
+    andConditions.push({ requesterId });
+  }
+
   if (assigneeId) {
     andConditions.push({ assigneeId });
+  }
+
+  if (departmentId && departmentId !== 'ALL') {
+    andConditions.push({ departmentId });
   }
 
   if (categoryId && categoryId !== 'ALL') {

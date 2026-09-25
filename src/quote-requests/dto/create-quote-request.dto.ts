@@ -33,9 +33,9 @@ export class CreateQuoteRequestDto {
   @IsString()
   customerId?: string;
 
-  @IsOptional()
   @IsString()
-  departmentId?: string;
+  @IsNotEmpty({ message: 'Vui lòng chọn phòng ban' })
+  departmentId: string;
 
   @IsOptional()
   @IsString()
