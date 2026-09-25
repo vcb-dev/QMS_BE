@@ -87,6 +87,7 @@ export class QuoteQueryService {
           customerMeasurements: true,
           note: true,
           closeRatePct: true,
+          inspectionFee: true,
           status: true,
           rejectReason: true,
           returnReason: true,
