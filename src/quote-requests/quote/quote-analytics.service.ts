@@ -5,6 +5,7 @@ import { QuoteStatus, User, Role } from '@prisma/client';
 import { buildQuoteWhereClause } from '../../utils/quote-filter.util';
 import { resolveDateRange } from '../../utils/date-range.util';
 import { TimeRangeQueryDto } from '../../common/time-range-query.dto';
+import { StaffPerformanceQueryDto } from '../dto/staff-performance-query.dto';
 import {
   countsFromGroupBy,
   getMyReqCount,
@@ -297,7 +298,7 @@ export class QuoteAnalyticsService {
    * Dashboard) + hiệu suất người báo giá (thời gian TB báo giá/xử lý). Dùng finalOptionId cho
    * quotedDate — cùng nguyên tắc đã áp dụng ở getDashboardCharts.
    */
-  async getStaffPerformance(query?: TimeRangeQueryDto) {
+  async getStaffPerformance(query?: StaffPerformanceQueryDto) {
     // Lọc theo quoteRequest.createdAt — chỉ đơn tạo trong kỳ được tính vào tổng/đã chốt/TB thời
     // gian. Danh sách nhân viên (saleUsers/pricerUsers) KHÔNG lọc: người 0 việc trong kỳ vẫn hiện
     // dòng số 0.
@@ -347,18 +348,16 @@ export class QuoteAnalyticsService {
       if (g.status === QuoteStatus.CLOSED) cur.closed += g._count._all;
       saleTotals.set(g.requesterId, cur);
     }
-    const saleStats = saleUsers
-      .map((u) => {
-        const t = saleTotals.get(u.id) || { total: 0, closed: 0 };
-        return {
-          id: u.id,
-          name: u.name,
-          total: t.total,
-          closed: t.closed,
-          closeRate: t.total > 0 ? (t.closed / t.total) * 100 : 0,
-        };
-      })
-      .sort((a, b) => b.total - a.total);
+    const allSaleStats = saleUsers.map((u) => {
+      const t = saleTotals.get(u.id) || { total: 0, closed: 0 };
+      return {
+        id: u.id,
+        name: u.name,
+        total: t.total,
+        closed: t.closed,
+        closeRate: t.total > 0 ? (t.closed / t.total) * 100 : 0,
+      };
+    });
 
     const optionIds = pricerRows
       .map((r) => r.finalOptionId)
@@ -418,19 +417,69 @@ export class QuoteAnalyticsService {
         ? sorted[mid]
         : (sorted[mid - 1] + sorted[mid]) / 2;
     };
-    const pricerStats = pricerUsers
-      .map((u) => {
-        const b = durationsByAssignee.get(u.id) || { quote: [], process: [] };
-        return {
-          id: u.id,
-          name: u.name,
-          totalHandled: handledCountByAssignee.get(u.id) || 0,
-          medianQuoteMs: median(b.quote),
-          medianProcessMs: median(b.process),
-        };
-      })
-      .sort((a, b) => b.totalHandled - a.totalHandled);
+    const allPricerStats = pricerUsers.map((u) => {
+      const b = durationsByAssignee.get(u.id) || { quote: [], process: [] };
+      return {
+        id: u.id,
+        name: u.name,
+        totalHandled: handledCountByAssignee.get(u.id) || 0,
+        medianQuoteMs: median(b.quote),
+        medianProcessMs: median(b.process),
+      };
+    });
 
-    return { saleStats, pricerStats };
+    return {
+      saleStats: this.searchSortPaginate(
+        allSaleStats,
+        query?.saleSearch,
+        query?.saleSortField || 'total',
+        query?.saleSortDir || 'desc',
+        query?.salePage || 1,
+        query?.salePageSize || 10,
+      ),
+      pricerStats: this.searchSortPaginate(
+        allPricerStats,
+        query?.pricerSearch,
+        query?.pricerSortField || 'totalHandled',
+        query?.pricerSortDir || 'desc',
+        query?.pricerPage || 1,
+        query?.pricerPageSize || 10,
+      ),
+    };
+  }
+
+  // Lọc theo tên (không dấu phân biệt hoa/thường) + sort theo field bất kỳ (chuỗi dùng
+  // localeCompare, số so trực tiếp, null xếp cuối bất kể chiều sort) + cắt trang — dùng chung cho
+  // cả bảng Sale lẫn bảng người báo giá của getStaffPerformance.
+  private searchSortPaginate<T extends Record<string, unknown>>(
+    list: T[],
+    search: string | undefined,
+    sortField: string,
+    sortDir: 'asc' | 'desc',
+    page: number,
+    pageSize: number,
+  ): { items: T[]; total: number } {
+    const term = (search || '').trim().toLowerCase();
+    const filtered = term
+      ? list.filter((row) =>
+          String(row.name ?? '')
+            .toLowerCase()
+            .includes(term),
+        )
+      : list;
+    const sorted = [...filtered].sort((a, b) => {
+      const av = a[sortField];
+      const bv = b[sortField];
+      if (typeof av === 'string' || typeof bv === 'string') {
+        return sortDir === 'asc'
+          ? String(av).localeCompare(String(bv))
+          : String(bv).localeCompare(String(av));
+      }
+      const an = av == null ? -Infinity : Number(av);
+      const bn = bv == null ? -Infinity : Number(bv);
+      return sortDir === 'asc' ? an - bn : bn - an;
+    });
+    const start = (page - 1) * pageSize;
+    return { items: sorted.slice(start, start + pageSize), total: sorted.length };
   }
 }
