@@ -77,6 +77,11 @@ export class QuoteWorkflowService {
     userId: string,
     role: Role,
     expectedVersion?: number,
+    // Báo giá (QUOTE/QUICK_APPROVE): Order khác Order đang tiếp nhận vẫn được báo giá thẳng đơn đó
+    // — người thực sự bấm báo giá mới là người báo giá (completeQuote/QUICK_APPROVE tự gán lại
+    // assigneeId = userId), không cần bước "chuyển quyền" riêng trước. Các thao tác còn lại (nhập
+    // giá nhanh/từ chối/trả lại) vẫn giữ nguyên — chỉ đúng người đang tiếp nhận mới được làm.
+    allowAnyOrder = false,
   ) {
     const quote = await this.prisma.quoteRequest.findUnique({
       where: { id },
@@ -93,7 +98,7 @@ export class QuoteWorkflowService {
       );
     }
 
-    if (role === Role.ORDER && quote.assigneeId !== userId) {
+    if (role === Role.ORDER && !allowAnyOrder && quote.assigneeId !== userId) {
       throw new ForbiddenException(
         'Bạn chỉ được thao tác trên yêu cầu do mình tiếp nhận xử lý',
       );
@@ -411,11 +416,8 @@ export class QuoteWorkflowService {
         'Chỉ sửa được giá cho yêu cầu đã báo giá (đang QUOTED hoặc CLOSED)',
       );
     }
-    if (role === Role.ORDER && quote.assigneeId !== userId) {
-      throw new ForbiddenException(
-        'Bạn chỉ được sửa giá trên yêu cầu do mình báo giá',
-      );
-    }
+    // EDIT_PRICE: cho phép bất kỳ Order sửa giá — đồng bộ với QUOTE/QUICK_APPROVE
+    // (fix/quote-any-order-can-quote). Không cần là assignee ban đầu.
     if (expectedVersion != null && quote.version !== expectedVersion) {
       throw new ConflictException(
         'Yêu cầu đã được cập nhật bởi người khác, vui lòng tải lại trang',
@@ -789,7 +791,7 @@ export class QuoteWorkflowService {
             'Vui lòng nhập giá sản phẩm cho ít nhất 1 phương án (options[].quotedPrice)',
           );
         }
-        await this.assertPricingCanProcess(id, userId, role, dto.version);
+        await this.assertPricingCanProcess(id, userId, role, dto.version, true);
         // Fire-and-forget — không chặn phản hồi bằng 1 INSERT audit_logs qua pooler (~0.8s cộng
         // thẳng vào thời gian bấm "Xác Nhận & Gửi Báo Giá"). logAction tự nuốt lỗi.
         void this.auditLog.logAction(
@@ -857,7 +859,7 @@ export class QuoteWorkflowService {
           [Role.ORDER, Role.ADMIN],
           'Chỉ có vai trò ORDER hoặc ADMIN mới được phép duyệt báo giá nhanh',
         );
-        await this.assertPricingCanProcess(id, userId, role);
+        await this.assertPricingCanProcess(id, userId, role, undefined, true);
         await this.auditLog.logAction(
           userId,
           role,
