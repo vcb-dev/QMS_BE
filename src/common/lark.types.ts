@@ -33,6 +33,8 @@ export interface SummaryCardInput {
   entityType: string | null;
   entityCode: string | null; // mã yêu cầu nếu tra được, ưu tiên hơn entityType/#id
   entityId: string | null;
+  productName: string | null; // tên sản phẩm của yêu cầu báo giá (chỉ có khi entityType QuoteRequest)
+  requesterName: string | null; // tên Sale tạo yêu cầu gốc (chỉ có khi entityType QuoteRequest)
   detailUrl: string | null;
   at: Date;
 }
