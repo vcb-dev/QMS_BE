@@ -286,6 +286,7 @@ model QuoteRequest {
   customerMeasurements String?             @map("customer_measurements") @db.Text // 11. Số đo của khách
   note                 String?             @map("note") @db.Text // Ghi chú thêm của Sale — có thể chứa link ảnh/video để Order bấm xem
   closeRatePct         Decimal?            @map("close_rate_pct") @db.Decimal(5, 2) // 12. Khách tỷ lệ chốt
+  inspectionFee        Decimal?            @default(0) @map("inspection_fee") @db.Decimal(14, 2) // Tiền kiểm định Order nhập lúc báo giá — đã cộng vào quotedPrice của từng option
   // Cụm dữ liệu báo giá (vat/quotedPrice/quotedDate/pricer/materials/stones) nằm hết ở QuoteOption —
   // 1 request có thể có nhiều option do nhiều pricer tạo để so sánh, không thể gắn 1 giá trị chung ở đây.
   assignee             User?               @relation("Assignee", fields: [assigneeId], references: [id]) // Người đang tiếp nhận/xử lý case (khác pricer của từng option)

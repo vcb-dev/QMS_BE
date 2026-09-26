@@ -150,6 +150,13 @@ export class CalculateBatchInput {
   @IsOptional()
   includeVat?: boolean;
 
+  // Tiền kiểm định (phí giám định đá/trang sức) Order nhập lúc báo giá — cộng thêm vào quotedPrice
+  // của MỌI phương án trong lô, khách chọn phương án nào cũng trả khoản này như nhau.
+  @IsOptional()
+  @IsNumber()
+  @Min(0, { message: 'Tiền kiểm định không được là số âm' })
+  inspectionFee?: number;
+
   @IsArray()
   @ArrayMinSize(1, { message: 'Cần ít nhất 1 phương án để tính' })
   // Mỗi phương án là một lần tính giá thuần CPU; Node chạy 1 luồng nên mảng lớn khóa cả
@@ -177,8 +184,11 @@ export class CalculateBatchResultItem {
   vatRate?: number;
   vatAmount?: number;
   quotedPrice?: number;
-  // Giá bán phần chất liệu = quotedPrice - stonePrice (không có khi phương án lỗi)
+  // Giá bán phần chất liệu = quotedPrice - stonePrice - inspectionFee (không có khi phương án lỗi)
   materialPrice?: number;
+  // Tiền kiểm định đã cộng vào quotedPrice — tách riêng để FE hiển thị đúng dòng, không gộp
+  // ngầm vào materialPrice.
+  inspectionFee?: number;
   // Cấu thành lãi/VAT — trả sẵn cho FE hiển thị, FE không tự tính.
   metalVatAmount?: number;
   metalProfit?: number;
@@ -245,6 +255,12 @@ export class CalculateMultiInput {
   @IsBoolean()
   includeVat?: boolean;
 
+  // Xem chú thích ở CalculateBatchInput.inspectionFee — cùng ý nghĩa, cộng vào quotedPrice cuối.
+  @IsOptional()
+  @IsNumber()
+  @Min(0, { message: 'Tiền kiểm định không được là số âm' })
+  inspectionFee?: number;
+
   @IsOptional()
   @IsString()
   manualStoneName?: string;
@@ -291,8 +307,9 @@ export class CalculateMultiResult {
   laborCost: number;
   vatAmount: number;
   quotedPrice: number;
-  // Giá bán phần chất liệu = quotedPrice - stonePrice (đã làm tròn)
+  // Giá bán phần chất liệu = quotedPrice - stonePrice - inspectionFee (đã làm tròn)
   materialPrice: number;
+  inspectionFee: number;
   // Cấu thành lãi/VAT — trả sẵn cho FE hiển thị, FE không tự tính.
   metalVatAmount: number;
   metalProfit: number;

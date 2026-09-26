@@ -17,6 +17,7 @@ export function buildQuoteWhereClause(
     customerId,
     requesterId,
     assigneeId,
+    departmentId,
     categoryId,
     materialId,
     ownerId,
@@ -32,7 +33,7 @@ export function buildQuoteWhereClause(
     andConditions.push({ customerId });
   }
 
-  const targetOwner = ownerId || requesterId;
+  const targetOwner = ownerId;
   if (targetOwner) {
     if (_user?.role === Role.ORDER) {
       andConditions.push({ assigneeId: targetOwner });
@@ -45,8 +46,16 @@ export function buildQuoteWhereClause(
     andConditions.push({ status: status });
   }
 
+  if (requesterId) {
+    andConditions.push({ requesterId });
+  }
+
   if (assigneeId) {
     andConditions.push({ assigneeId });
+  }
+
+  if (departmentId && departmentId !== 'ALL') {
+    andConditions.push({ departmentId });
   }
 
   if (categoryId && categoryId !== 'ALL') {
@@ -114,14 +123,8 @@ function buildSearchCondition(trimmed: string) {
       },
       { requester: { name: { contains: trimmed, mode: 'insensitive' } } },
       {
-        requester: {
-          department: { name: { contains: trimmed, mode: 'insensitive' } },
-        },
-      },
-      {
-        assignee: {
-          department: { name: { contains: trimmed, mode: 'insensitive' } },
-        },
+        // department là quan hệ của chính QuoteRequest (departmentId), User không có field này.
+        department: { name: { contains: trimmed, mode: 'insensitive' } },
       },
       ...(matchedStatuses.length ? [{ status: { in: matchedStatuses } }] : []),
     ],

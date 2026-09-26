@@ -15,6 +15,7 @@ import {
   computeMetalQuote,
   getSpotPrice,
   normalizeAppliedRatio,
+  roundToThousand,
 } from '../../utils/pricing-math.util';
 import { MarginTier } from '../../pricing-formulas/dto/pricing-formula.dto';
 import {
@@ -310,6 +311,7 @@ export class QuoteOptionsService {
     const stonePriceById = new Map(
       stoneRecords.map((s) => [s.id, Number(s.price)]),
     );
+    const inspectionFee = Math.max(0, input.inspectionFee || 0);
 
     return input.items.map((item): CalculateBatchResultItem => {
       const name = (item.materialNameOrKey || '').trim();
@@ -365,9 +367,10 @@ export class QuoteOptionsService {
           profitMarginLabel: result.marginLabel,
           vatRate,
           vatAmount: Math.round(result.vatAmount),
-          quotedPrice: result.quotedPrice,
+          quotedPrice: roundToThousand(result.quotedPrice + inspectionFee),
           materialPrice:
             result.quotedPrice - Math.round(result.stoneResult.stonePrice),
+          inspectionFee,
           metalVatAmount: Math.round(result.vatAmount),
           metalProfit: Math.round(result.metalProfit),
           stoneVatAmount: Math.round(result.stoneResult.stoneVatAmount),
@@ -498,6 +501,8 @@ export class QuoteOptionsService {
         stoneCost,
         defaultStoneTiers,
       );
+    const inspectionFee = Math.max(0, input.inspectionFee || 0);
+    const finalQuotedPrice = roundToThousand(quotedPrice + inspectionFee);
 
     return {
       // totalMetalCost trả về là GIÁ BÁN cuối của phần kim loại+công (đã gồm margin/VAT) —
@@ -509,8 +514,9 @@ export class QuoteOptionsService {
       stonePrice: Math.round(stoneResult.stonePrice),
       laborCost,
       vatAmount: Math.round(vatAmount),
-      quotedPrice,
+      quotedPrice: finalQuotedPrice,
       materialPrice: quotedPrice - Math.round(stoneResult.stonePrice),
+      inspectionFee,
       metalVatAmount: Math.round(vatAmount),
       metalProfit: Math.round(metalProfit),
       stoneVatAmount: Math.round(stoneResult.stoneVatAmount),

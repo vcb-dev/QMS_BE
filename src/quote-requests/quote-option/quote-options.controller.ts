@@ -95,6 +95,8 @@ export class QuoteOptionsController {
         );
       dto.laborCost = laborCost;
       dto.vatRate = vatRate;
+      // Tiền kiểm định do Order nhập lúc báo giá — Sale không được tự cộng khoản này.
+      dto.inspectionFee = undefined;
     }
 
     const result = await this.quoteOptionsService.calculateMulti(dto);
@@ -137,6 +139,8 @@ export class QuoteOptionsController {
         vatRate,
         silverMultiplier: undefined,
       }));
+      // Tiền kiểm định do Order nhập lúc báo giá — Sale không được tự cộng khoản này.
+      dto.inspectionFee = undefined;
     }
 
     const results = await this.quoteOptionsService.calculateBatch(dto);

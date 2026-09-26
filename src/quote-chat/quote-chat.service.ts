@@ -3,6 +3,7 @@ import {
   ForbiddenException,
   BadRequestException,
 } from '@nestjs/common';
+import { Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ChatMessageDto } from './dto/quote-chat.types';
 
@@ -10,11 +11,20 @@ import { ChatMessageDto } from './dto/quote-chat.types';
 export class QuoteChatService {
   constructor(private prisma: PrismaService) {}
 
+  // Phòng chat 1 đơn: người tạo (Sale) + người tiếp nhận (assignee) luôn vào được, CỘNG bất kỳ
+  // ORDER/ADMIN nào khác (group chat — toàn bộ Order/Admin theo dõi được mọi đơn, không chỉ đơn
+  // mình đang xử lý).
   async assertParticipant(quoteRequestId: string, userId: string) {
-    const request = await this.prisma.quoteRequest.findUnique({
-      where: { id: quoteRequestId },
-      select: { requesterId: true, assigneeId: true },
-    });
+    const [request, user] = await Promise.all([
+      this.prisma.quoteRequest.findUnique({
+        where: { id: quoteRequestId },
+        select: { requesterId: true, assigneeId: true },
+      }),
+      this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { role: true },
+      }),
+    ]);
 
     if (!request) {
       throw new ForbiddenException(
@@ -22,7 +32,12 @@ export class QuoteChatService {
       );
     }
 
-    if (request.requesterId !== userId && request.assigneeId !== userId) {
+    const isDirectParticipant =
+      request.requesterId === userId || request.assigneeId === userId;
+    const isOrderOrAdmin =
+      user?.role === Role.ORDER || user?.role === Role.ADMIN;
+
+    if (!isDirectParticipant && !isOrderOrAdmin) {
       throw new ForbiddenException(
         'Bạn không có quyền xem cuộc trò chuyện này',
       );
@@ -113,8 +128,9 @@ export class QuoteChatService {
 
   /**
    * Số tin chưa đọc của user cho NHIỀU đơn cùng lúc — dùng cho badge nhỏ ở bảng Danh Sách (khỏi
-   * phải mở từng đơn mới biết có tin mới). Đơn nào user không phải requester/assignee thì bỏ qua
-   * lặng lẽ (không throw) — trả object chỉ gồm đơn có số > 0 để payload gọn.
+   * phải mở từng đơn mới biết có tin mới). SALE: chỉ đơn mình là requester/assignee. ORDER/ADMIN:
+   * mọi đơn (group chat). Đơn không đủ điều kiện bị bỏ qua lặng lẽ (không throw) — trả object chỉ
+   * gồm đơn có số > 0 để payload gọn.
    */
   async getUnreadCounts(
     userId: string,
@@ -122,10 +138,20 @@ export class QuoteChatService {
   ): Promise<Record<string, number>> {
     if (quoteRequestIds.length === 0) return {};
 
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { role: true },
+    });
+    const isOrderOrAdmin =
+      user?.role === Role.ORDER || user?.role === Role.ADMIN;
+
+    // ORDER/ADMIN là thành viên chat của MỌI đơn (group chat) — khỏi lọc theo requester/assignee.
     const participantRequests = await this.prisma.quoteRequest.findMany({
       where: {
         id: { in: quoteRequestIds },
-        OR: [{ requesterId: userId }, { assigneeId: userId }],
+        ...(isOrderOrAdmin
+          ? {}
+          : { OR: [{ requesterId: userId }, { assigneeId: userId }] }),
       },
       select: { id: true },
     });

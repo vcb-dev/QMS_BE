@@ -256,7 +256,7 @@ describe('QuoteAnalyticsService.getStaffPerformance', () => {
       ])
       .mockResolvedValueOnce([]);
     const result = await service.getStaffPerformance();
-    expect(result.saleStats).toEqual(
+    expect(result.saleStats.items).toEqual(
       expect.arrayContaining([
         {
           id: 'sale-1',
@@ -272,7 +272,7 @@ describe('QuoteAnalyticsService.getStaffPerformance', () => {
 
   it('pricerStats tính medianQuoteMs từ finalOptionId.quotedDate - acceptedAt', async () => {
     const result = await service.getStaffPerformance();
-    const pricer = result.pricerStats.find((p) => p.id === 'order-1');
+    const pricer = result.pricerStats.items.find((p) => p.id === 'order-1');
     expect(pricer?.totalHandled).toBe(1);
     expect(pricer?.medianQuoteMs).toBe(5 * 60 * 60 * 1000); // 5 giờ
     expect(pricer?.medianProcessMs).toBe(5 * 60 * 60 * 1000);

@@ -308,6 +308,8 @@ export class LarkService implements OnModuleInit {
       entityType: null,
       entityCode: null,
       entityId: null,
+      productName: null,
+      requesterName: null,
       detailUrl: null,
       at: new Date(),
     });
@@ -322,9 +324,9 @@ export class LarkService implements OnModuleInit {
     const targets = await this.webhooksForAction(action);
     if (targets.length === 0) return;
 
-    const [actorName, entityCode] = await Promise.all([
+    const [actorName, entityInfo] = await Promise.all([
       this.resolveActorName(ctx.actorId),
-      this.resolveEntityCode(ctx.entityType, ctx.entityId),
+      this.resolveEntityInfo(ctx.entityType, ctx.entityId),
     ]);
     const detailUrl = this.buildEntityUrl(ctx.entityType, ctx.entityId);
 
@@ -332,8 +334,10 @@ export class LarkService implements OnModuleInit {
       actionLabel: AUDIT_ACTION_LABELS[action as AuditAction] || action,
       actorName,
       entityType: ctx.entityType ?? null,
-      entityCode,
+      entityCode: entityInfo.code,
       entityId: ctx.entityId ?? null,
+      productName: entityInfo.productName,
+      requesterName: entityInfo.requesterName,
       detailUrl,
       at: new Date(),
     });
@@ -434,15 +438,32 @@ export class LarkService implements OnModuleInit {
     return u?.name || 'Không rõ';
   }
 
-  private async resolveEntityCode(
+  private async resolveEntityInfo(
     entityType: string | undefined,
     entityId: string | undefined,
-  ): Promise<string | null> {
-    if (entityType !== 'QuoteRequest' || !entityId) return null;
+  ): Promise<{
+    code: string | null;
+    productName: string | null;
+    requesterName: string | null;
+  }> {
+    if (entityType !== 'QuoteRequest' || !entityId) {
+      return { code: null, productName: null, requesterName: null };
+    }
     const q = await this.prisma.quoteRequest
-      .findUnique({ where: { id: entityId }, select: { code: true } })
+      .findUnique({
+        where: { id: entityId },
+        select: {
+          code: true,
+          category: { select: { name: true } },
+          requester: { select: { name: true } },
+        },
+      })
       .catch(() => null);
-    return q?.code ?? null;
+    return {
+      code: q?.code ?? null,
+      productName: q?.category?.name ?? null,
+      requesterName: q?.requester?.name ?? null,
+    };
   }
 
   private buildEntityUrl(
@@ -514,27 +535,25 @@ export class LarkService implements OnModuleInit {
 
   // Thẻ tóm tắt generic cho các hành động không phải "đã báo giá"
   // (từ chối, trả lại, tạo yêu cầu, xuất Excel, tin thử...). Header xám.
+  // Gọn thành 1 dòng tự nhiên kiểu "<hành động>: <mã> (<sản phẩm>) — người thực hiện: <tên>" thay
+  // vì khối 3 dòng label/value — dễ đọc lướt qua trên Lark, không cần mở rộng thẻ mới thấy hết.
+  // Kèm "người tạo yêu cầu" khi khác người thực hiện (VD: Order từ chối yêu cầu Sale tạo) — bằng
+  // nhau (Sale tự tạo) thì không lặp lại thừa.
   private buildSummaryCard(input: SummaryCardInput): LarkCard {
-    const at = input.at.toLocaleString('vi-VN', {
-      hour: '2-digit',
-      minute: '2-digit',
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-    });
     const target =
       input.entityCode ||
       (input.entityType && input.entityId
         ? `${input.entityType} #${input.entityId}`
         : input.entityType || '—');
+    const productSuffix = input.productName ? ` (${input.productName})` : '';
+    const requesterSuffix =
+      input.requesterName && input.requesterName !== input.actorName
+        ? ` — người tạo yêu cầu: ${input.requesterName}`
+        : '';
 
     const elements = [
       md(
-        [
-          `**Người thực hiện:** ${input.actorName}`,
-          `**Đối tượng:** ${target}`,
-          `**Thời điểm:** ${at}`,
-        ].join('\n'),
+        `${input.actionLabel}: ${target}${productSuffix} — người thực hiện: ${input.actorName}${requesterSuffix}`,
       ),
     ];
     if (input.detailUrl)
@@ -542,23 +561,8 @@ export class LarkService implements OnModuleInit {
     return wrapCard('grey', input.actionLabel, elements);
   }
 
-  // Dựng payload card "đã báo giá": header xanh, ảnh sản phẩm 2 cột, từng phương án + giá,
-  // nút "Xem chi tiết". Upload ảnh trước — hỏng thì card vẫn dựng, chỉ thiếu ảnh.
+  // Dựng payload card "đã báo giá" — header xanh + 1 dòng tóm tắt + tổng giá + nút "Xem chi tiết".
   async buildQuoteCardPayload(data: QuoteCardData): Promise<LarkCard> {
-    if (!data.imageUrl) {
-      this.logger.warn(
-        'Lark card: đơn không có ảnh sản phẩm (quote.images rỗng)',
-      );
-    }
-    const imgKey = data.imageUrl
-      ? await this.uploadImageFromUrl(data.imageUrl)
-      : null;
-    if (data.imageUrl && !imgKey) {
-      this.logger.warn(
-        `Lark card: có ảnh nhưng không lấy được image_key — ${data.imageUrl.slice(0, 80)}`,
-      );
-    }
-
     const frontendUrl = primaryFrontendUrl(
       this.config.get<string>('FRONTEND_URL'),
     );
@@ -567,66 +571,23 @@ export class LarkService implements OnModuleInit {
         ? `${frontendUrl}/requests/${data.requestId}`
         : null;
 
-    return this.buildQuoteCard(data, imgKey, detailUrl);
+    return this.buildQuoteCard(data, detailUrl);
   }
 
-  // card v1 cho custom bot. Nhúng ảnh chỉ khi có imgKey (upload thành công).
+  // Header 1 dòng (sản phẩm/ai báo giá) + "Giá kim loại" (giá bán TOÀN BỘ kim loại từng phương án,
+  // đã tính lãi, KHÔNG tách nhỏ theo từng chất liệu vì lãi tính chung cho cả cụm) + "Đá" (giá bán
+  // đá của phương án, gộp theo tên đá CHỦ, trùng tên chỉ hiện 1 dòng — VD nhiều phương án so sánh
+  // tuổi vàng cùng 1 loại đá) + tổng giá + nút "Xem chi tiết".
   private buildQuoteCard(
     data: QuoteCardData,
-    imgKey: string | null,
     detailUrl: string | null,
   ): LarkCard {
-    const elements: LarkElement[] = [];
+    const elements: LarkElement[] = [
+      md(
+        `${data.categoryName || '—'} — Sale (người tạo yêu cầu): ${this.saleMention(data)} — Người báo giá: ${data.orderName || '—'}`,
+      ),
+    ];
 
-    // Thông tin đơn — 1 khối text, mỗi field 1 dòng (để đặt vừa cột hẹp bên phải ảnh).
-    const infoDiv = md(
-      [
-        `**Danh mục:** ${data.categoryName || '—'}`,
-        `**Sản phẩm:** ${data.productName || '—'}`,
-        `**Sale:** ${this.saleMention(data)}`,
-        `**Order:** ${data.orderName || '—'}`,
-        `**Ngày tạo:** ${this.fmtDate(data.createdAt)}`,
-        `**Ngày báo giá:** ${this.fmtDate(data.quotedAt)}`,
-      ].join('\n'),
-    );
-
-    if (imgKey) {
-      // Ảnh trái (cỡ nhỏ, co theo cột, giữ đúng tỉ lệ) — thông tin đơn ở cột phải.
-      elements.push({
-        tag: 'column_set',
-        flex_mode: 'none',
-        columns: [
-          {
-            tag: 'column',
-            width: 'weighted',
-            weight: 2,
-            vertical_align: 'top',
-            elements: [
-              {
-                tag: 'img',
-                img_key: imgKey,
-                alt: { tag: 'plain_text', content: 'Ảnh sản phẩm' },
-                mode: 'fit_horizontal',
-                preview: true,
-              },
-            ],
-          },
-          {
-            tag: 'column',
-            width: 'weighted',
-            weight: 3,
-            vertical_align: 'top',
-            elements: [infoDiv],
-          },
-        ],
-      });
-    } else {
-      elements.push(infoDiv);
-    }
-
-    // "Giá kim loại" — giá bán TOÀN BỘ kim loại từng phương án đã báo giá (đã tính lãi, KHÔNG tách
-    // nhỏ theo từng chất liệu vì lãi tính chung cho cả cụm). "Đá" — giá bán đá, gộp theo tên đá
-    // CHỦ, trùng tên chỉ hiện 1 dòng (VD nhiều phương án so sánh tuổi vàng cùng 1 loại đá).
     const metalLines = data.options
       .filter((opt) => opt.materialText)
       .map((opt) => `${opt.materialText}: ${formatVnd(opt.materialPrice)}`);
@@ -650,7 +611,7 @@ export class LarkService implements OnModuleInit {
     elements.push(hr());
     elements.push(
       md(
-        `**TỔNG BÁO GIÁ**\n<font color="green">**${formatVnd(data.totalPrice)}**</font>`,
+        `**Tổng báo giá:** <font color="green">**${formatVnd(data.totalPrice)}**</font>`,
       ),
     );
 
