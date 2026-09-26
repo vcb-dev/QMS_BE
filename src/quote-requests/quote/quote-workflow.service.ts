@@ -166,10 +166,18 @@ export class QuoteWorkflowService {
         priced.length > 1 && isPrimary ? `${baseName} ✅ (Đã chọn)` : baseName;
 
       // Đá CHỦ thôi (parentStoneId null = đá chủ hoặc đá tấm không gắn nhóm) — bỏ đá tấm (SIDE, phụ
-      // theo 1 đá chủ) khỏi nhãn card cho gọn, card Lark chỉ cần biết loại đá chính là gì.
+      // theo 1 đá chủ) khỏi nhãn card cho gọn, card Lark chỉ cần biết loại đá chính là gì. Nhãn phải
+      // gồm cả cut/size (không chỉ name) — 2 đá cùng "name" (VD "Đá CZ") nhưng khác giác cắt/size là
+      // 2 bản ghi Stone RIÊNG, giá khác nhau (xem stoneDedupKey ở stones.service.ts) nên phải phân
+      // biệt được, không gộp lầm thành 1 dòng.
       const mainStones = stones.filter((s: any) => !s.parentStoneId);
       const mainStoneText = mainStones
-        .map((s: any) => s.stoneName || s.stone?.name || 'đá')
+        .map((s: any) => {
+          const name = s.stoneName || s.stone?.name || 'đá';
+          const cut = s.stoneCut ?? s.stone?.cut;
+          const size = s.stoneSize ?? s.stone?.size;
+          return `${name}${cut ? ` - ${cut}` : ''}${size ? ` - ${size}` : ''}`;
+        })
         .join(', ');
 
       return {
