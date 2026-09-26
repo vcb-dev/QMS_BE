@@ -4,13 +4,10 @@
 export interface QuoteCardOption {
   name: string;
   materialText: string; // "Vàng 24K (1.2 chỉ)" | "" nếu không rõ
-  materialPrice: number;
+  materialPrice: number; // giá bán TOÀN BỘ kim loại của phương án (đã tính lãi), không tách nhỏ
   stoneText: string; // "2v Kim cương" | "Không đính đá"
-  stonePrice: number; // 0 nếu không đá
-  // materialPrice/stonePrice tách riêng từng dòng theo từng kim loại/đá của CHÍNH phương án này —
-  // bấy nhiêu kim loại/đá thì bấy nhiêu dòng, không gộp chung 1 số.
-  metalBreakdown: { name: string; price: number }[];
-  stoneBreakdown: { name: string; price: number }[];
+  stonePrice: number; // 0 nếu không đá — giá bán TOÀN BỘ đá của phương án (đã tính lãi)
+  mainStoneText: string; // chỉ tên đá CHỦ, bỏ đá tấm — "" nếu không đính đá
   quotedPrice: number;
 }
 

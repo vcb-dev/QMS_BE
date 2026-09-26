@@ -114,16 +114,6 @@ export class QuoteWorkflowService {
     return quote.productName || quote.category?.name || 'Sản phẩm chế tác';
   }
 
-  // Chia 1 khoản tiền tổng theo tỷ trọng weights[] — dùng để tách materialPrice/stonePrice (chỉ
-  // có TỔNG theo option) thành từng dòng riêng theo từng kim loại/đá cho card Lark. Trọng số toàn
-  // 0 (VD record cũ thiếu rawCost/unitPriceAtQuote) thì chia đều thay vì chia hết cho dòng đầu.
-  private splitByShare(total: number, weights: number[]): number[] {
-    if (weights.length === 0) return [];
-    const sum = weights.reduce((a, b) => a + b, 0);
-    if (sum <= 0) return weights.map(() => Math.round(total / weights.length));
-    return weights.map((w) => Math.round((total * w) / sum));
-  }
-
   // Gói dữ liệu cho Lark message card khi báo giá thành công. Bám theo trang chi tiết yêu cầu phía
   // Sale: thông tin đơn + ảnh sản phẩm + từng phương án (chất liệu/khối lượng/đá) + giá bán (giá chất
   // liệu = quotedPrice - stonePrice, giá đá = stonePrice, KHÔNG lộ giá vốn), tổng = phương án đại diện.
@@ -175,26 +165,12 @@ export class QuoteWorkflowService {
       const name =
         priced.length > 1 && isPrimary ? `${baseName} ✅ (Đã chọn)` : baseName;
 
-      // Tách materialPrice/stonePrice (chỉ có TỔNG theo option) thành từng dòng riêng theo từng
-      // kim loại/đá — trọng số là giá vốn thô đóng băng lúc báo giá (rawCost/unitPriceAtQuote×
-      // quantity), KHÔNG chia đều, vì mỗi kim loại/đá vốn khác giá nhau (tuổi vàng, loại đá).
-      const metalWeights = mats.map((m: any) => Number(m.rawCost) || 0);
-      const metalPrices = this.splitByShare(materialPrice, metalWeights);
-      const metalBreakdown = mats.map((m: any, i: number) => ({
-        name: m.materialName || m.material?.name || 'Kim loại',
-        price: metalPrices[i],
-      }));
-
-      const stoneWeights = stones.map(
-        (s: any) =>
-          (Number(s.unitPriceAtQuote) || Number(s.stone?.price) || 0) *
-          (s.quantity ?? 1),
-      );
-      const stonePrices = this.splitByShare(stonePrice, stoneWeights);
-      const stoneBreakdown = stones.map((s: any, i: number) => ({
-        name: `${s.quantity ?? 1}v ${s.stoneName || s.stone?.name || 'đá'}`,
-        price: stonePrices[i],
-      }));
+      // Đá CHỦ thôi (parentStoneId null = đá chủ hoặc đá tấm không gắn nhóm) — bỏ đá tấm (SIDE, phụ
+      // theo 1 đá chủ) khỏi nhãn card cho gọn, card Lark chỉ cần biết loại đá chính là gì.
+      const mainStones = stones.filter((s: any) => !s.parentStoneId);
+      const mainStoneText = mainStones
+        .map((s: any) => s.stoneName || s.stone?.name || 'đá')
+        .join(', ');
 
       return {
         name,
@@ -202,8 +178,7 @@ export class QuoteWorkflowService {
         materialPrice,
         stoneText,
         stonePrice,
-        metalBreakdown,
-        stoneBreakdown,
+        mainStoneText,
         quotedPrice: Number(opt.quotedPrice),
       };
     });

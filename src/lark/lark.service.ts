@@ -624,31 +624,28 @@ export class LarkService implements OnModuleInit {
       elements.push(infoDiv);
     }
 
-    // Chỉ dựng phương án BÁO GIÁ CHÍNH (data.options đã lọc ở buildQuoteCardData còn đúng 1 phương
-    // án chính, bỏ các phương án phụ / so sánh loại vàng khác).
-    data.options.forEach((opt) => {
-      const lines = [`**${opt.name}**`];
-      if (opt.materialText) lines.push(`• Chất liệu: ${opt.materialText}`);
-      // Tách từng kim loại/đá 1 dòng riêng (thay vì gộp 1 số Giá chất liệu/Giá đá) — có bao nhiêu
-      // kim loại/đá thì hiện hết bấy nhiêu dòng.
-      if (opt.metalBreakdown.length > 0) {
-        lines.push('**Giá Kim loại:**');
-        opt.metalBreakdown.forEach((m) =>
-          lines.push(`${m.name}: ${formatVnd(m.price)}`),
-        );
-      }
-      if (opt.stoneBreakdown.length > 0) {
-        lines.push('**Đá**');
-        opt.stoneBreakdown.forEach((s) =>
-          lines.push(`${s.name}: ${formatVnd(s.price)}`),
-        );
-      } else {
-        lines.push('• Đá: Không đính đá');
-      }
-      lines.push(`• Giá báo: ${formatVnd(opt.quotedPrice)}`);
+    // "Giá kim loại" — giá bán TOÀN BỘ kim loại từng phương án đã báo giá (đã tính lãi, KHÔNG tách
+    // nhỏ theo từng chất liệu vì lãi tính chung cho cả cụm). "Đá" — giá bán đá, gộp theo tên đá
+    // CHỦ, trùng tên chỉ hiện 1 dòng (VD nhiều phương án so sánh tuổi vàng cùng 1 loại đá).
+    const metalLines = data.options
+      .filter((opt) => opt.materialText)
+      .map((opt) => `${opt.materialText}: ${formatVnd(opt.materialPrice)}`);
+    if (metalLines.length > 0) {
       elements.push(hr());
-      elements.push(md(lines.join('\n')));
+      elements.push(md(['**Giá kim loại:**', ...metalLines].join('\n')));
+    }
+
+    const seenStones = new Set<string>();
+    const stoneLines: string[] = [];
+    data.options.forEach((opt) => {
+      if (!opt.mainStoneText || seenStones.has(opt.mainStoneText)) return;
+      seenStones.add(opt.mainStoneText);
+      stoneLines.push(`${opt.mainStoneText}: ${formatVnd(opt.stonePrice)}`);
     });
+    if (stoneLines.length > 0) {
+      elements.push(hr());
+      elements.push(md(['**Đá**', ...stoneLines].join('\n')));
+    }
 
     elements.push(hr());
     elements.push(
