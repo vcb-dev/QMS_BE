@@ -114,6 +114,16 @@ export class QuoteWorkflowService {
     return quote.productName || quote.category?.name || 'Sản phẩm chế tác';
   }
 
+  // Chia 1 khoản tiền tổng theo tỷ trọng weights[] — dùng để tách materialPrice/stonePrice (chỉ
+  // có TỔNG theo option) thành từng dòng riêng theo từng kim loại/đá cho card Lark. Trọng số toàn
+  // 0 (VD record cũ thiếu rawCost/unitPriceAtQuote) thì chia đều thay vì chia hết cho dòng đầu.
+  private splitByShare(total: number, weights: number[]): number[] {
+    if (weights.length === 0) return [];
+    const sum = weights.reduce((a, b) => a + b, 0);
+    if (sum <= 0) return weights.map(() => Math.round(total / weights.length));
+    return weights.map((w) => Math.round((total * w) / sum));
+  }
+
   // Gói dữ liệu cho Lark message card khi báo giá thành công. Bám theo trang chi tiết yêu cầu phía
   // Sale: thông tin đơn + ảnh sản phẩm + từng phương án (chất liệu/khối lượng/đá) + giá bán (giá chất
   // liệu = quotedPrice - stonePrice, giá đá = stonePrice, KHÔNG lộ giá vốn), tổng = phương án đại diện.
@@ -161,10 +171,30 @@ export class QuoteWorkflowService {
         .split(/\s*·\s*Công/i)[0]
         .trim();
       // Nhiều hơn 1 phương án đã báo giá -> đánh dấu phương án đại diện để Lark biết đâu là giá chốt.
+      const isPrimary = !!primaryOpt && opt.id === primaryOpt.id;
       const name =
-        priced.length > 1 && primaryOpt && opt.id === primaryOpt.id
-          ? `${baseName} ✅ (Đã chọn)`
-          : baseName;
+        priced.length > 1 && isPrimary ? `${baseName} ✅ (Đã chọn)` : baseName;
+
+      // Tách materialPrice/stonePrice (chỉ có TỔNG theo option) thành từng dòng riêng theo từng
+      // kim loại/đá — trọng số là giá vốn thô đóng băng lúc báo giá (rawCost/unitPriceAtQuote×
+      // quantity), KHÔNG chia đều, vì mỗi kim loại/đá vốn khác giá nhau (tuổi vàng, loại đá).
+      const metalWeights = mats.map((m: any) => Number(m.rawCost) || 0);
+      const metalPrices = this.splitByShare(materialPrice, metalWeights);
+      const metalBreakdown = mats.map((m: any, i: number) => ({
+        name: m.materialName || m.material?.name || 'Kim loại',
+        price: metalPrices[i],
+      }));
+
+      const stoneWeights = stones.map(
+        (s: any) =>
+          (Number(s.unitPriceAtQuote) || Number(s.stone?.price) || 0) *
+          (s.quantity ?? 1),
+      );
+      const stonePrices = this.splitByShare(stonePrice, stoneWeights);
+      const stoneBreakdown = stones.map((s: any, i: number) => ({
+        name: `${s.quantity ?? 1}v ${s.stoneName || s.stone?.name || 'đá'}`,
+        price: stonePrices[i],
+      }));
 
       return {
         name,
@@ -172,6 +202,8 @@ export class QuoteWorkflowService {
         materialPrice,
         stoneText,
         stonePrice,
+        metalBreakdown,
+        stoneBreakdown,
         quotedPrice: Number(opt.quotedPrice),
       };
     });
@@ -301,7 +333,9 @@ export class QuoteWorkflowService {
         include: REQUEST_DETAIL_INCLUDE,
       });
       const mappedNoOpts = mapQuoteRequestDetail(updatedNoOpts);
-      this.notifySaleQuoteCompleted(mappedNoOpts, AuditAction.QUOTE_PRICE);
+      // Truyền object GỐC (chưa qua mapOptionDetail) để buildQuoteCardData đọc được
+      // materials[].rawCost/stones[].unitPriceAtQuote — mapOptionDetail lược bỏ 2 field này.
+      this.notifySaleQuoteCompleted(updatedNoOpts, AuditAction.QUOTE_PRICE);
       return mappedNoOpts;
     }
 
@@ -375,7 +409,7 @@ export class QuoteWorkflowService {
     });
 
     const mapped = mapQuoteRequestDetail(updated);
-    this.notifySaleQuoteCompleted(mapped, AuditAction.QUOTE_PRICE);
+    this.notifySaleQuoteCompleted(updated, AuditAction.QUOTE_PRICE);
     return mapped;
   }
 
@@ -474,7 +508,7 @@ export class QuoteWorkflowService {
       include: REQUEST_DETAIL_INCLUDE,
     });
     const mapped = mapQuoteRequestDetail(updated);
-    this.notifySaleQuoteCompleted(mapped, AuditAction.EDIT_QUOTED_PRICE);
+    this.notifySaleQuoteCompleted(updated, AuditAction.EDIT_QUOTED_PRICE);
     return mapped;
   }
 
@@ -900,7 +934,7 @@ export class QuoteWorkflowService {
           include: REQUEST_DETAIL_INCLUDE,
         });
         const mapped = mapQuoteRequestDetail(approved);
-        this.notifySaleQuoteCompleted(mapped, AuditAction.QUICK_APPROVE);
+        this.notifySaleQuoteCompleted(approved, AuditAction.QUICK_APPROVE);
         return mapped;
       }
 

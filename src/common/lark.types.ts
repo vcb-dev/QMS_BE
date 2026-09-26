@@ -7,6 +7,10 @@ export interface QuoteCardOption {
   materialPrice: number;
   stoneText: string; // "2v Kim cương" | "Không đính đá"
   stonePrice: number; // 0 nếu không đá
+  // materialPrice/stonePrice tách riêng từng dòng theo từng kim loại/đá của CHÍNH phương án này —
+  // bấy nhiêu kim loại/đá thì bấy nhiêu dòng, không gộp chung 1 số.
+  metalBreakdown: { name: string; price: number }[];
+  stoneBreakdown: { name: string; price: number }[];
   quotedPrice: number;
 }
 

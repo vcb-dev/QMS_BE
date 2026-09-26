@@ -583,7 +583,6 @@ export class LarkService implements OnModuleInit {
       [
         `**Danh mục:** ${data.categoryName || '—'}`,
         `**Sản phẩm:** ${data.productName || '—'}`,
-        `**Khách hàng:** ${data.customerName || '—'}`,
         `**Sale:** ${this.saleMention(data)}`,
         `**Order:** ${data.orderName || '—'}`,
         `**Ngày tạo:** ${this.fmtDate(data.createdAt)}`,
@@ -630,10 +629,22 @@ export class LarkService implements OnModuleInit {
     data.options.forEach((opt) => {
       const lines = [`**${opt.name}**`];
       if (opt.materialText) lines.push(`• Chất liệu: ${opt.materialText}`);
-      lines.push(`• Giá chất liệu: ${formatVnd(opt.materialPrice)}`);
-      lines.push(`• Đá: ${opt.stoneText}`);
-      if (opt.stonePrice > 0)
-        lines.push(`• Giá đá: ${formatVnd(opt.stonePrice)}`);
+      // Tách từng kim loại/đá 1 dòng riêng (thay vì gộp 1 số Giá chất liệu/Giá đá) — có bao nhiêu
+      // kim loại/đá thì hiện hết bấy nhiêu dòng.
+      if (opt.metalBreakdown.length > 0) {
+        lines.push('**Giá Kim loại:**');
+        opt.metalBreakdown.forEach((m) =>
+          lines.push(`${m.name}: ${formatVnd(m.price)}`),
+        );
+      }
+      if (opt.stoneBreakdown.length > 0) {
+        lines.push('**Đá**');
+        opt.stoneBreakdown.forEach((s) =>
+          lines.push(`${s.name}: ${formatVnd(s.price)}`),
+        );
+      } else {
+        lines.push('• Đá: Không đính đá');
+      }
       lines.push(`• Giá báo: ${formatVnd(opt.quotedPrice)}`);
       elements.push(hr());
       elements.push(md(lines.join('\n')));
