@@ -725,12 +725,16 @@ export class LarkService implements OnModuleInit {
       }
       const data: any = await res.json().catch(() => null);
       if (data && data.code !== 0) {
-        this.logger.warn(`Lark webhook từ chối: ${data.msg || JSON.stringify(data)}`);
+        this.logger.warn(
+          `Lark webhook từ chối: ${data.msg || JSON.stringify(data)}`,
+        );
         return { ok: false, message: 'Lark từ chối tin nhắn thử' };
       }
       return { ok: true, message: 'Đã gửi tin tới Lark' };
     } catch (err) {
-      this.logger.warn(`Không gửi được thông báo Lark: ${err instanceof Error ? err.message : err}`);
+      this.logger.warn(
+        `Không gửi được thông báo Lark: ${err instanceof Error ? err.message : err}`,
+      );
       return { ok: false, message: 'Không gửi được tin tới Lark' };
     }
   }
