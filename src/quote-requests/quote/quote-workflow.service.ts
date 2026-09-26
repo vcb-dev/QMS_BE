@@ -388,22 +388,24 @@ export class QuoteWorkflowService {
 
   /**
    * Sửa lại giá đã báo cho 1 yêu cầu ĐÃ CÓ giá (QUOTED/CLOSED) — dùng khi Order/Admin tính nhầm
-   * hoặc khách yêu cầu điều chỉnh. CHỈ cập nhật đúng phương án đang là "giá chính" (CLOSED >
-   * SELECTED > mới nhất, theo pickPrimaryOption) tại chỗ — giữ nguyên id + selectionStatus của nó
-   * (đơn CLOSED sửa giá thì vẫn CLOSED, KHÔNG bị completeQuote-kiểu xóa hết option/đổi status như
-   * lúc báo giá lần đầu). Các phương án khác trong đơn không đụng tới.
+   * hoặc khách yêu cầu điều chỉnh. Hành vi GIỐNG HỆT completeQuote (xóa hết option cũ, ghi lại
+   * toàn bộ option mới — sửa/thêm/bớt phương án tự do, không chỉ đúng 1 phương án chính), chỉ
+   * khác 2 điểm: (1) KHÔNG đổi status/assigneeId — đơn CLOSED sửa giá thì vẫn CLOSED, không bị
+   * đẩy về QUOTED/đổi người báo giá như lúc báo giá lần đầu; (2) nếu đơn đang CLOSED, phương án
+   * Order đang tích chọn (isSelected -> SELECTED) phải ghi thành CLOSED thay vì SELECTED thường,
+   * giữ đúng ý "khách đã chốt phương án này", không âm thầm "mở khóa" nó.
    */
   private async editQuotedPrice(
     id: string,
     userId: string,
     role: Role,
-    opt: CompleteQuoteInput['options'][number],
+    opts: CompleteQuoteInput['options'],
     expectedVersion?: number,
     inspectionFee?: number,
   ) {
     const quote = await this.prisma.quoteRequest.findUnique({
       where: { id },
-      include: REQUEST_DETAIL_INCLUDE,
+      select: { status: true, version: true, categoryId: true },
     });
     if (!quote) {
       throw new NotFoundException('Không tìm thấy yêu cầu báo giá');
@@ -423,51 +425,59 @@ export class QuoteWorkflowService {
         'Yêu cầu đã được cập nhật bởi người khác, vui lòng tải lại trang',
       );
     }
-
-    const target = pickPrimaryOption(quote as any) as { id: string } | null;
-    if (!target) {
-      throw new ConflictException('Không tìm thấy phương án báo giá để sửa');
+    if (!opts?.length) {
+      throw new BadRequestException(
+        'Vui lòng truyền ít nhất 1 phương án báo giá',
+      );
     }
 
-    const keyMaps = await this.quoteOptionsService.buildOptionLookupMaps([opt]);
-    const built: any = buildOptionCreateInput(
-      opt,
-      0,
-      quote.categoryId,
-      keyMaps.stonePriceMap,
-      keyMaps,
+    const wasClosed = quote.status === QuoteStatus.CLOSED;
+
+    const keyMaps = await this.quoteOptionsService.buildOptionLookupMaps(opts);
+    const stonePriceMap = keyMaps.stonePriceMap;
+
+    const base = Date.now();
+    const optionWrites = opts.map((opt, idx) => {
+      const built: any = buildOptionCreateInput(
+        opt,
+        idx,
+        quote.categoryId,
+        stonePriceMap,
+        keyMaps,
+      );
+      if (
+        wasClosed &&
+        built.selectionStatus === OptionSelectionStatus.SELECTED
+      ) {
+        built.selectionStatus = OptionSelectionStatus.CLOSED;
+      }
+      delete built.materials;
+      delete built.stones;
+      const optionId = randomUUID();
+      built.id = optionId;
+      built.quoteRequestId = id;
+      built.createdAt = new Date(base + idx);
+      return { id: optionId, row: built, opt };
+    });
+
+    const materialRows = optionWrites.flatMap(({ id: optionId, opt }) =>
+      (opt.materials ?? []).map((m: any) => ({
+        optionId,
+        materialId: m.materialId,
+        weightChi: m.weightChi != null ? m.weightChi : opt.weightChi,
+      })),
+    );
+    const stoneRows = optionWrites.flatMap(({ id: optionId, opt }) =>
+      (opt.stones ?? []).map((s: any) => ({
+        optionId,
+        stoneId: s.stoneId,
+        quantity: s.quantity,
+        unitPriceAtQuote: stonePriceMap.get(s.stoneId),
+      })),
     );
 
     await this.prisma.$transaction([
-      this.prisma.quoteOptionMaterial.deleteMany({
-        where: { optionId: target.id },
-      }),
-      this.prisma.quoteOptionStone.deleteMany({
-        where: { optionId: target.id },
-      }),
-      this.prisma.quoteOption.update({
-        where: { id: target.id },
-        data: {
-          optionName: built.optionName,
-          weightChi: built.weightChi,
-          laborCost: built.laborCost,
-          stoneCost: built.stoneCost,
-          totalMetalCost: built.totalMetalCost,
-          metalRawCost: built.metalRawCost,
-          stonePrice: built.stonePrice,
-          vat: built.vat,
-          quotedPrice: built.quotedPrice,
-          quotedDate: new Date(),
-          note: built.note,
-          stoneDescription: built.stoneDescription,
-          dedupKey: built.dedupKey,
-          libraryGroupKey: built.libraryGroupKey,
-          // KHÔNG đổi selectionStatus — giữ nguyên CLOSED/SELECTED hiện có, sửa giá không phải
-          // hành động chọn lại phương án chính.
-          materials: built.materials,
-          stones: built.stones,
-        },
-      }),
+      this.prisma.quoteOption.deleteMany({ where: { quoteRequestId: id } }),
       this.prisma.quoteRequest.update({
         where: { id },
         data: {
@@ -475,6 +485,15 @@ export class QuoteWorkflowService {
           ...(inspectionFee != null ? { inspectionFee } : {}),
         },
       }),
+      this.prisma.quoteOption.createMany({
+        data: optionWrites.map((w) => w.row),
+      }),
+      ...(materialRows.length > 0
+        ? [this.prisma.quoteOptionMaterial.createMany({ data: materialRows })]
+        : []),
+      ...(stoneRows.length > 0
+        ? [this.prisma.quoteOptionStone.createMany({ data: stoneRows })]
+        : []),
     ]);
 
     const updated = await this.prisma.quoteRequest.findUniqueOrThrow({
@@ -1035,7 +1054,7 @@ export class QuoteWorkflowService {
         );
         if (!dto.options?.length) {
           throw new BadRequestException(
-            'Vui lòng truyền phương án cần sửa giá (options[0])',
+            'Vui lòng truyền ít nhất 1 phương án cần sửa giá (options)',
           );
         }
         await this.auditLog.logAction(
@@ -1049,7 +1068,7 @@ export class QuoteWorkflowService {
           id,
           userId,
           role,
-          dto.options[0],
+          dto.options,
           dto.version,
           dto.inspectionFee,
         );
