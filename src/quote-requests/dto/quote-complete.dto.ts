@@ -1,5 +1,6 @@
 import {
   IsBoolean,
+  IsInt,
   IsNumber,
   IsOptional,
   IsString,
@@ -39,6 +40,13 @@ export class StoneSelectionItemDto {
   @IsNumber()
   @Min(1, { message: 'Số lượng đá tối thiểu là 1' })
   quantity: number;
+
+  // Chỉ set khi đá này là SIDE gắn riêng cho 1 đá CHỦ — là VỊ TRÍ (index, 0-based) của dòng đá chủ
+  // đó trong CHÍNH mảng `stones[]` này (không phải id thật — id thật do BE tự sinh lúc insert).
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  parentIndex?: number;
 }
 
 export class QuoteOptionItemDto {

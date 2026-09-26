@@ -574,21 +574,46 @@ export class LarkService implements OnModuleInit {
     return this.buildQuoteCard(data, detailUrl);
   }
 
-  // card v1 cho custom bot. Nhúng ảnh chỉ khi có imgKey (upload thành công).
-  // Gọn thành 1 dòng + tổng giá — bỏ ảnh, bỏ khối 7 field, bỏ breakdown từng phương án. Header
-  // "Đã báo giá · <mã>" đã đủ ngữ cảnh, thân thẻ chỉ cần biết sản phẩm/khách/ai báo giá/tổng bao nhiêu.
+  // Header 1 dòng (sản phẩm/ai báo giá) + "Giá kim loại" (giá bán TOÀN BỘ kim loại từng phương án,
+  // đã tính lãi, KHÔNG tách nhỏ theo từng chất liệu vì lãi tính chung cho cả cụm) + "Đá" (giá bán
+  // đá của phương án, gộp theo tên đá CHỦ, trùng tên chỉ hiện 1 dòng — VD nhiều phương án so sánh
+  // tuổi vàng cùng 1 loại đá) + tổng giá + nút "Xem chi tiết".
   private buildQuoteCard(
     data: QuoteCardData,
     detailUrl: string | null,
   ): LarkCard {
     const elements: LarkElement[] = [
       md(
-        `${data.categoryName || '—'} — Khách hàng: ${data.customerName || '—'} — Người báo giá: ${data.orderName || '—'}`,
+        `${data.categoryName || '—'} — Sale (người tạo yêu cầu): ${this.saleMention(data)} — Người báo giá: ${data.orderName || '—'}`,
       ),
+    ];
+
+    const metalLines = data.options
+      .filter((opt) => opt.materialText)
+      .map((opt) => `${opt.materialText}: ${formatVnd(opt.materialPrice)}`);
+    if (metalLines.length > 0) {
+      elements.push(hr());
+      elements.push(md(['**Giá kim loại:**', ...metalLines].join('\n')));
+    }
+
+    const seenStones = new Set<string>();
+    const stoneLines: string[] = [];
+    data.options.forEach((opt) => {
+      if (!opt.mainStoneText || seenStones.has(opt.mainStoneText)) return;
+      seenStones.add(opt.mainStoneText);
+      stoneLines.push(`${opt.mainStoneText}: ${formatVnd(opt.stonePrice)}`);
+    });
+    if (stoneLines.length > 0) {
+      elements.push(hr());
+      elements.push(md(['**Đá**', ...stoneLines].join('\n')));
+    }
+
+    elements.push(hr());
+    elements.push(
       md(
         `**Tổng báo giá:** <font color="green">**${formatVnd(data.totalPrice)}**</font>`,
       ),
-    ];
+    );
 
     if (detailUrl) elements.push(linkBtn('Xem chi tiết', detailUrl, 'primary'));
 

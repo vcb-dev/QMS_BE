@@ -23,6 +23,7 @@ import { QuoteOptionsService } from '../quote-option/quote-options.service';
 import {
   REQUEST_DETAIL_INCLUDE,
   buildOptionCreateInput,
+  buildStoneRowsWithGroup,
   mapQuoteRequestDetail,
   pickPrimaryOption,
 } from '../../utils/option-mapper.util';
@@ -165,10 +166,24 @@ export class QuoteWorkflowService {
         .split(/\s*·\s*Công/i)[0]
         .trim();
       // Nhiều hơn 1 phương án đã báo giá -> đánh dấu phương án đại diện để Lark biết đâu là giá chốt.
+      const isPrimary = !!primaryOpt && opt.id === primaryOpt.id;
       const name =
-        priced.length > 1 && primaryOpt && opt.id === primaryOpt.id
-          ? `${baseName} ✅ (Đã chọn)`
-          : baseName;
+        priced.length > 1 && isPrimary ? `${baseName} ✅ (Đã chọn)` : baseName;
+
+      // Đá CHỦ thôi (parentStoneId null = đá chủ hoặc đá tấm không gắn nhóm) — bỏ đá tấm (SIDE, phụ
+      // theo 1 đá chủ) khỏi nhãn card cho gọn, card Lark chỉ cần biết loại đá chính là gì. Nhãn phải
+      // gồm cả cut/size (không chỉ name) — 2 đá cùng "name" (VD "Đá CZ") nhưng khác giác cắt/size là
+      // 2 bản ghi Stone RIÊNG, giá khác nhau (xem stoneDedupKey ở stones.service.ts) nên phải phân
+      // biệt được, không gộp lầm thành 1 dòng.
+      const mainStones = stones.filter((s: any) => !s.parentStoneId);
+      const mainStoneText = mainStones
+        .map((s: any) => {
+          const name = s.stoneName || s.stone?.name || 'đá';
+          const cut = s.stoneCut ?? s.stone?.cut;
+          const size = s.stoneSize ?? s.stone?.size;
+          return `${name}${cut ? ` - ${cut}` : ''}${size ? ` - ${size}` : ''}`;
+        })
+        .join(', ');
 
       return {
         name,
@@ -176,6 +191,7 @@ export class QuoteWorkflowService {
         materialPrice,
         stoneText,
         stonePrice,
+        mainStoneText,
         quotedPrice: Number(opt.quotedPrice),
       };
     });
@@ -308,7 +324,9 @@ export class QuoteWorkflowService {
         include: REQUEST_DETAIL_INCLUDE,
       });
       const mappedNoOpts = mapQuoteRequestDetail(updatedNoOpts);
-      this.notifySaleQuoteCompleted(mappedNoOpts, AuditAction.QUOTE_PRICE);
+      // Truyền object GỐC (chưa qua mapOptionDetail) để buildQuoteCardData đọc được
+      // materials[].rawCost/stones[].unitPriceAtQuote — mapOptionDetail lược bỏ 2 field này.
+      this.notifySaleQuoteCompleted(updatedNoOpts, AuditAction.QUOTE_PRICE);
       return mappedNoOpts;
     }
 
@@ -343,12 +361,15 @@ export class QuoteWorkflowService {
         weightChi: m.weightChi != null ? m.weightChi : opt.weightChi,
       })),
     );
+    // Sinh id thật cho từng dòng đá + resolve parentIndex (vị trí đá chủ trong CHÍNH mảng
+    // opt.stones này, không phải id thật) thành parentStoneId thật qua buildStoneRowsWithGroup —
+    // dùng chung với buildOptionCreateInput (editQuotedPrice/quick-quote/quick-approve) để 2 đường
+    // lưu đá luôn khôi phục đúng nhóm MAIN/SIDE giống nhau. Nhờ sinh id trước, đá tấm tham chiếu
+    // đúng id thật của đá chủ ngay trong CÙNG 1 lần createMany, không cần round-trip lấy id sau khi insert.
     const stoneRows = optionWrites.flatMap(({ id: optionId, opt }) =>
-      (opt.stones ?? []).map((s: any) => ({
+      buildStoneRowsWithGroup(opt.stones ?? [], stonePriceMap).map((row) => ({
         optionId,
-        stoneId: s.stoneId,
-        quantity: s.quantity,
-        unitPriceAtQuote: stonePriceMap.get(s.stoneId),
+        ...row,
       })),
     );
 
@@ -382,7 +403,7 @@ export class QuoteWorkflowService {
     });
 
     const mapped = mapQuoteRequestDetail(updated);
-    this.notifySaleQuoteCompleted(mapped, AuditAction.QUOTE_PRICE);
+    this.notifySaleQuoteCompleted(updated, AuditAction.QUOTE_PRICE);
     return mapped;
   }
 
@@ -482,7 +503,7 @@ export class QuoteWorkflowService {
       include: REQUEST_DETAIL_INCLUDE,
     });
     const mapped = mapQuoteRequestDetail(updated);
-    this.notifySaleQuoteCompleted(mapped, AuditAction.EDIT_QUOTED_PRICE);
+    this.notifySaleQuoteCompleted(updated, AuditAction.EDIT_QUOTED_PRICE);
     return mapped;
   }
 
@@ -911,7 +932,7 @@ export class QuoteWorkflowService {
           include: REQUEST_DETAIL_INCLUDE,
         });
         const mapped = mapQuoteRequestDetail(approved);
-        this.notifySaleQuoteCompleted(mapped, AuditAction.QUICK_APPROVE);
+        this.notifySaleQuoteCompleted(approved, AuditAction.QUICK_APPROVE);
         return mapped;
       }
 
