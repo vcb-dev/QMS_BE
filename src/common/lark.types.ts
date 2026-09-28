@@ -4,9 +4,10 @@
 export interface QuoteCardOption {
   name: string;
   materialText: string; // "Vàng 24K (1.2 chỉ)" | "" nếu không rõ
-  materialPrice: number;
+  materialPrice: number; // giá bán TOÀN BỘ kim loại của phương án (đã tính lãi), không tách nhỏ
   stoneText: string; // "2v Kim cương" | "Không đính đá"
-  stonePrice: number; // 0 nếu không đá
+  stonePrice: number; // 0 nếu không đá — giá bán TOÀN BỘ đá của phương án (đã tính lãi)
+  mainStoneText: string; // chỉ tên đá CHỦ, bỏ đá tấm — "" nếu không đính đá
   quotedPrice: number;
 }
 

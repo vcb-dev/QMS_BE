@@ -467,10 +467,17 @@ model QuoteOptionStone {
   // NULL = record tạo trước khi có field này, FE/BE fallback đọc Stone.price hiện tại.
   unitPriceAtQuote Decimal?    @map("unit_price_at_quote") @db.Decimal(14, 2)
 
+  // Chỉ set khi đá này là đá TẤM (SIDE) gắn riêng cho 1 đá CHỦ (MAIN) cùng option — trỏ tới id
+  // dòng đá chủ đó. NULL = đá chủ, hoặc đá tấm không gắn đá chủ nào (orphan, dùng chung).
+  parentStone      QuoteOptionStone?  @relation("StoneGroup", fields: [parentStoneId], references: [id], onDelete: Cascade)
+  parentStoneId    String?            @map("parent_stone_id")
+  sideStones       QuoteOptionStone[] @relation("StoneGroup")
+
   createdAt DateTime @default(now()) @map("created_at")
 
   @@unique([optionId, stoneId])
   @@index([stoneId])
+  @@index([parentStoneId])
   @@map("quote_option_stones")
 }
 

@@ -1,6 +1,7 @@
 import {
   IsArray,
   IsBoolean,
+  IsInt,
   IsNotEmpty,
   IsNumber,
   IsOptional,
@@ -218,6 +219,13 @@ export class CalculateMultiStoneItem {
   @IsNumber()
   @Min(1, { message: 'Số lượng đá tối thiểu là 1' })
   quantity: number;
+
+  // FE gửi kèm khi tính giá 1 tổ hợp đá chủ/đá tấm — BE tính giá không dùng tới field này (chỉ
+  // cộng giá theo stoneId/quantity), chỉ khai báo để qua whitelist validate, không bị reject.
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  parentIndex?: number;
 }
 
 export class CalculateMultiInput {

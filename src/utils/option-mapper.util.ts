@@ -2,6 +2,7 @@
 // (structured) — không còn lưu sẵn text tóm tắt. Include + map ở đây, dùng chung cho mọi service
 // trả QuoteOption/QuoteRequest ra ngoài, để tránh mỗi service tự viết include khác nhau.
 
+import { randomUUID } from 'node:crypto';
 import { OptionSelectionStatus } from '@prisma/client';
 import { LivePriceItem } from '../quote-requests/dto/calculate-price.dto';
 import type {
@@ -150,6 +151,40 @@ export function computeLibraryGroupKey(
   return `${categoryId || ''}|${baseMetalId}|${stoneKey}`;
 }
 
+// Sinh id thật cho từng dòng đá TRƯỚC khi insert + resolve `parentIndex` (vị trí đá chủ trong
+// CHÍNH mảng `stones` truyền vào, không phải id thật) thành `parentStoneId` thật — DÙNG CHUNG cho
+// cả 2 đường lưu đá: nested-create (buildOptionCreateInput, dùng bởi editQuotedPrice/quick-quote/
+// quick-approve) và flat createMany (completeQuote trong quote-workflow.service.ts), để 2 luồng
+// luôn khôi phục đúng nhóm MAIN/SIDE giống nhau, không lệch logic giữa 2 nơi.
+// Sắp xếp lại: dòng KHÔNG có parentStoneId (đá chủ, hoặc đá tấm không gắn đá chủ nào) luôn đứng
+// TRƯỚC dòng có parentStoneId — vì FK tự tham chiếu (parent_stone_id -> quote_option_stones.id)
+// được PostgreSQL kiểm tra ngay sau khi insert TỪNG DÒNG (không đợi hết cả câu lệnh/nested-write),
+// nên nếu đá tấm được insert trước đá chủ mà nó trỏ tới thì sẽ vỡ FK. sort() là stable sort (Node/V8)
+// nên thứ tự tương đối giữa các dòng trong cùng 1 nhóm (đều-null hoặc đều-có-parent) được giữ nguyên.
+export function buildStoneRowsWithGroup(
+  stones: { stoneId: string; quantity: number; parentIndex?: number }[],
+  stonePriceMap?: Map<string, number>,
+): {
+  id: string;
+  stoneId: string;
+  quantity: number;
+  unitPriceAtQuote: number | undefined;
+  parentStoneId: string | undefined;
+}[] {
+  const stoneIds = stones.map(() => randomUUID());
+  const rows = stones.map((s, idx) => ({
+    id: stoneIds[idx],
+    stoneId: s.stoneId,
+    quantity: s.quantity,
+    unitPriceAtQuote: stonePriceMap?.get(s.stoneId),
+    parentStoneId:
+      s.parentIndex != null ? stoneIds[s.parentIndex] : undefined,
+  }));
+  return rows.sort(
+    (a, b) => (a.parentStoneId ? 1 : 0) - (b.parentStoneId ? 1 : 0),
+  );
+}
+
 // Build nested-create payload cho 1 QuoteOption từ QuoteOptionItemDto — dùng ở mọi chỗ
 // tạo/ghi-đè option (create request, quick-quote, complete quote, quick-approve).
 export function buildOptionCreateInput(
@@ -224,11 +259,7 @@ export function buildOptionCreateInput(
       : undefined,
     stones: opt.stones?.length
       ? {
-          create: opt.stones.map((s: any) => ({
-            stoneId: s.stoneId,
-            quantity: s.quantity,
-            unitPriceAtQuote: stonePriceMap?.get(s.stoneId),
-          })),
+          create: buildStoneRowsWithGroup(opt.stones, stonePriceMap),
         }
       : undefined,
   };
@@ -390,10 +421,15 @@ export function mapOptionDetail(opt: MappableOption) {
       : opt.materials,
     stones: Array.isArray(opt.stones)
       ? opt.stones.map((s) => ({
+          id: s.id,
           stoneId: s.stoneId,
           stoneName: s.stone?.name,
           stoneType: s.stone?.stoneType,
           quantity: s.quantity,
+          // Đá tấm (SIDE) gắn riêng cho 1 đá chủ (MAIN) cùng option — trỏ tới id dòng đá chủ đó.
+          // NULL = đá chủ, hoặc đá tấm không gắn đá chủ nào. FE dùng để khôi phục đúng nhóm khi mở
+          // lại option đã báo giá, thay vì đoán (gắn mọi đá tấm cho mọi đá chủ như trước).
+          parentStoneId: s.parentStoneId ?? null,
           // Ưu tiên giá đã đóng băng lúc báo giá; record cũ (trước khi có field này) fallback giá hiện tại
           price:
             s.unitPriceAtQuote != null
