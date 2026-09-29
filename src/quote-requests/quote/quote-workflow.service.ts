@@ -295,7 +295,17 @@ export class QuoteWorkflowService {
   ) {
     // FE luôn gửi kèm options đầy đủ (mỗi phương án tự mang materials/stones riêng) —
     // categoryId + tra cứu material/stone gộp chung 1 nhịp Promise.all thay vì chờ nối tiếp.
-    const opts = dto.options ?? [];
+    let hasSelected = false;
+    const opts = (dto.options ?? []).map((opt) => {
+      if (opt.isSelected) {
+        if (!hasSelected) {
+          hasSelected = true;
+          return opt;
+        }
+        return { ...opt, isSelected: false };
+        }
+      return opt;
+     });
 
     const [existing, lookups] = await Promise.all([
       this.prisma.quoteRequest.findUnique({
