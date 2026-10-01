@@ -20,7 +20,7 @@ export class MailService {
         pass: this.config.get<string>('SMTP_PASS'),
       },
     });
-    this.fromEmail = this.config.get<string>('MAIL_FROM', this.config.get<string>('SMTP_USER', ''));
+    this.fromEmail = this.config.get<string>('SMTP_USER', this.config.get<string>('SMTP_USER', ''));
     if (!this.config.get('SMTP_USER') || !this.config.get('SMTP_PASS')) {
       this.logger.warn('SMTP_USER/SMTP_PASS is not set. Emails will not be sent.');
     }
