@@ -9,7 +9,6 @@ import {
   OPTION_LIST_SELECT,
   mapQuoteRequestDetail,
   pickPrimaryOption,
-  buildProductName,
   attachPriceBreakdowns,
   toLivePriceInput,
   applyLivePriceMap,
@@ -83,6 +82,8 @@ export class QuoteQueryService {
         select: {
           id: true,
           code: true,
+          productName: true,
+          productCode: true,
           desiredLeadTime: true,
           customerMeasurements: true,
           note: true,
@@ -253,17 +254,12 @@ export class QuoteQueryService {
   private sanitizeItem(item: any) {
     const primaryOption = pickPrimaryOption(item);
     const matArr = (primaryOption?.materials || []).map((m: any) => m.material);
-    const dynamicProductName = buildProductName(
-      item.category?.name,
-      matArr.map((m: any) => m.name),
-    );
 
     if (Array.isArray(item.options))
       item.options = item.options.map((o: any) => attachPriceBreakdowns(o));
 
     return {
       ...item,
-      productName: dynamicProductName,
       material: matArr[0] || null,
       materials: matArr,
       quotedPrice: primaryOption?.quotedPrice ?? null,
@@ -292,6 +288,8 @@ export class QuoteQueryService {
       select: {
         id: true,
         code: true,
+        productName: true,
+        productCode: true,
         desiredLeadTime: true,
         customerMeasurements: true,
         closeRatePct: true,
@@ -368,17 +366,12 @@ export class QuoteQueryService {
 
     const primaryOption = pickPrimaryOption(mapped);
     const matArr = primaryOption?.materials || [];
-    const dynamicProductName = buildProductName(
-      mapped.category?.name,
-      matArr.map((m: any) => m.materialName),
-    );
 
     return {
       ...mapped,
       material: matArr[0]
         ? { id: matArr[0].materialId, name: matArr[0].materialName }
         : null,
-      productName: dynamicProductName,
       // QuoteRequest không có cột quotedPrice riêng (giá nằm ở QuoteOption) — bổ sung field cấp
       // ngoài cho FE, khớp với findAll(). Thiếu field này khiến F5 trực tiếp trang chi tiết luôn
       // hiện "Chưa có giá chốt" dù đã có phương án báo giá thật.

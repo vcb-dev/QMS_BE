@@ -106,6 +106,8 @@ function buildSearchCondition(trimmed: string) {
   return {
     OR: [
       { code: { contains: trimmed, mode: 'insensitive' } },
+      { productName: { contains: trimmed, mode: 'insensitive' } },
+      { productCode: { contains: trimmed, mode: 'insensitive' } },
       { category: { name: { contains: trimmed, mode: 'insensitive' } } },
       { customer: { name: { contains: trimmed, mode: 'insensitive' } } },
       { customer: { phone: { contains: trimmed, mode: 'insensitive' } } },

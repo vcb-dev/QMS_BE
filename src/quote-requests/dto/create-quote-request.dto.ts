@@ -26,6 +26,10 @@ function parseIfJsonString(value: unknown): unknown {
   }
 }
 
+function trimIfString(value: unknown): unknown {
+  return typeof value === 'string' ? value.trim() : value;
+}
+
 export class CreateQuoteRequestDto {
   // Bỏ trống = khách không khai báo thông tin → BE tự gán vào khách chung "Khách lẻ"
   // (quote-requests.service.resolveWalkInCustomerId), KHÔNG tạo bản ghi khách hàng mới mỗi lần.
@@ -37,10 +41,21 @@ export class CreateQuoteRequestDto {
   @IsNotEmpty({ message: 'Vui lòng chọn phòng ban' })
   departmentId: string;
 
-  @IsOptional()
+  @Transform(({ value }) => trimIfString(value))
   @IsString()
+  @IsNotEmpty({ message: 'Vui lòng nhập tên sản phẩm' })
   @MaxLength(300, { message: 'Tên sản phẩm tối đa 300 ký tự' })
-  productName?: string;
+  productName: string;
+
+  // Mã sản phẩm không bắt buộc — chuỗi rỗng quy về null để lúc sửa yêu cầu xóa được mã đã nhập.
+  @IsOptional()
+  @Transform(({ value }) => {
+    const trimmed = trimIfString(value);
+    return trimmed === '' ? null : trimmed;
+  })
+  @IsString()
+  @MaxLength(50, { message: 'Mã sản phẩm tối đa 50 ký tự' })
+  productCode?: string | null;
 
   @IsOptional()
   @IsString()

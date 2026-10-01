@@ -454,14 +454,14 @@ export class LarkService implements OnModuleInit {
         where: { id: entityId },
         select: {
           code: true,
-          category: { select: { name: true } },
+          productName: true,
           requester: { select: { name: true } },
         },
       })
       .catch(() => null);
     return {
       code: q?.code ?? null,
-      productName: q?.category?.name ?? null,
+      productName: q?.productName ?? null,
       requesterName: q?.requester?.name ?? null,
     };
   }

@@ -279,6 +279,8 @@ model QuoteRequest {
   requesterId          String              @map("requester_id")
   customer             Customer            @relation(fields: [customerId], references: [id])
   customerId           String              @map("customer_id")
+  productName          String              @map("product_name") @db.VarChar(300) // Tên sản phẩm Sale nhập lúc tạo yêu cầu (bắt buộc)
+  productCode          String?             @map("product_code") @db.VarChar(50) // Mã sản phẩm Sale nhập (không bắt buộc)
   desiredDate          DateTime?           @map("desired_date") // 7. Thời gian muốn nhận
   desiredLeadTime      String?             @map("desired_lead_time") @db.Text
   category             ProductCategory     @relation(fields: [categoryId], references: [id])
