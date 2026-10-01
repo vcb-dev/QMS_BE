@@ -54,10 +54,9 @@ describe('QuoteAnalyticsService.getDashboardCharts', () => {
       stonePrice: 3_000_000,
       quoteRequest: {
         id: 'r2',
-        category: { name: 'Dây chuyền' },
+        productName: 'Dây chuyền Rồng Vàng',
         images: [{ id: 'img1', imageUrl: 'https://example.com/a.png' }],
       },
-      materials: [{ material: { name: 'Vàng 24K' } }],
     },
     {
       id: 'o1',
@@ -65,10 +64,9 @@ describe('QuoteAnalyticsService.getDashboardCharts', () => {
       stonePrice: null,
       quoteRequest: {
         id: 'r1',
-        category: { name: 'Nhẫn' },
+        productName: 'Nhẫn Cưới Ánh Dương',
         images: [],
       },
-      materials: [{ material: { name: 'Vàng 18K' } }],
     },
   ];
 
@@ -191,7 +189,7 @@ describe('QuoteAnalyticsService.getDashboardCharts', () => {
     expect(result.featuredProducts).toHaveLength(2);
     expect(result.featuredProducts[0]).toEqual({
       key: 'r2:o2',
-      productName: 'Dây chuyền Vàng 24K',
+      productName: 'Dây chuyền Rồng Vàng',
       price: 20_000_000,
       materialPrice: 17_000_000,
       stonePrice: 3_000_000,
