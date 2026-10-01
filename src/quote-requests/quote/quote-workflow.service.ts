@@ -244,14 +244,13 @@ export class QuoteWorkflowService {
   }
 
   private notifySaleQuoteCompleted(quote: any, action: AuditAction) {
-    // Tạm tắt gửi email — chỉ dùng Lark. Bỏ comment để bật lại.
-    // const price = Number(pickPrimaryOption(quote)?.quotedPrice || 0);
-    // this.notifySale(
-    //   quote,
-    //   this.mailService.sendQuoteCompleted.bind(this.mailService),
-    //   price,
-    //   this.pickProductName(quote),
-    // );
+    const price = Number(pickPrimaryOption(quote)?.quotedPrice || 0);
+    this.notifySale(
+      quote,
+      this.mailService.sendQuoteCompleted.bind(this.mailService),
+      price,
+      this.pickProductName(quote),
+    );
     // Lark: thẻ chi tiết "đã báo giá" — fan-out tới các webhook đăng ký action này (LarkService),
     void this.larkService.dispatchQuoteCard(
       action,
@@ -260,27 +259,21 @@ export class QuoteWorkflowService {
   }
 
   private notifySaleQuoteRejected(quote: any, reason: string) {
-    void quote;
-    void reason;
-    // Tạm tắt gửi email — bỏ comment để bật lại.
-    // this.notifySale(
-    //   quote,
-    //   this.mailService.sendQuoteRejected.bind(this.mailService),
-    //   this.pickProductName(quote),
-    //   reason,
-    // );
+    this.notifySale(
+      quote,
+      this.mailService.sendQuoteRejected.bind(this.mailService),
+      this.pickProductName(quote),
+      reason,
+    );
   }
 
   private notifySaleNeedMoreInfo(quote: any, reason: string) {
-    void quote;
-    void reason;
-    // Tạm tắt gửi email — bỏ comment để bật lại.
-    // this.notifySale(
-    //   quote,
-    //   this.mailService.sendNeedMoreInfo.bind(this.mailService),
-    //   this.pickProductName(quote),
-    //   reason,
-    // );
+    this.notifySale(
+      quote,
+      this.mailService.sendNeedMoreInfo.bind(this.mailService),
+      this.pickProductName(quote),
+      reason,
+    );
   }
 
   /**
