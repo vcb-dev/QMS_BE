@@ -2,7 +2,7 @@ import { QuoteQueryService } from '../src/quote-requests/quote/quote-query.servi
 
 describe('QuoteQueryService — priceBreakdown tách giá chất liệu / giá đá', () => {
   it('stripCostFieldsForSale giữ priceBreakdown, bỏ giá vốn', () => {
-    const svc = new QuoteQueryService({} as any, {} as any);
+    const svc = new QuoteQueryService({} as any);
     const out = (svc.stripCostFieldsForSale([
       {
         quotedPrice: 10_000_000,

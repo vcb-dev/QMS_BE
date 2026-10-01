@@ -5,33 +5,23 @@ import { User, Role } from '@prisma/client';
 import { APP_CONSTANTS } from '../../common/constants';
 import {
   REQUEST_DETAIL_INCLUDE,
-  OPTION_SUMMARY_SELECT,
   OPTION_LIST_SELECT,
   mapQuoteRequestDetail,
   pickPrimaryOption,
   attachPriceBreakdowns,
-  toLivePriceInput,
-  applyLivePriceMap,
 } from '../../utils/option-mapper.util';
 import { buildQuoteWhereClause } from '../../utils/quote-filter.util';
 import {
   countsFromGroupBy,
   getMyReqCount,
 } from '../../utils/quote-counts.util';
-import {
-  QuoteOptionsService,
-  LivePriceItem,
-} from '../quote-option/quote-options.service';
 
-// Read path CHÍNH của yêu cầu báo giá: danh sách (findAll, có counts + giá sống), chi tiết
-// (findOne), và export Excel (findAllForExport). Thư Viện Sản Phẩm đã tách hẳn sang LibraryService
-// (dữ liệu lịch sử, query gộp nhóm rất khác). Không cache RAM — mọi lần đọc query thẳng DB.
+// Read path CHÍNH của yêu cầu báo giá: danh sách (findAll, có counts), chi tiết (findOne), và
+// export Excel (findAllForExport). Thư Viện Sản Phẩm đã tách hẳn sang LibraryService (dữ liệu lịch
+// sử + giá sống, query rất khác). Không cache RAM — mọi lần đọc query thẳng DB.
 @Injectable()
 export class QuoteQueryService {
-  constructor(
-    private prisma: PrismaService,
-    private quoteOptionsService: QuoteOptionsService,
-  ) {}
+  constructor(private prisma: PrismaService) {}
 
   async findAll(filterDto: FilterQuoteRequestDto, _user: User) {
     const { page = 1, limit = 10 } = filterDto;
@@ -65,13 +55,6 @@ export class QuoteQueryService {
     // (quan hệ nặng nhất, không dùng tới), bỏ luôn cho nhẹ query.
     const isLite = filterDto.lite === 'true';
 
-    // Bảng danh sách không hiện chi tiết đá từng phương án — bỏ mảng `stones` khỏi select cho nhẹ
-    // câu query. Chỉ giữ khi FE xin giá "sống" (withLivePrice): attachLivePrices cần stoneId/quantity
-    // để tính lại giá đá theo bảng giá hôm nay.
-    const optionSelect =
-      filterDto.withLivePrice === 'true'
-        ? OPTION_SUMMARY_SELECT
-        : OPTION_LIST_SELECT;
 
     const [items, total, counts] = await Promise.all([
       this.prisma.quoteRequest.findMany({
@@ -123,13 +106,13 @@ export class QuoteQueryService {
                 options: {
                   orderBy: { createdAt: 'desc' },
                   take: 1,
-                  select: optionSelect,
+                  select: OPTION_LIST_SELECT,
                 },
               }
             : {
                 options: {
                   orderBy: { createdAt: 'asc' },
-                  select: optionSelect,
+                  select: OPTION_LIST_SELECT,
                 },
                 customer: {
                   select: {
@@ -164,18 +147,6 @@ export class QuoteQueryService {
 
     const sanitizedItems = items.map((item: any) => this.sanitizeItem(item));
 
-    if (filterDto.withLivePrice === 'true' && !isLite) {
-      // Phải tính giá sống TRƯỚC khi ẩn field giá vốn — attachLivePrices cần đọc laborCost/
-      // stoneCost của chính option đó để tính lại giá, ẩn trước thì Sale mở Thư Viện Sản Phẩm sẽ
-      // luôn ra null.
-      await this.attachLivePrices(sanitizedItems);
-      // attachPriceBreakdowns (trong sanitizeItem) đã chạy TRƯỚC bước này nên livePriceBreakdown
-      // chưa populate — gắn lại sau khi đã có livePrice/liveStonePrice trên option.
-      for (const item of sanitizedItems) {
-        for (const o of item.options || []) attachPriceBreakdowns(o);
-      }
-    }
-
     // Sale chỉ được xem Giá bán — không được thấy cấu thành giá (giá vốn kim loại/tiền công/giá
     // đá), giống chính sách đã áp dụng ở quote-options.controller cho luồng tính giá. Ẩn ở tầng
     // service (không phải chỉ FE) vì đây là dữ liệu nghiệp vụ nhạy cảm nhất hệ thống.
@@ -199,28 +170,6 @@ export class QuoteQueryService {
     };
 
     return result;
-  }
-
-  // Gắn giá "sống" (livePrice) vào từng option — tính theo config HIỆN TẠI (giá kim loại/đá/tỷ lệ/
-  // VAT hôm nay), không đụng quotedPrice đã đóng băng. 1 lệnh gọi cho cả trang
-  // (batchComputeLivePrices tự lấy giá kim loại/chất liệu/đá).
-  private async attachLivePrices(items: any[]) {
-    const inputs: LivePriceItem[] = [];
-    const allOpts: any[] = [];
-    for (const item of items) {
-      const categoryVat =
-        item.category?.vatRate != null ? Number(item.category.vatRate) : null;
-      for (const opt of item.options || []) {
-        allOpts.push(opt);
-        if (opt.quotedPrice == null) continue;
-        inputs.push(toLivePriceInput(opt, categoryVat));
-      }
-    }
-    if (inputs.length === 0) return;
-    // Batch tính giá sống cho cả trang, tránh query DB nhiều lần (1 option = 1 query).
-    const priceMap =
-      await this.quoteOptionsService.batchComputeLivePrices(inputs);
-    applyLivePriceMap(allOpts, priceMap);
   }
 
   // Cắt field cấu thành giá vốn khỏi từng option — Sale chỉ được xem quotedPrice (giá bán), không

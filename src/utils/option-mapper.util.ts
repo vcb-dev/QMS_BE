@@ -64,8 +64,8 @@ export const OPTION_LIST_SELECT = {
   },
 } as const;
 
-// OPTION_LIST_SELECT + mảng `stones` — dùng cho Thư Viện Sản Phẩm và nhánh `withLivePrice` của
-// findAll (cần stoneId/quantity/unitPriceAtQuote để tính lại giá đá "sống" theo bảng giá hôm nay).
+// OPTION_LIST_SELECT + mảng `stones` — dùng cho Thư Viện Sản Phẩm (cần stoneId/quantity để tính
+// lại giá đá "sống" theo bảng giá hôm nay và tên đá chủ).
 export const OPTION_SUMMARY_SELECT = {
   ...OPTION_LIST_SELECT,
   stones: {
