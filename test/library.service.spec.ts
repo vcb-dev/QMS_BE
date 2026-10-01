@@ -55,8 +55,9 @@ function option(over: Partial<any> & { id: string }) {
 function request(over: Partial<any> & { id: string; options: any[] }) {
   return {
     code: `QG-${over.id}`,
+    productName: `Sản phẩm ${over.id}`,
+    productCode: null,
     createdAt: new Date('2026-01-04'),
-    category: { name: 'Nhẫn' },
     requester: { name: `Sale ${over.id}` },
     assignee: { name: `Order ${over.id}` },
     images: [],
@@ -105,7 +106,7 @@ describe('LibraryService.getLibraryProducts — mỗi yêu cầu là 1 sản ph�
     service = new LibraryService(prisma, quoteOptionsService as any);
   });
 
-  it('2 yêu cầu cùng danh mục + chất liệu KHÔNG bị gộp — ra 2 thẻ theo đúng thứ tự SQL', async () => {
+  it('2 yêu cầu giống hệt nhau KHÔNG bị gộp — ra 2 thẻ theo đúng thứ tự SQL', async () => {
     setup([
       request({ id: 'r1', options: [option({ id: 'o1' })] }),
       request({ id: 'r2', options: [option({ id: 'o2' })] }),
@@ -116,7 +117,6 @@ describe('LibraryService.getLibraryProducts — mỗi yêu cầu là 1 sản ph�
     expect(res.meta.total).toBe(2);
     expect(res.data.map((c) => c.requestId)).toEqual(['r1', 'r2']);
     expect(res.data.map((c) => c.code)).toEqual(['QG-r1', 'QG-r2']);
-    expect(res.data[0].productName).toBe('Nhẫn Vàng 24K');
   });
 
   it('thẻ tổng hợp mọi phương án đã báo của yêu cầu: khoảng giá, khối lượng, chất liệu', async () => {
@@ -152,10 +152,12 @@ describe('LibraryService.getLibraryProducts — mỗi yêu cầu là 1 sản ph�
     expect(card.options.map((o) => o.price)).toEqual([4_000_000, 6_000_000]);
   });
 
-  it('tên sản phẩm lấy theo phương án đại diện; đá chủ vào tên, đá tấm thì không', async () => {
+  it('tên + mã sản phẩm là giá trị Sale đã nhập, không ghép từ danh mục/chất liệu/đá', async () => {
     setup([
       request({
         id: 'r1',
+        productName: 'Nhẫn Hoàng Gia',
+        productCode: 'NH-001',
         options: [
           option({
             id: 'o1',
@@ -165,7 +167,7 @@ describe('LibraryService.getLibraryProducts — mỗi yêu cầu là 1 sản ph�
       }),
       request({
         id: 'r2',
-        category: { name: 'Bông tai' },
+        productName: 'Bông tai mẫu 7',
         options: [
           option({
             id: 'o2',
@@ -178,32 +180,42 @@ describe('LibraryService.getLibraryProducts — mỗi yêu cầu là 1 sản ph�
     const res = await service.getLibraryProducts({});
 
     expect(res.data.map((c) => c.productName)).toEqual([
-      'Nhẫn Vàng 24K Kim cương',
-      'Bông tai Bạc',
+      'Nhẫn Hoàng Gia',
+      'Bông tai mẫu 7',
     ]);
-    expect(res.data[0].stoneDisplay).toBe('Kim cương');
-    expect(res.data[1].stoneDisplay).toBe('Không đính đá');
+    expect(res.data.map((c) => c.productCode)).toEqual(['NH-001', null]);
   });
 
-  it('phương án đã chốt (CLOSED) quyết định tên sản phẩm dù không phải phương án báo gần nhất', async () => {
+  it('đá hiển thị trên thẻ chỉ gồm đá chủ; đá tấm bỏ', async () => {
     setup([
       request({
         id: 'r1',
         options: [
           option({
             id: 'o1',
-            selectionStatus: 'CLOSED',
-            stones: [mainStone('Ruby')],
+            stones: [mainStone('Kim cương'), sideStone('CZ 1.2mm')],
           }),
-          option({ id: 'o2', selectionStatus: 'NONE' }),
         ],
       }),
+      request({ id: 'r2', options: [option({ id: 'o2' })] }),
     ]);
 
-    const [card] = (await service.getLibraryProducts({})).data;
+    const res = await service.getLibraryProducts({});
 
-    expect(card.productName).toBe('Nhẫn Vàng 24K Ruby');
-    expect(card.options.find((o) => o.selectionStatus === 'CLOSED')).toBeDefined();
+    expect(res.data[0].stoneDisplay).toBe('Kim cương');
+    expect(res.data[1].stoneDisplay).toBe('Không đính đá');
+  });
+
+  it('tìm kiếm khớp cả mã yêu cầu, tên sản phẩm và mã sản phẩm', async () => {
+    prisma.$queryRaw.mockResolvedValueOnce([]);
+
+    await service.getLibraryProducts({ search: ' ab-01 ' });
+
+    const query = prisma.$queryRaw.mock.calls[0][0];
+    expect(query.sql).toContain('qr.code ILIKE');
+    expect(query.sql).toContain('qr.product_name ILIKE');
+    expect(query.sql).toContain('qr.product_code ILIKE');
+    expect(query.values).toContain('%ab-01%');
   });
 
   it('giá hôm nay: min/max giá sống các phương án, delta % từng phương án; null khi không tính được', async () => {

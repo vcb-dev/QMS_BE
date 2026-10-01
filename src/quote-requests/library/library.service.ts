@@ -10,12 +10,10 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { LibraryProductsQueryDto } from '../dto/library-products-query.dto';
 import {
   OPTION_SUMMARY_SELECT,
-  buildLibraryProductName,
   stripMaterialPercent,
   computePriceBreakdown,
   computeLivePriceBreakdown,
   attachPriceBreakdowns,
-  pickPrimaryOption,
   toLivePriceInput,
   applyLivePriceMap,
 } from '../../utils/option-mapper.util';
@@ -54,6 +52,8 @@ export class LibraryService {
     if (search) {
       filters.push(Prisma.sql`(
         qr.code ILIKE ${`%${search}%`}
+        OR qr.product_name ILIKE ${`%${search}%`}
+        OR qr.product_code ILIKE ${`%${search}%`}
         OR pc.name ILIKE ${`%${search}%`}
         OR EXISTS (
           SELECT 1 FROM quote_option_materials qom2
@@ -155,8 +155,9 @@ export class LibraryService {
       select: {
         id: true,
         code: true,
+        productName: true,
+        productCode: true,
         createdAt: true,
-        category: { select: { name: true } },
         requester: { select: { name: true } },
         assignee: { select: { name: true } },
         images: {
@@ -166,23 +167,7 @@ export class LibraryService {
         options: {
           where: { quotedPrice: { not: null } },
           orderBy: { createdAt: 'asc' },
-          select: {
-            ...OPTION_SUMMARY_SELECT,
-            materials: {
-              select: {
-                materialId: true,
-                weightChi: true,
-                material: {
-                  select: {
-                    id: true,
-                    name: true,
-                    baseMetalId: true,
-                    baseMetal: { select: { id: true, name: true } },
-                  },
-                },
-              },
-            },
-          },
+          select: OPTION_SUMMARY_SELECT,
         },
       },
     });
@@ -211,18 +196,6 @@ export class LibraryService {
     return `${w[0]} – ${w[w.length - 1]} chỉ`;
   }
 
-  // Kim loại gốc "chủ đạo" của 1 option = baseMetal của material nặng nhất. null nếu toàn phi kim loại.
-  private dominantMaterial(o: any): any | null {
-    const mats = (o.materials || []).filter(
-      (m: any) => m.material?.baseMetalId,
-    );
-    if (mats.length === 0) return null;
-    return [...mats].sort(
-      (a: any, b: any) =>
-        (Number(b.weightChi) || 0) - (Number(a.weightChi) || 0),
-    )[0];
-  }
-
   // Tên đá CHỦ (MAIN) của 1 option — giữ nguyên tên đầy đủ. Đá tấm (SIDE) bỏ hẳn.
   private mainStoneNames(o: any): string[] {
     return [
@@ -235,18 +208,11 @@ export class LibraryService {
     ];
   }
 
-  // Thẻ sản phẩm của 1 yêu cầu: tên theo phương án đại diện (đã chốt > đang chọn > báo gần nhất),
-  // chất liệu/khối lượng/đá tổng hợp từ MỌI phương án đã báo, kèm lịch sử báo giá từng phương án.
+  // Thẻ sản phẩm của 1 yêu cầu: tên + mã sản phẩm là giá trị Sale đã nhập (không ghép), chất
+  // liệu/khối lượng/đá tổng hợp từ MỌI phương án đã báo, kèm lịch sử báo giá từng phương án.
   private buildLibraryCard(req: any) {
     const opts = (req.options || []) as any[];
-    const primary = pickPrimaryOption({ options: opts });
-    if (!primary) return null;
-
-    const productName = buildLibraryProductName(
-      req.category?.name,
-      this.dominantMaterial(primary)?.material?.baseMetal?.name,
-      [...this.mainStoneNames(primary)].sort(),
-    );
+    if (opts.length === 0) return null;
 
     const matNames = [
       ...new Set(
@@ -285,7 +251,8 @@ export class LibraryService {
       requestId: req.id,
       code: req.code,
       images: req.images,
-      productName,
+      productName: req.productName,
+      productCode: req.productCode ?? null,
       matStr: matNames.join(', '),
       weightDisplay: this.weightRangeDisplay(opts),
       stoneDisplay: stoneNames.length ? stoneNames.join(', ') : 'Không đính đá',

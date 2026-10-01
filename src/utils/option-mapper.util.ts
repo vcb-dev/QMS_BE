@@ -79,26 +79,9 @@ export const OPTION_SUMMARY_SELECT = {
 } as const;
 
 // Tên chất liệu trong DB nhúng sẵn tỉ lệ vàng (VD: "Vàng 14K (58.5%)") để hiển thị ở dropdown chọn
-// chất liệu — nhưng ghép vào tên sản phẩm tự sinh thì thừa/rối, nên cắt phần "(xx.x%)" ra ở đây.
+// chất liệu — nhưng liệt kê chất liệu trên thẻ sản phẩm thì thừa/rối, nên cắt phần "(xx.x%)" ra ở đây.
 export function stripMaterialPercent(name: string): string {
   return name.replace(/\s*\(\d+(\.\d+)?%\)/g, '').trim();
-}
-
-// Tên sản phẩm cho Thư Viện Sản Phẩm (gộp thô theo danh mục + kim loại gốc) — ghép thẳng 3 khóa
-// nhóm: "<Danh mục> <tên kim loại gốc> <tên đá, ...>". Không nêu tuổi vàng/khối lượng vì nhóm gộp
-// mọi biến thể đó. Chỉ có phần đá khi nhóm có đá cấu trúc (tách đá).
-export function buildLibraryProductName(
-  categoryName: string | undefined,
-  baseMetalName: string | undefined,
-  stoneNames: string[],
-): string {
-  const stones = stoneNames.filter(Boolean).join(', ');
-  return (
-    [categoryName || '', baseMetalName || '', stones]
-      .filter(Boolean)
-      .join(' ')
-      .trim() || 'Sản phẩm chế tác'
-  );
 }
 
 // Khóa gộp nhóm THÔ cho Thư Viện Sản Phẩm — nguồn sự thật DUY NHẤT, dùng chung cho:
