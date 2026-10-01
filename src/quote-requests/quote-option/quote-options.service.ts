@@ -94,8 +94,9 @@ export class QuoteOptionsService {
   // stones 2 lần cùng bộ id). Trả về 3 Map:
   //   - stonePriceMap: giá/viên đá TẠI THỜI ĐIỂM báo giá — không snapshot thì xem lại đơn cũ ra
   //     giá đá SAI (giá hôm nay) dù QuoteOption.stonePrice đã đóng băng đúng tổng tiền.
-  //   - materialBaseMetal + stoneMeta: đầu vào cho computeLibraryGroupKey (khóa gộp nhóm Thư Viện
-  //     Sản Phẩm). Chỉ dùng khi GHI option; đọc thì dùng cột libraryGroupKey sẵn.
+  //   - materialBaseMetal + stoneMeta: đầu vào cho computeLibraryGroupKey (ghi cột
+  //     QuoteOption.libraryGroupKey). Thư Viện Sản Phẩm đã tách theo từng yêu cầu nên hiện không
+  //     còn chỗ nào đọc cột này.
   async buildOptionLookupMaps(effectiveOptions: any[]): Promise<{
     stonePriceMap: Map<string, number>;
     materialBaseMetal: Map<string, string | null>;

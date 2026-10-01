@@ -1,9 +1,8 @@
 import { Type } from 'class-transformer';
 import { IsIn, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
 
-// Bộ lọc dùng chung cho cả danh sách Thư Viện lẫn lịch sử báo giá 1 sản phẩm — history phải khớp
-// đúng view đang lọc (VD lọc theo Sale X thì lịch sử cũng chỉ hiện đơn của X).
-class LibraryFilterBase {
+// Bộ lọc + phân trang danh sách Thư Viện Sản Phẩm — mỗi yêu cầu báo giá đã QUOTED/CLOSED là 1 thẻ.
+export class LibraryProductsQueryDto {
   @IsOptional()
   @IsString()
   search?: string;
@@ -39,11 +38,9 @@ class LibraryFilterBase {
   @IsOptional()
   @IsString()
   endDate?: string;
-}
 
-export class LibraryProductsQueryDto extends LibraryFilterBase {
   @IsOptional()
-  @IsIn(['PRICE_DESC', 'PRICE_ASC', 'RECENT', 'MOST_QUOTED'])
+  @IsIn(['PRICE_DESC', 'PRICE_ASC', 'RECENT'])
   sortMode?: string = 'PRICE_DESC';
 
   @IsOptional()
@@ -58,24 +55,4 @@ export class LibraryProductsQueryDto extends LibraryFilterBase {
   @Min(1)
   @Max(100)
   limit?: number = 8;
-}
-
-// Lịch sử báo giá của 1 sản phẩm (1 thẻ Thư Viện) — lazy load khi mở modal chi tiết, phân trang
-// theo ĐƠN (1 dòng lịch sử = 1 yêu cầu báo giá).
-export class LibraryHistoryQueryDto extends LibraryFilterBase {
-  @IsString()
-  groupKey!: string;
-
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  page?: number = 1;
-
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  @Max(50)
-  limit?: number = 20;
 }
