@@ -2,7 +2,6 @@ import {
   computeFinalOption,
   buildOptionCreateInput,
   buildStoneRowsWithGroup,
-  buildLibraryProductName,
   computeLibraryGroupKey,
   computePriceBreakdown,
   computeCostBreakdown,
@@ -201,24 +200,6 @@ describe('computeLibraryGroupKey', () => {
       stoneMeta,
     );
     expect(g).toBe('cat-1|none|');
-  });
-});
-
-describe('buildLibraryProductName', () => {
-  it('ghép thẳng danh mục + tên kim loại gốc', () => {
-    expect(buildLibraryProductName('Nhẫn', 'Vàng 24K', [])).toBe(
-      'Nhẫn Vàng 24K',
-    );
-  });
-  it('thêm tên đá khi có đá cấu trúc', () => {
-    expect(
-      buildLibraryProductName('Nhẫn', 'Vàng 24K', ['Kim cương', 'Ruby']),
-    ).toBe('Nhẫn Vàng 24K Kim cương, Ruby');
-  });
-  it('fallback khi thiếu cả danh mục lẫn kim loại', () => {
-    expect(buildLibraryProductName(undefined, undefined, [])).toBe(
-      'Sản phẩm chế tác',
-    );
   });
 });
 
