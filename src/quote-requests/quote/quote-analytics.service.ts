@@ -206,14 +206,13 @@ export class QuoteAnalyticsService {
                 quoteRequest: {
                   select: {
                     id: true,
-                    category: { select: { name: true } },
+                    productName: true,
                     images: {
                       select: { id: true, imageUrl: true },
                       orderBy: { id: 'asc' },
                     },
                   },
                 },
-                materials: { select: { material: { select: { name: true } } } },
               },
             })
           : Promise.resolve([]),
@@ -267,21 +266,16 @@ export class QuoteAnalyticsService {
       priceStatRows.map((r) => Number(r.finalPrice || 0)),
     );
 
-    const featuredProducts = featuredOptions.map((o: any) => {
-      const matNames = o.materials.map((m: any) => m.material.name);
-      const catName = o.quoteRequest.category?.name || '';
-      return {
-        key: `${o.quoteRequest.id}:${o.id}`,
-        productName:
-          `${catName} ${matNames.join(', ')}`.trim() || 'Sản phẩm chế tác',
-        price: Number(o.quotedPrice || 0),
-        stonePrice: Math.round(Number(o.stonePrice || 0)),
-        materialPrice: Math.round(
-          Number(o.quotedPrice || 0) - Number(o.stonePrice || 0),
-        ),
-        images: o.quoteRequest.images,
-      };
-    });
+    const featuredProducts = featuredOptions.map((o: any) => ({
+      key: `${o.quoteRequest.id}:${o.id}`,
+      productName: o.quoteRequest.productName,
+      price: Number(o.quotedPrice || 0),
+      stonePrice: Math.round(Number(o.stonePrice || 0)),
+      materialPrice: Math.round(
+        Number(o.quotedPrice || 0) - Number(o.stonePrice || 0),
+      ),
+      images: o.quoteRequest.images,
+    }));
 
     return {
       timeline,

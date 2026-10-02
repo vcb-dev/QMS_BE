@@ -41,6 +41,11 @@ export const EXPORT_FIELD_DEFS: {
     value: (i) => orNone(i.productName),
   },
   {
+    key: 'productCode',
+    header: 'Mã sản phẩm',
+    value: (i) => orNone(i.productCode),
+  },
+  {
     key: 'material',
     header: 'Chất liệu',
     value: (i) => orNone(i.material?.name),

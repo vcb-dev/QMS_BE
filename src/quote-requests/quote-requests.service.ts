@@ -166,7 +166,6 @@ export class QuoteRequestsService {
       materialId,
       stoneIds,
       newCategoryName,
-      productName,
       options,
       customerId,
       ...data

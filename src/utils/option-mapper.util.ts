@@ -38,8 +38,8 @@ export const REQUEST_DETAIL_INCLUDE = {
 } as const;
 
 // Select rút gọn cho 1 QuoteOption khi liệt kê nhiều request (findAll) — đủ dữ liệu để tính
-// productName/priceBreakdown mà không kéo nguyên OPTION_DETAIL_INCLUDE (nặng hơn, dùng cho trang
-// chi tiết). KHÔNG kèm mảng `stones`: bảng danh sách chỉ hiện giá bán + tách giá (priceBreakdown
+// chất liệu đại diện/priceBreakdown mà không kéo nguyên OPTION_DETAIL_INCLUDE (nặng hơn, dùng cho
+// trang chi tiết). KHÔNG kèm mảng `stones`: bảng danh sách chỉ hiện giá bán + tách giá (priceBreakdown
 // suy từ cột scalar), kéo cả cây đá lồng cho từng phương án của từng dòng chỉ làm PostgreSQL tốn
 // thời gian dựng JSONB vô ích.
 export const OPTION_LIST_SELECT = {
@@ -79,19 +79,9 @@ export const OPTION_SUMMARY_SELECT = {
 } as const;
 
 // Tên chất liệu trong DB nhúng sẵn tỉ lệ vàng (VD: "Vàng 14K (58.5%)") để hiển thị ở dropdown chọn
-// chất liệu — nhưng ghép vào productName tự sinh thì thừa/rối, nên cắt phần "(xx.x%)" ra ở đây.
+// chất liệu — nhưng ghép vào tên sản phẩm tự sinh thì thừa/rối, nên cắt phần "(xx.x%)" ra ở đây.
 export function stripMaterialPercent(name: string): string {
   return name.replace(/\s*\(\d+(\.\d+)?%\)/g, '').trim();
-}
-
-// Tên sản phẩm tự sinh dùng chung cho findAll/findOne — "<Danh mục> <chất liệu, chất liệu>",
-// fallback "Sản phẩm chế tác" nếu thiếu cả 2 (request không có category/material nào có giá).
-export function buildProductName(
-  categoryName: string | undefined,
-  materialNames: string[],
-): string {
-  const matName = materialNames.map(stripMaterialPercent).join(', ');
-  return `${categoryName || ''} ${matName}`.trim() || 'Sản phẩm chế tác';
 }
 
 // Tên sản phẩm cho Thư Viện Sản Phẩm (gộp thô theo danh mục + kim loại gốc) — ghép thẳng 3 khóa
