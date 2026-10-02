@@ -1,38 +1,45 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import sgMail from '@sendgrid/mail';
-
-const mailer: typeof sgMail = typeof (sgMail as any)?.setApiKey === 'function' ? sgMail : (sgMail as any)?.default || sgMail;
+import * as nodemailer from 'nodemailer';
 
 @Injectable()
 export class MailService {
   private readonly logger = new Logger(MailService.name);
   private readonly fromEmail: string;
   private readonly fromName = 'VCB Jewelry Pricing System';
+  private readonly transporter: nodemailer.Transporter;
 
   constructor(private readonly config: ConfigService) {
-    const apiKey = this.config.get<string>('SENDGRID_API');
-    if (apiKey) {
-      mailer.setApiKey(apiKey);
-    } else {
-      this.logger.warn('SENDGRID_API key is not set. Emails will not be sent.');
+    const port = Number(this.config.get('SMTP_PORT', 465));
+    this.transporter = nodemailer.createTransport({
+      host: this.config.get<string>('SMTP_HOST'),
+      port,
+      secure: port === 465,
+      auth: {
+        user: this.config.get<string>('SMTP_USER'),
+        pass: this.config.get<string>('SMTP_PASS'),
+      },
+    });
+    this.fromEmail = this.config.get<string>('SMTP_USER', this.config.get<string>('SMTP_USER', ''));
+    if (!this.config.get('SMTP_USER') || !this.config.get('SMTP_PASS')) {
+      this.logger.warn('SMTP_USER/SMTP_PASS is not set. Emails will not be sent.');
     }
-    this.fromEmail = this.config.get<string>('SENDGRID_FROM_EMAIL', 'noreply@vcbjewelry.com');
   }
 
   private async send(to: string, subject: string, html: string) {
     try {
-      await mailer.send({
+      await this.transporter.sendMail({
         to,
-        from: { email: this.fromEmail, name: this.fromName },
+        from: { address: this.fromEmail, name: this.fromName },
         subject,
         html,
       });
       this.logger.log(`Email sent to ${to}: ${subject}`);
     } catch (error: any) {
-      this.logger.error(`Failed to send email to ${to}: ${error?.message}`, error?.response?.body);
+      this.logger.error(`Failed to send email to ${to}: ${error?.message}`);
     }
   }
+
 
   // ─── 1. WELCOME EMAIL (Đăng ký tài khoản) ─────────────────────────────────
   async sendWelcome(to: string, name: string) {
