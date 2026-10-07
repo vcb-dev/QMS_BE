@@ -54,7 +54,10 @@ export class UsersController {
     return this.usersService.findOne(id);
   }
 
-  @ApiOperation({ summary: 'Phê duyệt tài khoản người dùng (ADMIN)' })
+  @ApiOperation({
+    summary:
+      'Phê duyệt tài khoản người dùng (ADMIN) — body role?, teamId? (không gửi teamId thì không đổi team)',
+  })
   @Roles(Role.ADMIN)
   @Patch(':id/approve')
   async approveUser(
@@ -62,8 +65,21 @@ export class UsersController {
     @CurrentUser('id') actorId: string,
     @CurrentUser('role') actorRole: Role,
     @Body('role') role?: Role,
+    @Body('teamId') teamId?: string | null,
   ) {
-    return this.usersService.approveUser(id, actorId, actorRole, role);
+    return this.usersService.approveUser(id, actorId, actorRole, role, teamId);
+  }
+
+  @ApiOperation({ summary: 'Gán / gỡ team của người dùng (ADMIN)' })
+  @Roles(Role.ADMIN)
+  @Patch(':id/team')
+  async setUserTeam(
+    @Param('id') id: string,
+    @CurrentUser('id') actorId: string,
+    @CurrentUser('role') actorRole: Role,
+    @Body('teamId') teamId: string | null,
+  ) {
+    return this.usersService.setUserTeam(id, teamId, actorId, actorRole);
   }
 
   @ApiOperation({ summary: 'Từ chối & Xóa tài khoản chờ duyệt (ADMIN)' })

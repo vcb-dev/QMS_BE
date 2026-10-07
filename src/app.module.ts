@@ -6,6 +6,8 @@ import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
 import { DepartmentsModule } from './departments/departments.module';
+import { TeamsModule } from './teams/teams.module';
+import { ProfileModule } from './profile/profile.module';
 import { MaterialsModule } from './materials/materials.module';
 import { PricingFormulasModule } from './pricing-formulas/pricing-formulas.module';
 import { StonesModule } from './stones/stones.module';
@@ -34,6 +36,8 @@ import { RealtimeModule } from './realtime/realtime.module';
     AuthModule,
     UsersModule,
     DepartmentsModule,
+    TeamsModule,
+    ProfileModule,
     MaterialsModule,
     PricingFormulasModule,
     StonesModule,
