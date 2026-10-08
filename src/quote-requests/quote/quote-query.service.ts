@@ -94,6 +94,8 @@ export class QuoteQueryService {
               id: true,
               name: true,
               email: true,
+              // Team của Sale tạo đơn — FE ghi nhỏ dưới tên Sale ở bảng danh sách
+              team: { select: { id: true, name: true } },
             },
           },
           images: {

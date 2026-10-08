@@ -540,4 +540,51 @@ describe('QuoteAnalyticsService.getStaffPerformance — thời gian báo giá t�
     expect(prisma.auditLog.findMany).not.toHaveBeenCalled();
     expect(medianOf(res, 'order-1')).toBeNull();
   });
+
+  // Truy vấn user được phát theo thứ tự: [0] = danh sách SALE, [1] = danh sách ORDER.
+  const userWhere = (callIndex: number) =>
+    prisma.user.findMany.mock.calls[callIndex][0].where;
+
+  it('teamId = id → lọc cả danh sách Sale lẫn Order theo team của chính người đó', async () => {
+    await service.getStaffPerformance({ teamId: 't1' } as any);
+    expect(userWhere(0)).toEqual({
+      role: 'SALE',
+      isActive: true,
+      teamId: 't1',
+    });
+    expect(userWhere(1)).toEqual({
+      role: 'ORDER',
+      isActive: true,
+      teamId: 't1',
+    });
+  });
+
+  it("teamId = 'NONE' → chỉ người chưa có team (teamId null)", async () => {
+    await service.getStaffPerformance({ teamId: 'NONE' } as any);
+    expect(userWhere(0)).toEqual({
+      role: 'SALE',
+      isActive: true,
+      teamId: null,
+    });
+    expect(userWhere(1)).toEqual({
+      role: 'ORDER',
+      isActive: true,
+      teamId: null,
+    });
+  });
+
+  it.each([undefined, '', 'ALL'])(
+    'teamId = %p → không có khóa teamId trong where',
+    async (teamId) => {
+      await service.getStaffPerformance({ teamId } as any);
+      expect(userWhere(0)).toEqual({ role: 'SALE', isActive: true });
+      expect(userWhere(1)).toEqual({ role: 'ORDER', isActive: true });
+    },
+  );
+
+  it('không truyền query → where giữ nguyên như trước (không khóa teamId)', async () => {
+    await service.getStaffPerformance();
+    expect(userWhere(0)).toEqual({ role: 'SALE', isActive: true });
+    expect(userWhere(1)).toEqual({ role: 'ORDER', isActive: true });
+  });
 });

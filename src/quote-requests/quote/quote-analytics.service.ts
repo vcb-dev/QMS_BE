@@ -3,6 +3,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { FilterQuoteRequestDto } from '../dto/filter-quote-request.dto';
 import { QuoteStatus, User, Role } from '@prisma/client';
 import { buildQuoteWhereClause } from '../../utils/quote-filter.util';
+import { buildTeamIdCondition } from '../../utils/team-filter.util';
 import { resolveDateRange } from '../../utils/date-range.util';
 import { TimeRangeQueryDto } from '../../common/time-range-query.dto';
 import { StaffPerformanceQueryDto } from '../dto/staff-performance-query.dto';
@@ -297,12 +298,15 @@ export class QuoteAnalyticsService {
    */
   async getStaffPerformance(query?: StaffPerformanceQueryDto) {
     // Lọc theo quoteRequest.createdAt — chỉ đơn tạo trong kỳ được tính vào tổng/đã chốt/TB thời
-    // gian. Danh sách nhân viên (saleUsers/pricerUsers) KHÔNG lọc: người 0 việc trong kỳ vẫn hiện
-    // dòng số 0.
+    // gian. Danh sách nhân viên (saleUsers/pricerUsers) KHÔNG lọc theo thời gian (chỉ lọc theo team
+    // khi có teamId): người 0 việc trong kỳ vẫn hiện dòng số 0.
     const range = query
       ? resolveDateRange(query.timeRange, query.startDate, query.endDate)
       : null;
     const createdAtWhere = range ? { createdAt: range } : {};
+    // Lọc team chỉ áp lên danh sách nhân viên (theo team của chính họ); truy vấn nhóm đơn giữ nguyên
+    // — số liệu của người đã lọt danh sách vẫn tính trên toàn bộ đơn của họ.
+    const teamCondition = buildTeamIdCondition(query?.teamId);
 
     const [
       saleGroups,
@@ -321,7 +325,7 @@ export class QuoteAnalyticsService {
         _count: { _all: true },
       }),
       this.prisma.user.findMany({
-        where: { role: Role.SALE, isActive: true },
+        where: { role: Role.SALE, isActive: true, ...teamCondition },
         select: { id: true, name: true },
       }),
       this.prisma.quoteRequest.findMany({
@@ -340,7 +344,7 @@ export class QuoteAnalyticsService {
         },
       }),
       this.prisma.user.findMany({
-        where: { role: Role.ORDER, isActive: true },
+        where: { role: Role.ORDER, isActive: true, ...teamCondition },
         select: { id: true, name: true },
       }),
       // Số đơn được hệ thống tự giao cho từng Order (assignedOrderId, chia đều lúc tạo đơn) — khác

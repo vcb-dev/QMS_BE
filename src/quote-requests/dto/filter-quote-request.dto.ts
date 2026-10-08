@@ -35,6 +35,11 @@ export class FilterQuoteRequestDto {
   @IsString()
   departmentId?: string;
 
+  // Lọc theo team của Sale tạo đơn: id team, 'NONE' = Sale chưa có team, 'ALL'/trống = bỏ lọc.
+  @IsOptional()
+  @IsString()
+  teamId?: string;
+
   @IsOptional()
   @IsString()
   categoryId?: string;

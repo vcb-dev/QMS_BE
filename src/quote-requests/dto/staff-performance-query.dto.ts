@@ -5,6 +5,11 @@ import { TimeRangeQueryDto } from '../../common/time-range-query.dto';
 // Sort/search/phân trang cho từng bảng (Sale + người báo giá) trong /staff-performance —
 // tách riêng field vì 2 bảng có cột hoàn toàn khác nhau, không dùng chung 1 bộ tham số.
 export class StaffPerformanceQueryDto extends TimeRangeQueryDto {
+  // Lọc cả 2 bảng theo team của chính nhân viên: id team, 'NONE' = chưa có team, 'ALL'/trống = bỏ lọc.
+  @IsOptional()
+  @IsString()
+  teamId?: string;
+
   @IsOptional()
   @IsString()
   saleSearch?: string;

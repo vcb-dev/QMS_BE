@@ -59,6 +59,8 @@ model User {
   isApproved        Boolean     @default(false) @map("is_approved")
   isActive          Boolean     @default(true) @map("is_active") // false = bị Admin khóa (block), không đăng nhập được
   role              Role
+  teamId            String?     @map("team_id") // thuộc tối đa 1 team, trống = "Chưa có team"
+  team              Team?       @relation(fields: [teamId], references: [id], onDelete: SetNull)
 
   // Quan hệ ngược - 1 user có thể đóng nhiều vai trong quote_requests
   requestedQuotes       QuoteRequest[]          @relation("Requester")
@@ -75,6 +77,7 @@ model User {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
+  @@index([teamId])
   @@map("users")
 }
 
@@ -88,6 +91,19 @@ model Department {
   quoteRequests QuoteRequest[]
 
   @@map("departments")
+}
+
+// ==========================
+// 2b. TEAMS (nhóm người dùng — khác Department là phòng ban chọn theo từng đơn)
+// ==========================
+
+model Team {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  users     User[]
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("teams")
 }
 
 // ==========================
