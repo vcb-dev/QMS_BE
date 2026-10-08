@@ -65,6 +65,7 @@ model User {
   // Quan hệ ngược - 1 user có thể đóng nhiều vai trong quote_requests
   requestedQuotes       QuoteRequest[]          @relation("Requester")
   assignedQuotes        QuoteRequest[]          @relation("Assignee")
+  assignedOrderQuotes   QuoteRequest[]          @relation("AssignedOrder")
   chatMessages          QuoteChatMessage[]
   chatReads             QuoteChatRead[]
   baseMetalPriceUpdates BaseMetalPriceHistory[]
@@ -309,6 +310,12 @@ model QuoteRequest {
   // 1 request có thể có nhiều option do nhiều pricer tạo để so sánh, không thể gắn 1 giá trị chung ở đây.
   assignee             User?               @relation("Assignee", fields: [assigneeId], references: [id]) // Người đang tiếp nhận/xử lý case (khác pricer của từng option)
   assigneeId           String?             @map("assignee_id")
+  // Order được hệ thống tự giao lúc Sale tạo đơn (chia đều số đơn theo ngày, migration
+  // 20261008090000_add_quote_request_assigned_order). KHÁC assignee: assignee là người thực sự bấm tiếp
+  // nhận/báo giá nên null tới lúc đó và quyết định quyền thao tác; trường này chỉ để hiển thị
+  // "Người được giao", không ràng buộc ai được tiếp nhận.
+  assignedOrder        User?               @relation("AssignedOrder", fields: [assignedOrderId], references: [id], onDelete: SetNull)
+  assignedOrderId      String?             @map("assigned_order_id")
   rejectReason         String?             @map("reject_reason") @db.Text // bắt buộc khi status = TU_CHOI
   returnReason         String?             @map("return_reason") @db.Text // bắt buộc khi status = NEED_MORE_INFO
   acceptedAt           DateTime?           @map("accepted_at") // Mốc lúc PRICING tiếp nhận xử lý (status -> DANG_XLY)
@@ -337,6 +344,7 @@ model QuoteRequest {
   @@index([requesterId, status])
   @@index([assigneeId, createdAt(sort: Desc)])
   @@index([assigneeId, status])
+  @@index([assignedOrderId, createdAt(sort: Desc)])
   @@index([customerId])
   @@index([categoryId])
   @@index([departmentId])

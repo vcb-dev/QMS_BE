@@ -25,6 +25,12 @@ export class FilterQuoteRequestDto {
   @IsString()
   assigneeId?: string;
 
+  // Lọc theo Order được hệ thống tự giao lúc tạo đơn (assignedOrderId) — khác assigneeId là người
+  // thực sự tiếp nhận/báo giá.
+  @IsOptional()
+  @IsString()
+  assignedOrderId?: string;
+
   @IsOptional()
   @IsString()
   departmentId?: string;

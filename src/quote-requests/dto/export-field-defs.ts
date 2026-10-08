@@ -76,6 +76,11 @@ export const EXPORT_FIELD_DEFS: {
     value: (i) => orNone(i.assignee?.name),
   },
   {
+    key: 'assignedOrder',
+    header: 'Người được giao',
+    value: (i) => orNone(i.assignedOrder?.name),
+  },
+  {
     key: 'quotedPrice',
     header: 'Giá báo',
     value: (i) => formatVnd(i.quotedPrice),

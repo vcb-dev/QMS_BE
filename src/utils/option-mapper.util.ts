@@ -30,6 +30,7 @@ export const REQUEST_DETAIL_INCLUDE = {
     },
   },
   assignee: { select: { id: true, name: true, email: true } },
+  assignedOrder: { select: { id: true, name: true, email: true } },
   images: true,
   options: {
     orderBy: { createdAt: 'asc' as const },

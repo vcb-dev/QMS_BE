@@ -18,6 +18,7 @@ export function buildQuoteWhereClause(
     customerId,
     requesterId,
     assigneeId,
+    assignedOrderId,
     departmentId,
     teamId,
     categoryId,
@@ -54,6 +55,10 @@ export function buildQuoteWhereClause(
 
   if (assigneeId) {
     andConditions.push({ assigneeId });
+  }
+
+  if (assignedOrderId) {
+    andConditions.push({ assignedOrderId });
   }
 
   if (departmentId && departmentId !== 'ALL') {
