@@ -85,6 +85,7 @@ export class QuoteQueryService {
           categoryId: true,
           requesterId: true,
           assigneeId: true,
+          assignedOrderId: true,
           departmentId: true,
           department: { select: { id: true, name: true } },
           category: { select: { id: true, name: true, vatRate: true } },
@@ -125,6 +126,10 @@ export class QuoteQueryService {
                   },
                 },
                 assignee: { select: { id: true, name: true, email: true } },
+                // Cột "Người được giao" (tự chia đều lúc tạo đơn) — khác assignee ở trên.
+                assignedOrder: {
+                  select: { id: true, name: true, email: true },
+                },
               }),
         },
       }),

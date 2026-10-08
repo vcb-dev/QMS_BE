@@ -26,6 +26,10 @@ import {
   buildOptionCreateInput,
   mapQuoteRequestDetail,
 } from '../utils/option-mapper.util';
+import {
+  pickLeastLoadedOrder,
+  startOfVietnamDay,
+} from '../utils/order-assignment.util';
 
 @Injectable()
 export class QuoteRequestsService {
@@ -50,6 +54,56 @@ export class QuoteRequestsService {
   // KHÔNG đẻ ra bản ghi khách mới mỗi lần tạo yêu cầu. Bản ghi "Khách lẻ" tạo đúng 1 lần rồi
   // dùng lại mãi.
   private static readonly WALK_IN_CUSTOMER_NAME = 'Khách lẻ';
+
+  // Khoá advisory riêng của bộ chia đơn. Mọi lần tạo đơn xếp hàng qua khoá này nên lần sau luôn thấy
+  // đơn vừa được giao của lần trước; pg_advisory_xact_lock tự nhả khi transaction kết thúc.
+  private static readonly ASSIGN_ORDER_LOCK_KEY = 20261008;
+
+  // Chọn Order được giao đơn mới sao cho trong ngày (giờ VN) mọi Order nhận số đơn đều nhau.
+  // PHẢI gọi trong cùng transaction với lệnh insert đơn: nếu đếm ở ngoài thì 2 đơn tạo cùng lúc
+  // cùng thấy một bảng đếm và cùng chọn một người. Không có Order hợp lệ → null, đơn vẫn được tạo.
+  private async pickAssignedOrderId(
+    tx: Prisma.TransactionClient,
+  ): Promise<string | null> {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(${QuoteRequestsService.ASSIGN_ORDER_LOCK_KEY}::bigint)`;
+
+    const orders = await tx.user.findMany({
+      where: { role: Role.ORDER, isActive: true, isApproved: true },
+      select: { id: true },
+    });
+    if (orders.length === 0) return null;
+    const ids = orders.map((o) => o.id);
+
+    const [todayRows, lastRows] = await Promise.all([
+      tx.quoteRequest.groupBy({
+        by: ['assignedOrderId'],
+        where: {
+          assignedOrderId: { in: ids },
+          createdAt: { gte: startOfVietnamDay(new Date()) },
+        },
+        _count: { _all: true },
+      }),
+      tx.quoteRequest.groupBy({
+        by: ['assignedOrderId'],
+        where: { assignedOrderId: { in: ids } },
+        _max: { createdAt: true },
+      }),
+    ]);
+    const todayById = new Map(
+      todayRows.map((r) => [r.assignedOrderId, r._count._all]),
+    );
+    const lastById = new Map(
+      lastRows.map((r) => [r.assignedOrderId, r._max.createdAt]),
+    );
+
+    return pickLeastLoadedOrder(
+      ids.map((id) => ({
+        id,
+        assignedToday: todayById.get(id) ?? 0,
+        lastAssignedAt: lastById.get(id) ?? null,
+      })),
+    );
+  }
 
   private async resolveWalkInCustomerId(customerId?: string): Promise<string> {
     const trimmed = customerId?.trim();
@@ -291,32 +345,42 @@ export class QuoteRequestsService {
     // code = QG-<năm>-<4 số> ngẫu nhiên (chỉ 9000 khả năng/năm) — có thể trùng. `code` là @unique
     // nên trùng ném P2002; thử lại tối đa 5 lần với code mới thay vì trả 500. Ảnh/video đã upload
     // xong ở trên nên retry chỉ tốn thêm 1 câu INSERT.
+    // Chọn Order được giao + insert đơn nằm chung 1 transaction (xem pickAssignedOrderId), nên vòng
+    // retry bọc ngoài cả transaction: lỗi P2002 làm hỏng transaction, không thể thử tiếp bên trong.
+    // timeout nới lên vì insert lồng nhiều option/đá qua pooler có thể vượt mặc định 5s.
     let created:
       Awaited<ReturnType<typeof this.prisma.quoteRequest.create>> | undefined;
     for (let attempt = 0; attempt < 5; attempt++) {
       try {
-        created = await this.prisma.quoteRequest.create({
-          data: {
-            ...data,
-            customerId: finalCustomerId,
-            categoryId: finalCategoryId,
-            code: attempt === 0 ? code : this.generateCode(),
-            status: QuoteStatus.PENDING,
-            version: 1,
-            requesterId: userId,
-            videoUrl: finalVideoUrl,
-            images:
-              finalCloudinaryUrls.length > 0
-                ? {
-                    create: finalCloudinaryUrls.map((url) => ({
-                      imageUrl: url,
-                    })),
-                  }
-                : undefined,
-            options: optionsCreate,
+        created = await this.prisma.$transaction(
+          async (tx) => {
+            const assignedOrderId = await this.pickAssignedOrderId(tx);
+            return tx.quoteRequest.create({
+              data: {
+                ...data,
+                customerId: finalCustomerId,
+                categoryId: finalCategoryId,
+                code: attempt === 0 ? code : this.generateCode(),
+                status: QuoteStatus.PENDING,
+                version: 1,
+                requesterId: userId,
+                assignedOrderId,
+                videoUrl: finalVideoUrl,
+                images:
+                  finalCloudinaryUrls.length > 0
+                    ? {
+                        create: finalCloudinaryUrls.map((url) => ({
+                          imageUrl: url,
+                        })),
+                      }
+                    : undefined,
+                options: optionsCreate,
+              },
+              include: REQUEST_DETAIL_INCLUDE,
+            });
           },
-          include: REQUEST_DETAIL_INCLUDE,
-        });
+          { maxWait: 10_000, timeout: 20_000 },
+        );
         break;
       } catch (err) {
         const isDupCode =
