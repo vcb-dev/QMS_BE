@@ -35,10 +35,19 @@ export class StaffPerformanceQueryDto extends TimeRangeQueryDto {
   pricerSearch?: string;
 
   @IsOptional()
-  @IsIn(['name', 'totalHandled', 'medianQuoteMs', 'medianProcessMs'])
+  @IsIn([
+    'name',
+    'totalHandled',
+    'assignedCount',
+    'quotedCount',
+    'medianQuoteMs',
+    'medianProcessMs',
+  ])
   pricerSortField?:
     | 'name'
     | 'totalHandled'
+    | 'assignedCount'
+    | 'quotedCount'
     | 'medianQuoteMs'
     | 'medianProcessMs' = 'totalHandled';
 

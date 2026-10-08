@@ -276,3 +276,115 @@ describe('QuoteAnalyticsService.getStaffPerformance', () => {
     expect(pricer?.medianProcessMs).toBe(5 * 60 * 60 * 1000);
   });
 });
+
+describe('QuoteAnalyticsService.getStaffPerformance — số đơn được giao / số đơn báo giá', () => {
+  const T0 = new Date('2026-01-01T00:00:00Z');
+  let service: QuoteAnalyticsService;
+  let prisma: any;
+
+  beforeEach(async () => {
+    prisma = {
+      quoteRequest: {
+        // groupBy được gọi 2 kiểu: theo requesterId (bảng Sale) và theo assignedOrderId (số đơn được giao)
+        groupBy: jest.fn().mockImplementation((args: any) =>
+          Promise.resolve(
+            args.by.includes('assignedOrderId')
+              ? [
+                  { assignedOrderId: 'order-1', _count: { _all: 4 } },
+                  { assignedOrderId: 'order-2', _count: { _all: 1 } },
+                ]
+              : [],
+          ),
+        ),
+        findMany: jest.fn().mockResolvedValue([
+          // order-1: 2 đơn đã báo giá (o1 đúng chiều, o2 ngày báo giá TRƯỚC lúc nhận — dữ liệu lệch), 1 đơn bị từ chối
+          { assigneeId: 'order-1', acceptedAt: T0, returnedAt: null, status: 'QUOTED', updatedAt: T0, finalOptionId: 'o1' },
+          { assigneeId: 'order-1', acceptedAt: T0, returnedAt: null, status: 'CLOSED', updatedAt: T0, finalOptionId: 'o2' },
+          { assigneeId: 'order-1', acceptedAt: T0, returnedAt: null, status: 'REJECTED', updatedAt: T0, finalOptionId: null },
+          // order-2: nhận rồi trả lại Sale, chưa báo giá lần nào
+          { assigneeId: 'order-2', acceptedAt: T0, returnedAt: new Date('2026-01-01T02:00:00Z'), status: 'NEED_MORE_INFO', updatedAt: T0, finalOptionId: null },
+        ]),
+      },
+      user: {
+        // gọi nhiều lần được (mỗi test có thể gọi getStaffPerformance 2 lần) nên trả theo role, không dùng Once
+        findMany: jest.fn().mockImplementation((args: any) =>
+          Promise.resolve(
+            args.where.role === 'ORDER'
+              ? [
+                  { id: 'order-1', name: 'Order A' },
+                  { id: 'order-2', name: 'Order B' },
+                  { id: 'order-3', name: 'Order C' },
+                ]
+              : [],
+          ),
+        ),
+      },
+      quoteOption: {
+        findMany: jest.fn().mockResolvedValue([
+          { id: 'o1', quotedDate: new Date('2026-01-01T05:00:00Z') },
+          { id: 'o2', quotedDate: new Date('2025-12-31T23:00:00Z') },
+        ]),
+      },
+    };
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        QuoteAnalyticsService,
+        { provide: PrismaService, useValue: prisma },
+      ],
+    }).compile();
+    service = module.get(QuoteAnalyticsService);
+  });
+
+  const find = (res: any, id: string) =>
+    res.pricerStats.items.find((p: any) => p.id === id);
+
+  it('assignedCount = số đơn được hệ thống giao cho Order đó; Order không được giao đơn nào = 0', async () => {
+    const res = await service.getStaffPerformance();
+    expect(find(res, 'order-1').assignedCount).toBe(4);
+    expect(find(res, 'order-2').assignedCount).toBe(1);
+    expect(find(res, 'order-3').assignedCount).toBe(0);
+  });
+
+  it('quotedCount = số đơn Order đó đã báo giá (có ngày báo giá), không tính đơn từ chối/trả lại', async () => {
+    const res = await service.getStaffPerformance();
+    expect(find(res, 'order-1').quotedCount).toBe(2);
+    expect(find(res, 'order-2').quotedCount).toBe(0);
+    expect(find(res, 'order-3').quotedCount).toBe(0);
+  });
+
+  it('đơn có ngày báo giá lệch (trước lúc nhận) vẫn tính vào quotedCount nhưng không vào trung vị', async () => {
+    const res = await service.getStaffPerformance();
+    // chỉ o1 (5 giờ) góp vào trung vị; o2 âm nên bị loại khỏi trung vị
+    expect(find(res, 'order-1').medianQuoteMs).toBe(5 * 60 * 60 * 1000);
+    expect(find(res, 'order-1').quotedCount).toBe(2);
+  });
+
+  it('đếm đơn được giao chỉ trong kỳ đang lọc (theo ngày tạo đơn)', async () => {
+    await service.getStaffPerformance({
+      startDate: '2026-10-01',
+      endDate: '2026-10-31',
+    } as any);
+    const call = prisma.quoteRequest.groupBy.mock.calls
+      .map(([a]: any[]) => a)
+      .find((a: any) => a.by.includes('assignedOrderId'));
+    expect(call.where.createdAt).toBeDefined();
+    expect(call.where.assignedOrderId).toEqual({ not: null });
+  });
+
+  it('sắp xếp theo assignedCount / quotedCount giảm dần', async () => {
+    const byAssigned = await service.getStaffPerformance({
+      pricerSortField: 'assignedCount',
+      pricerSortDir: 'desc',
+    } as any);
+    expect(byAssigned.pricerStats.items.map((p: any) => p.id)).toEqual([
+      'order-1',
+      'order-2',
+      'order-3',
+    ]);
+    const byQuoted = await service.getStaffPerformance({
+      pricerSortField: 'quotedCount',
+      pricerSortDir: 'desc',
+    } as any);
+    expect(byQuoted.pricerStats.items[0].id).toBe('order-1');
+  });
+});

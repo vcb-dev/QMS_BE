@@ -289,7 +289,8 @@ export class QuoteAnalyticsService {
 
   /**
    * Hiệu suất Sale (tổng đơn/đã chốt/tỷ lệ chốt, TẤT CẢ sale active — không cắt top 8 như
-   * Dashboard) + hiệu suất người báo giá (thời gian TB báo giá/xử lý). Dùng finalOptionId cho
+   * Dashboard) + hiệu suất người báo giá (số đơn được giao/đã báo giá, thời gian trung vị báo
+   * giá/xử lý). Dùng finalOptionId cho
    * quotedDate — cùng nguyên tắc đã áp dụng ở getDashboardCharts.
    */
   async getStaffPerformance(query?: StaffPerformanceQueryDto) {
@@ -301,39 +302,54 @@ export class QuoteAnalyticsService {
       : null;
     const createdAtWhere = range ? { createdAt: range } : {};
 
-    const [saleGroups, saleUsers, pricerRows, pricerUsers] = await Promise.all([
-      this.prisma.quoteRequest.groupBy({
-        by: ['requesterId', 'status'],
-        where: {
-          ...createdAtWhere,
-          requester: { role: Role.SALE, isActive: true },
-        },
-        _count: { _all: true },
-      }),
-      this.prisma.user.findMany({
-        where: { role: Role.SALE, isActive: true },
-        select: { id: true, name: true },
-      }),
-      this.prisma.quoteRequest.findMany({
-        where: {
-          ...createdAtWhere,
-          assignee: { role: Role.ORDER, isActive: true },
-          acceptedAt: { not: null },
-        },
-        select: {
-          assigneeId: true,
-          acceptedAt: true,
-          returnedAt: true,
-          status: true,
-          updatedAt: true,
-          finalOptionId: true,
-        },
-      }),
-      this.prisma.user.findMany({
-        where: { role: Role.ORDER, isActive: true },
-        select: { id: true, name: true },
-      }),
-    ]);
+    const [saleGroups, saleUsers, pricerRows, pricerUsers, assignedGroups] =
+      await Promise.all([
+        this.prisma.quoteRequest.groupBy({
+          by: ['requesterId', 'status'],
+          where: {
+            ...createdAtWhere,
+            requester: { role: Role.SALE, isActive: true },
+          },
+          _count: { _all: true },
+        }),
+        this.prisma.user.findMany({
+          where: { role: Role.SALE, isActive: true },
+          select: { id: true, name: true },
+        }),
+        this.prisma.quoteRequest.findMany({
+          where: {
+            ...createdAtWhere,
+            assignee: { role: Role.ORDER, isActive: true },
+            acceptedAt: { not: null },
+          },
+          select: {
+            assigneeId: true,
+            acceptedAt: true,
+            returnedAt: true,
+            status: true,
+            updatedAt: true,
+            finalOptionId: true,
+          },
+        }),
+        this.prisma.user.findMany({
+          where: { role: Role.ORDER, isActive: true },
+          select: { id: true, name: true },
+        }),
+        // Số đơn được hệ thống tự giao cho từng Order (assignedOrderId, chia đều lúc tạo đơn) — khác
+        // handled/quoted bên dưới tính theo assignee (người thực sự tiếp nhận/báo giá).
+        this.prisma.quoteRequest.groupBy({
+          by: ['assignedOrderId'],
+          where: { ...createdAtWhere, assignedOrderId: { not: null } },
+          _count: { _all: true },
+        }),
+      ]);
+
+    const assignedCountByOrder = new Map<string, number>();
+    for (const g of assignedGroups) {
+      if (g.assignedOrderId) {
+        assignedCountByOrder.set(g.assignedOrderId, g._count._all);
+      }
+    }
 
     const saleTotals = new Map<string, { total: number; closed: number }>();
     for (const g of saleGroups) {
@@ -367,6 +383,9 @@ export class QuoteAnalyticsService {
     );
 
     const handledCountByAssignee = new Map<string, number>();
+    // Đơn đã báo giá = có ngày báo giá ở phương án đại diện. Đếm TRƯỚC khi loại mẫu có thời lượng
+    // âm (dữ liệu lệch) — số đơn đã báo giá vẫn đúng, chỉ trung vị bỏ mẫu lệch.
+    const quotedCountByAssignee = new Map<string, number>();
     const durationsByAssignee = new Map<
       string,
       { quote: number[]; process: number[] }
@@ -386,6 +405,10 @@ export class QuoteAnalyticsService {
         process: [],
       };
       if (quotedDate) {
+        quotedCountByAssignee.set(
+          r.assigneeId,
+          (quotedCountByAssignee.get(r.assigneeId) || 0) + 1,
+        );
         const dur = new Date(quotedDate).getTime() - acceptedMs;
         if (dur >= 0) {
           bucket.quote.push(dur);
@@ -417,6 +440,8 @@ export class QuoteAnalyticsService {
         id: u.id,
         name: u.name,
         totalHandled: handledCountByAssignee.get(u.id) || 0,
+        assignedCount: assignedCountByOrder.get(u.id) || 0,
+        quotedCount: quotedCountByAssignee.get(u.id) || 0,
         medianQuoteMs: median(b.quote),
         medianProcessMs: median(b.process),
       };
