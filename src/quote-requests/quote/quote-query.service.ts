@@ -274,6 +274,7 @@ export class QuoteQueryService {
           },
         },
         assignee: { select: { id: true, name: true, email: true } },
+        assignedOrder: { select: { id: true, name: true, email: true } },
         images: { select: { id: true, imageUrl: true }, take: 1 },
         options: {
           orderBy: { createdAt: 'asc' },

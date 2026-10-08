@@ -2,6 +2,8 @@ import { Prisma } from '@prisma/client';
 import { QuoteRequestsService } from '../src/quote-requests/quote-requests.service';
 import { QuoteQueryService } from '../src/quote-requests/quote/quote-query.service';
 import { REQUEST_DETAIL_INCLUDE } from '../src/utils/option-mapper.util';
+import { buildQuoteWhereClause } from '../src/utils/quote-filter.util';
+import { EXPORT_FIELD_DEFS } from '../src/quote-requests/dto/export-field-defs';
 
 // groupBy được gọi 2 lần: đếm đơn trong ngày (_count) và lấy lần giao gần nhất toàn thời gian (_max).
 function makeTx(opts: {
@@ -262,5 +264,49 @@ describe('QuoteQueryService.findAll — cột "Người được giao"', () => {
     await svc.findAll({ lite: 'true' } as any, user);
     const select = prisma.quoteRequest.findMany.mock.calls[0][0].select;
     expect(select.assignedOrder).toBeUndefined();
+  });
+});
+
+describe('buildQuoteWhereClause — lọc theo người được giao', () => {
+  const admin = { id: 'admin1', role: 'ADMIN' } as any;
+
+  it('có assignedOrderId → thêm điều kiện lọc đúng cột assignedOrderId (không lẫn với assigneeId)', () => {
+    const where: any = buildQuoteWhereClause(
+      { assignedOrderId: 'o1' } as any,
+      admin,
+    );
+    expect(where.AND).toContainEqual({ assignedOrderId: 'o1' });
+    expect(where.AND).not.toContainEqual({ assigneeId: 'o1' });
+  });
+
+  it('không truyền assignedOrderId → không có điều kiện đó', () => {
+    const where: any = buildQuoteWhereClause({} as any, admin);
+    const hasIt = (where.AND ?? []).some((c: any) => 'assignedOrderId' in c);
+    expect(hasIt).toBe(false);
+  });
+});
+
+describe('Export Excel — cột "Người được giao"', () => {
+  const def = EXPORT_FIELD_DEFS.find((f) => f.key === 'assignedOrder');
+
+  it('có khai báo cột assignedOrder với tiêu đề tiếng Việt', () => {
+    expect(def?.header).toBe('Người được giao');
+  });
+
+  it('lấy tên Order được giao; đơn cũ chưa có thì "Chưa có"', () => {
+    expect(def?.value({ assignedOrder: { name: 'Order A' } })).toBe('Order A');
+    expect(def?.value({ assignedOrder: null })).toBe('Chưa có');
+  });
+
+  it('findAllForExport select assignedOrder để cột có dữ liệu', async () => {
+    const prisma = {
+      quoteRequest: { findMany: jest.fn().mockResolvedValue([]) },
+    };
+    const svc = new QuoteQueryService(prisma as any);
+    await svc.findAllForExport({} as any, { id: 'a', role: 'ADMIN' } as any);
+    const select = prisma.quoteRequest.findMany.mock.calls[0][0].select;
+    expect(select.assignedOrder).toEqual({
+      select: { id: true, name: true, email: true },
+    });
   });
 });
