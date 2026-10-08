@@ -6,6 +6,7 @@ import { FilterQuoteRequestDto } from '../quote-requests/dto/filter-quote-reques
 import { QuoteStatus, User, Role } from '@prisma/client';
 import { APP_CONSTANTS } from '../common/constants';
 import { resolveDateRange } from './date-range.util';
+import { buildTeamIdCondition } from './team-filter.util';
 
 export function buildQuoteWhereClause(
   filterDto: FilterQuoteRequestDto,
@@ -18,6 +19,7 @@ export function buildQuoteWhereClause(
     requesterId,
     assigneeId,
     departmentId,
+    teamId,
     categoryId,
     materialId,
     ownerId,
@@ -56,6 +58,13 @@ export function buildQuoteWhereClause(
 
   if (departmentId && departmentId !== 'ALL') {
     andConditions.push({ departmentId });
+  }
+
+  // Team của người tạo đơn (requester) — không có cột team trên quote_requests nên lọc bằng join;
+  // Sale đổi team thì các đơn cũ của họ chuyển theo team mới (đã chốt trong spec).
+  const teamCondition = buildTeamIdCondition(teamId);
+  if (teamCondition) {
+    andConditions.push({ requester: teamCondition });
   }
 
   if (categoryId && categoryId !== 'ALL') {

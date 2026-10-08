@@ -340,7 +340,7 @@ export class AuthService {
   async getProfile(userId: string) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
-      
+      include: { team: { select: { id: true, name: true } } },
     });
     if (!user) {
       throw new UnauthorizedException('User not found');

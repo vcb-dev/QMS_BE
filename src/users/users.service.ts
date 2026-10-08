@@ -17,6 +17,7 @@ const USER_BASE_FIELDS = {
   avatar: true,
   isApproved: true,
   isActive: true,
+  team: { select: { id: true, name: true } },
 } as const;
 
 const USER_LIST_SELECT = { ...USER_BASE_FIELDS, createdAt: true } as const;
@@ -89,7 +90,15 @@ export class UsersService {
     return user;
   }
 
-  async approveUser(id: string, actorId: string, actorRole: Role, role?: Role) {
+  // teamId: undefined = không đụng team; chuỗi = gán (phải tồn tại); null/'' = gỡ team.
+  async approveUser(
+    id: string,
+    actorId: string,
+    actorRole: Role,
+    role?: Role,
+    teamId?: string | null,
+  ) {
+    const teamChange = this.parseTeamId(teamId);
     const user = await this.prisma.user.findUnique({
       where: { id },
       select: { id: true },
@@ -97,12 +106,15 @@ export class UsersService {
     if (!user) {
       throw new NotFoundException('Không tìm thấy người dùng');
     }
+    // Kiểm tra team TRƯỚC khi duyệt — team không tồn tại thì không để lại user đã duyệt mà thiếu team.
+    await this.assertTeamExists(teamChange);
 
     const updated = await this.prisma.user.update({
       where: { id },
       data: {
         isApproved: true,
         ...(role ? { role } : {}),
+        ...(teamChange !== undefined ? { teamId: teamChange } : {}),
       },
       select: USER_UPDATE_SELECT,
     });
@@ -115,6 +127,63 @@ export class UsersService {
       id,
     );
     return updated;
+  }
+
+  async setUserTeam(
+    id: string,
+    teamId: string | null,
+    actorId: string,
+    actorRole: Role,
+  ) {
+    // Khác approve: ở đây thiếu teamId là lỗi (endpoint chỉ có việc đổi team).
+    const teamChange = this.parseTeamId(teamId);
+    if (teamChange === undefined) {
+      throw new BadRequestException('teamId không hợp lệ');
+    }
+    const user = await this.prisma.user.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+    if (!user) {
+      throw new NotFoundException('Không tìm thấy người dùng');
+    }
+    await this.assertTeamExists(teamChange);
+
+    const updated = await this.prisma.user.update({
+      where: { id },
+      data: { teamId: teamChange },
+      select: USER_UPDATE_SELECT,
+    });
+
+    await this.auditLog.logAction(
+      actorId,
+      actorRole,
+      'SET_USER_TEAM',
+      'User',
+      id,
+    );
+    return updated;
+  }
+
+  // undefined → không đổi; null hoặc '' → gỡ team (null); chuỗi → id team; kiểu khác → 400.
+  private parseTeamId(teamId: unknown): string | null | undefined {
+    if (teamId === undefined) return undefined;
+    if (teamId === null || teamId === '') return null;
+    if (typeof teamId !== 'string') {
+      throw new BadRequestException('teamId không hợp lệ');
+    }
+    return teamId;
+  }
+
+  private async assertTeamExists(teamId: string | null | undefined) {
+    if (!teamId) return;
+    const team = await this.prisma.team.findUnique({
+      where: { id: teamId },
+      select: { id: true },
+    });
+    if (!team) {
+      throw new NotFoundException('Team không tồn tại');
+    }
   }
 
   async setActive(

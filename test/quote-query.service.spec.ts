@@ -25,3 +25,27 @@ describe('QuoteQueryService — priceBreakdown tách giá chất liệu / giá �
     expect(out.stoneCost).toBeUndefined();
   });
 });
+
+describe('QuoteQueryService.findAll — hiển thị team của Sale tạo đơn', () => {
+  it('chọn thêm requester.team { id, name } để FE hiện team dưới tên Sale', async () => {
+    const prisma: any = {
+      quoteRequest: {
+        findMany: jest.fn().mockResolvedValue([]),
+        count: jest.fn().mockResolvedValue(0),
+      },
+    };
+    const svc = new QuoteQueryService(prisma);
+
+    await svc.findAll({} as any, { id: 'u1', role: 'ADMIN' } as any);
+
+    const { select } = prisma.quoteRequest.findMany.mock.calls[0][0];
+    expect(select.requester).toEqual({
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        team: { select: { id: true, name: true } },
+      },
+    });
+  });
+});

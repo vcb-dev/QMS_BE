@@ -215,3 +215,68 @@ describe('Password Reset OTP & Throttler (Item 10)', () => {
     });
   });
 });
+
+describe('AuthService.getProfile — trả team, không lộ trường bí mật', () => {
+  let authService: AuthService;
+  let prisma: any;
+
+  beforeEach(() => {
+    prisma = {
+      user: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'u1',
+          name: 'Sale A',
+          email: 'a@example.com',
+          role: 'SALE',
+          avatar: null,
+          isApproved: true,
+          isActive: true,
+          createdAt: new Date('2026-01-01T00:00:00Z'),
+          team: { id: 't1', name: 'Team A' },
+          // Các trường bí mật mà findUnique (không select) sẽ trả kèm
+          passwordHash: 'hash',
+          refreshTokenHash: 'rhash',
+          resetTokenHash: 'xhash',
+          resetTokenExpires: new Date(),
+        }),
+      },
+    };
+    authService = new AuthService(
+      prisma,
+      new JwtService({ secret: 'test-secret' }),
+      { get: jest.fn() } as any,
+      {} as any,
+    );
+  });
+
+  it('gọi findUnique với include team { id, name }', async () => {
+    await authService.getProfile('u1');
+    expect(prisma.user.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'u1' },
+        include: { team: { select: { id: true, name: true } } },
+      }),
+    );
+  });
+
+  it('kết quả có team và KHÔNG có passwordHash/refreshTokenHash/resetTokenHash/resetTokenExpires', async () => {
+    const profile: any = await authService.getProfile('u1');
+    expect(profile.team).toEqual({ id: 't1', name: 'Team A' });
+    expect(profile.createdAt).toEqual(new Date('2026-01-01T00:00:00Z'));
+    for (const secret of [
+      'passwordHash',
+      'refreshTokenHash',
+      'resetTokenHash',
+      'resetTokenExpires',
+    ]) {
+      expect(profile).not.toHaveProperty(secret);
+    }
+  });
+
+  it('người dùng không tồn tại → UnauthorizedException', async () => {
+    prisma.user.findUnique.mockResolvedValue(null);
+    await expect(authService.getProfile('ghost')).rejects.toThrow(
+      UnauthorizedException,
+    );
+  });
+});
