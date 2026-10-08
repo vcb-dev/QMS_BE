@@ -1,5 +1,6 @@
 import {
   OrderLoad,
+  computeQuoteTurnaroundMs,
   pickLeastLoadedOrder,
   startOfVietnamDay,
 } from '../src/utils/order-assignment.util';
@@ -92,5 +93,76 @@ describe('startOfVietnamDay — "ngày" tính theo giờ Việt Nam (UTC+7), kh�
     expect(startOfVietnamDay(at('2026-10-07T17:00:00Z')).toISOString()).toBe(
       '2026-10-07T17:00:00.000Z',
     );
+  });
+});
+
+describe('computeQuoteTurnaroundMs — thời gian báo giá tính từ lúc giao đơn', () => {
+  const MIN = 60 * 1000;
+  const t = (hhmm: string) => new Date(`2026-01-01T${hhmm}:00Z`);
+  const base = {
+    createdAt: t('08:00'),
+    quotedDate: t('10:01'),
+    firstQuoteLogAt: t('10:01'),
+    edited: false,
+    resubmitLogs: [] as Date[],
+  };
+
+  it('tính từ lúc tạo (giao) đơn tới lúc báo giá, KHÔNG phụ thuộc lúc Order bấm nhận', () => {
+    // Order để đơn nằm tới 10:00 mới bấm "Báo giá luôn" và nhập giá xong lúc 10:01 → vẫn 2 giờ 1 phút
+    expect(computeQuoteTurnaroundMs(base)).toBe(121 * MIN);
+  });
+
+  it('đơn chưa sửa giá: dùng thẳng ngày báo giá, bỏ qua log báo giá (log có thể là lần thất bại)', () => {
+    const r = computeQuoteTurnaroundMs({
+      ...base,
+      quotedDate: t('10:00'),
+      firstQuoteLogAt: t('08:10'),
+    });
+    expect(r).toBe(120 * MIN);
+  });
+
+  it('đơn đã sửa giá: dùng lần báo giá ĐẦU TIÊN trong log, không dùng lần sửa gần nhất', () => {
+    const r = computeQuoteTurnaroundMs({
+      ...base,
+      createdAt: t('09:00'),
+      quotedDate: t('12:00'), // ngày báo giá bị ghi lại lúc sửa giá
+      firstQuoteLogAt: t('09:30'),
+      edited: true,
+    });
+    expect(r).toBe(30 * MIN);
+  });
+
+  it('đã sửa giá nhưng thiếu log báo giá → dùng ngày báo giá hiện có', () => {
+    const r = computeQuoteTurnaroundMs({
+      ...base,
+      quotedDate: t('10:00'),
+      firstQuoteLogAt: null,
+      edited: true,
+    });
+    expect(r).toBe(120 * MIN);
+  });
+
+  it('đơn bị trả rồi Sale gửi lại: tính từ lần gửi lại gần nhất, thời gian chờ Sale không tính cho Order', () => {
+    const r = computeQuoteTurnaroundMs({
+      ...base,
+      quotedDate: t('11:20'),
+      resubmitLogs: [t('09:00'), t('11:00')],
+    });
+    expect(r).toBe(20 * MIN);
+  });
+
+  it('lần gửi lại nằm SAU lúc báo giá thì không dùng làm mốc bắt đầu', () => {
+    const r = computeQuoteTurnaroundMs({
+      ...base,
+      quotedDate: t('09:00'),
+      resubmitLogs: [t('10:00')],
+    });
+    expect(r).toBe(60 * MIN);
+  });
+
+  it('ngày báo giá trước mốc bắt đầu (dữ liệu lệch) → null, không đưa số âm vào trung vị', () => {
+    expect(
+      computeQuoteTurnaroundMs({ ...base, quotedDate: t('07:00') }),
+    ).toBeNull();
   });
 });

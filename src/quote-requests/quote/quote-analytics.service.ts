@@ -14,6 +14,8 @@ import {
   bucketTimeline,
   bucketPriceRange,
 } from '../../utils/dashboard-stats.util';
+import { computeQuoteTurnaroundMs } from '../../utils/order-assignment.util';
+import { AuditAction } from '../../common/audit-actions';
 
 // Tách khỏi QuoteQueryService (god-service cũ gộp cả read path chính lẫn thống kê/dashboard) —
 // 3 hàm ở đây chỉ đọc/tổng hợp số liệu cho Dashboard/Hiệu suất, không đụng cache danh sách hay
@@ -290,8 +292,8 @@ export class QuoteAnalyticsService {
   /**
    * Hiệu suất Sale (tổng đơn/đã chốt/tỷ lệ chốt, TẤT CẢ sale active — không cắt top 8 như
    * Dashboard) + hiệu suất người báo giá (số đơn được giao/đã báo giá, thời gian trung vị báo
-   * giá/xử lý). Dùng finalOptionId cho
-   * quotedDate — cùng nguyên tắc đã áp dụng ở getDashboardCharts.
+   * giá tính từ lúc giao đơn, thời gian xử lý từ lúc tiếp nhận). Dùng finalOptionId cho quotedDate —
+   * cùng nguyên tắc đã áp dụng ở getDashboardCharts.
    */
   async getStaffPerformance(query?: StaffPerformanceQueryDto) {
     // Lọc theo quoteRequest.createdAt — chỉ đơn tạo trong kỳ được tính vào tổng/đã chốt/TB thời
@@ -302,47 +304,66 @@ export class QuoteAnalyticsService {
       : null;
     const createdAtWhere = range ? { createdAt: range } : {};
 
-    const [saleGroups, saleUsers, pricerRows, pricerUsers, assignedGroups] =
-      await Promise.all([
-        this.prisma.quoteRequest.groupBy({
-          by: ['requesterId', 'status'],
-          where: {
-            ...createdAtWhere,
-            requester: { role: Role.SALE, isActive: true },
-          },
-          _count: { _all: true },
-        }),
-        this.prisma.user.findMany({
-          where: { role: Role.SALE, isActive: true },
-          select: { id: true, name: true },
-        }),
-        this.prisma.quoteRequest.findMany({
-          where: {
-            ...createdAtWhere,
-            assignee: { role: Role.ORDER, isActive: true },
-            acceptedAt: { not: null },
-          },
-          select: {
-            assigneeId: true,
-            acceptedAt: true,
-            returnedAt: true,
-            status: true,
-            updatedAt: true,
-            finalOptionId: true,
-          },
-        }),
-        this.prisma.user.findMany({
-          where: { role: Role.ORDER, isActive: true },
-          select: { id: true, name: true },
-        }),
-        // Số đơn được hệ thống tự giao cho từng Order (assignedOrderId, chia đều lúc tạo đơn) — khác
-        // handled/quoted bên dưới tính theo assignee (người thực sự tiếp nhận/báo giá).
-        this.prisma.quoteRequest.groupBy({
-          by: ['assignedOrderId'],
-          where: { ...createdAtWhere, assignedOrderId: { not: null } },
-          _count: { _all: true },
-        }),
-      ]);
+    const [
+      saleGroups,
+      saleUsers,
+      pricerRows,
+      pricerUsers,
+      assignedGroups,
+      assignedRows,
+    ] = await Promise.all([
+      this.prisma.quoteRequest.groupBy({
+        by: ['requesterId', 'status'],
+        where: {
+          ...createdAtWhere,
+          requester: { role: Role.SALE, isActive: true },
+        },
+        _count: { _all: true },
+      }),
+      this.prisma.user.findMany({
+        where: { role: Role.SALE, isActive: true },
+        select: { id: true, name: true },
+      }),
+      this.prisma.quoteRequest.findMany({
+        where: {
+          ...createdAtWhere,
+          assignee: { role: Role.ORDER, isActive: true },
+          acceptedAt: { not: null },
+        },
+        select: {
+          assigneeId: true,
+          acceptedAt: true,
+          returnedAt: true,
+          status: true,
+          updatedAt: true,
+          finalOptionId: true,
+        },
+      }),
+      this.prisma.user.findMany({
+        where: { role: Role.ORDER, isActive: true },
+        select: { id: true, name: true },
+      }),
+      // Số đơn được hệ thống tự giao cho từng Order (assignedOrderId, chia đều lúc tạo đơn) — khác
+      // handled/quoted bên dưới tính theo assignee (người thực sự tiếp nhận/báo giá).
+      this.prisma.quoteRequest.groupBy({
+        by: ['assignedOrderId'],
+        where: { ...createdAtWhere, assignedOrderId: { not: null } },
+        _count: { _all: true },
+      }),
+      // Đơn theo NGƯỜI ĐƯỢC GIAO — nguồn của "thời gian báo giá" (từ lúc giao đơn, không phải lúc nhận).
+      this.prisma.quoteRequest.findMany({
+        where: {
+          ...createdAtWhere,
+          assignedOrder: { role: Role.ORDER, isActive: true },
+        },
+        select: {
+          id: true,
+          assignedOrderId: true,
+          createdAt: true,
+          finalOptionId: true,
+        },
+      }),
+    ]);
 
     const assignedCountByOrder = new Map<string, number>();
     for (const g of assignedGroups) {
@@ -369,9 +390,13 @@ export class QuoteAnalyticsService {
       };
     });
 
-    const optionIds = pricerRows
-      .map((r) => r.finalOptionId)
-      .filter((id): id is string => !!id);
+    const optionIds = [
+      ...new Set(
+        [...pricerRows, ...assignedRows]
+          .map((r) => r.finalOptionId)
+          .filter((id): id is string => !!id),
+      ),
+    ];
     const optionDates = optionIds.length
       ? await this.prisma.quoteOption.findMany({
           where: { id: { in: optionIds } },
@@ -382,14 +407,79 @@ export class QuoteAnalyticsService {
       optionDates.map((o) => [o.id, o.quotedDate]),
     );
 
+    // Thời gian báo giá tính theo người ĐƯỢC GIAO, từ lúc giao đơn tới lần báo giá đầu tiên (xem
+    // computeQuoteTurnaroundMs). Chỉ đơn đã có ngày báo giá mới vào mẫu, và audit log chỉ cần tra
+    // cho các đơn đó (gỡ ảnh hưởng của việc sửa giá + lần Sale gửi lại).
+    const quotedAssigned = assignedRows.flatMap((r) => {
+      const quotedDate = r.finalOptionId
+        ? quotedDateByOptionId.get(r.finalOptionId)
+        : null;
+      return r.assignedOrderId && quotedDate
+        ? [{ ...r, assignedOrderId: r.assignedOrderId, quotedDate }]
+        : [];
+    });
+    const auditRows = quotedAssigned.length
+      ? await this.prisma.auditLog.findMany({
+          where: {
+            entityType: 'QuoteRequest',
+            entityId: { in: quotedAssigned.map((r) => r.id) },
+            action: {
+              in: [
+                AuditAction.QUOTE_PRICE,
+                AuditAction.QUICK_APPROVE,
+                AuditAction.EDIT_QUOTED_PRICE,
+                AuditAction.RESUBMIT_QUOTE,
+              ],
+            },
+          },
+          select: { entityId: true, action: true, createdAt: true },
+        })
+      : [];
+    const logsByRequest = new Map<
+      string,
+      { firstQuote: Date | null; edited: boolean; resubmits: Date[] }
+    >();
+    for (const l of auditRows) {
+      if (!l.entityId) continue;
+      const cur = logsByRequest.get(l.entityId) || {
+        firstQuote: null,
+        edited: false,
+        resubmits: [],
+      };
+      // audit_logs.action là String trong Prisma (xem audit-actions.ts) — ép về enum để so sánh.
+      const action = l.action as AuditAction;
+      if (action === AuditAction.EDIT_QUOTED_PRICE) {
+        cur.edited = true;
+      } else if (action === AuditAction.RESUBMIT_QUOTE) {
+        cur.resubmits.push(l.createdAt);
+      } else if (!cur.firstQuote || l.createdAt < cur.firstQuote) {
+        // QUOTE_PRICE / QUICK_APPROVE — lấy log sớm nhất
+        cur.firstQuote = l.createdAt;
+      }
+      logsByRequest.set(l.entityId, cur);
+    }
+    const turnaroundsByOrder = new Map<string, number[]>();
+    for (const r of quotedAssigned) {
+      const logs = logsByRequest.get(r.id);
+      const ms = computeQuoteTurnaroundMs({
+        createdAt: r.createdAt,
+        quotedDate: new Date(r.quotedDate),
+        firstQuoteLogAt: logs?.firstQuote ?? null,
+        edited: logs?.edited ?? false,
+        resubmitLogs: logs?.resubmits ?? [],
+      });
+      if (ms === null) continue;
+      const arr = turnaroundsByOrder.get(r.assignedOrderId) || [];
+      arr.push(ms);
+      turnaroundsByOrder.set(r.assignedOrderId, arr);
+    }
+
     const handledCountByAssignee = new Map<string, number>();
     // Đơn đã báo giá = có ngày báo giá ở phương án đại diện. Đếm TRƯỚC khi loại mẫu có thời lượng
     // âm (dữ liệu lệch) — số đơn đã báo giá vẫn đúng, chỉ trung vị bỏ mẫu lệch.
     const quotedCountByAssignee = new Map<string, number>();
-    const durationsByAssignee = new Map<
-      string,
-      { quote: number[]; process: number[] }
-    >();
+    // Thời gian XỬ LÝ từ lúc tiếp nhận (còn trả về để tương thích, FE không còn hiển thị).
+    const processByAssignee = new Map<string, number[]>();
     for (const r of pricerRows) {
       if (!r.assigneeId || !r.acceptedAt) continue;
       handledCountByAssignee.set(
@@ -400,28 +490,22 @@ export class QuoteAnalyticsService {
       const quotedDate = r.finalOptionId
         ? quotedDateByOptionId.get(r.finalOptionId)
         : null;
-      const bucket = durationsByAssignee.get(r.assigneeId) || {
-        quote: [],
-        process: [],
-      };
+      const bucket = processByAssignee.get(r.assigneeId) || [];
       if (quotedDate) {
         quotedCountByAssignee.set(
           r.assigneeId,
           (quotedCountByAssignee.get(r.assigneeId) || 0) + 1,
         );
         const dur = new Date(quotedDate).getTime() - acceptedMs;
-        if (dur >= 0) {
-          bucket.quote.push(dur);
-          bucket.process.push(dur);
-        }
+        if (dur >= 0) bucket.push(dur);
       } else if (r.returnedAt) {
         const dur = new Date(r.returnedAt).getTime() - acceptedMs;
-        if (dur >= 0) bucket.process.push(dur);
+        if (dur >= 0) bucket.push(dur);
       } else if (r.status === QuoteStatus.REJECTED && r.updatedAt) {
         const dur = new Date(r.updatedAt).getTime() - acceptedMs;
-        if (dur >= 0) bucket.process.push(dur);
+        if (dur >= 0) bucket.push(dur);
       }
-      durationsByAssignee.set(r.assigneeId, bucket);
+      processByAssignee.set(r.assigneeId, bucket);
     }
 
     // Trung vị thay vì trung bình — 1 đơn báo giá bất thường lâu (VD chờ khách phản hồi) không kéo
@@ -435,15 +519,14 @@ export class QuoteAnalyticsService {
         : (sorted[mid - 1] + sorted[mid]) / 2;
     };
     const allPricerStats = pricerUsers.map((u) => {
-      const b = durationsByAssignee.get(u.id) || { quote: [], process: [] };
       return {
         id: u.id,
         name: u.name,
         totalHandled: handledCountByAssignee.get(u.id) || 0,
         assignedCount: assignedCountByOrder.get(u.id) || 0,
         quotedCount: quotedCountByAssignee.get(u.id) || 0,
-        medianQuoteMs: median(b.quote),
-        medianProcessMs: median(b.process),
+        medianQuoteMs: median(turnaroundsByOrder.get(u.id) ?? []),
+        medianProcessMs: median(processByAssignee.get(u.id) ?? []),
       };
     });
 
