@@ -37,7 +37,7 @@ export class CustomersController {
 
   @ApiOperation({
     summary:
-      'Số liệu tổng hợp theo khách hàng (tổng đơn/đơn gần nhất) — phân trang & sort thật ở SQL',
+      'Số liệu tổng hợp theo khách hàng (tổng đơn/đã chốt/giá trị/đơn gần nhất) — phân trang & sort thật ở SQL',
   })
   @Roles(Role.ADMIN)
   @Get('stats')
@@ -47,7 +47,7 @@ export class CustomersController {
 
   @ApiOperation({
     summary:
-      'So sánh KPI tháng này với tháng trước (số khách hoạt động) cho card đầu trang',
+      'So sánh KPI tháng này với tháng trước (số khách hoạt động + giá trị đã chốt) cho card đầu trang',
   })
   @Roles(Role.ADMIN)
   @Get('stats/month-comparison')

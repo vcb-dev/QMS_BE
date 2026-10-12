@@ -117,7 +117,7 @@ export class QuoteRequestsController {
 
   @ApiOperation({
     summary:
-      'Hiệu suất Sale (tổng đơn) + hiệu suất người báo giá (thời gian TB)',
+      'Hiệu suất Sale (tổng đơn/đã chốt/tỷ lệ chốt) + hiệu suất người báo giá (thời gian TB)',
   })
   @Get('staff-performance')
   async getStaffPerformance(@Query() query: StaffPerformanceQueryDto) {

@@ -20,7 +20,7 @@ export class LibraryController {
 
   @ApiOperation({
     summary:
-      'Danh sách sản phẩm đã báo giá (Thư viện) — mỗi yêu cầu QUOTED là 1 sản phẩm, kèm lịch sử báo giá các phương án',
+      'Danh sách sản phẩm đã báo giá (Thư viện) — mỗi yêu cầu QUOTED/CLOSED là 1 sản phẩm, kèm lịch sử báo giá các phương án',
   })
   @Roles(Role.SALE, Role.ORDER, Role.ADMIN)
   @Get('library-products')

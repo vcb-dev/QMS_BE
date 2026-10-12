@@ -1,7 +1,7 @@
 import { Type } from 'class-transformer';
 import { IsIn, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
 
-// Bộ lọc + phân trang danh sách Thư Viện Sản Phẩm — mỗi yêu cầu báo giá đã QUOTED là 1 thẻ.
+// Bộ lọc + phân trang danh sách Thư Viện Sản Phẩm — mỗi yêu cầu báo giá đã QUOTED/CLOSED là 1 thẻ.
 export class LibraryProductsQueryDto {
   @IsOptional()
   @IsString()
