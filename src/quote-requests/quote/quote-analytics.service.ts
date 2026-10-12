@@ -369,21 +369,18 @@ export class QuoteAnalyticsService {
       }
     }
 
-    const saleTotals = new Map<string, { total: number; closed: number }>();
+    const saleTotals = new Map<string, { total: number }>();
     for (const g of saleGroups) {
-      const cur = saleTotals.get(g.requesterId) || { total: 0, closed: 0 };
+      const cur = saleTotals.get(g.requesterId) || { total: 0 };
       cur.total += g._count._all;
-      if (g.status === QuoteStatus.CLOSED) cur.closed += g._count._all;
       saleTotals.set(g.requesterId, cur);
     }
     const allSaleStats = saleUsers.map((u) => {
-      const t = saleTotals.get(u.id) || { total: 0, closed: 0 };
+      const t = saleTotals.get(u.id) || { total: 0 };
       return {
         id: u.id,
         name: u.name,
         total: t.total,
-        closed: t.closed,
-        closeRate: t.total > 0 ? (t.closed / t.total) * 100 : 0,
       };
     });
 

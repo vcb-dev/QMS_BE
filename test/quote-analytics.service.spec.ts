@@ -1,4 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { plainToInstance } from 'class-transformer';
+import { validateSync } from 'class-validator';
+import { StaffPerformanceQueryDto } from '../src/quote-requests/dto/staff-performance-query.dto';
 import { QuoteAnalyticsService } from '../src/quote-requests/quote/quote-analytics.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 
@@ -206,7 +209,7 @@ describe('QuoteAnalyticsService.getStaffPerformance', () => {
     prisma = {
       quoteRequest: {
         groupBy: jest.fn().mockResolvedValue([
-          { requesterId: 'sale-1', status: 'CLOSED', _count: { _all: 2 } },
+          { requesterId: 'sale-1', status: 'PENDING', _count: { _all: 2 } },
           { requesterId: 'sale-1', status: 'QUOTED', _count: { _all: 1 } },
         ]),
         findMany: jest.fn().mockResolvedValue([
@@ -214,7 +217,7 @@ describe('QuoteAnalyticsService.getStaffPerformance', () => {
             assigneeId: 'order-1',
             acceptedAt: new Date('2026-01-01T00:00:00Z'),
             returnedAt: null,
-            status: 'CLOSED',
+            status: 'QUOTED',
             updatedAt: new Date('2026-01-02T00:00:00Z'),
             finalOptionId: 'o1',
           },
@@ -256,14 +259,8 @@ describe('QuoteAnalyticsService.getStaffPerformance', () => {
     const result = await service.getStaffPerformance();
     expect(result.saleStats.items).toEqual(
       expect.arrayContaining([
-        {
-          id: 'sale-1',
-          name: 'Sale A',
-          total: 3,
-          closed: 2,
-          closeRate: (2 / 3) * 100,
-        },
-        { id: 'sale-2', name: 'Sale B', total: 0, closed: 0, closeRate: 0 },
+        { id: 'sale-1', name: 'Sale A', total: 3 },
+        { id: 'sale-2', name: 'Sale B', total: 0 },
       ]),
     );
   });
@@ -347,7 +344,7 @@ describe('QuoteAnalyticsService.getStaffPerformance — số đơn được giao
         findMany: jest.fn().mockResolvedValue([
           // order-1: 2 đơn đã báo giá (o1 đúng chiều, o2 ngày báo giá TRƯỚC lúc nhận — dữ liệu lệch), 1 đơn bị từ chối
           { assigneeId: 'order-1', acceptedAt: T0, returnedAt: null, status: 'QUOTED', updatedAt: T0, finalOptionId: 'o1' },
-          { assigneeId: 'order-1', acceptedAt: T0, returnedAt: null, status: 'CLOSED', updatedAt: T0, finalOptionId: 'o2' },
+          { assigneeId: 'order-1', acceptedAt: T0, returnedAt: null, status: 'QUOTED', updatedAt: T0, finalOptionId: 'o2' },
           { assigneeId: 'order-1', acceptedAt: T0, returnedAt: null, status: 'REJECTED', updatedAt: T0, finalOptionId: null },
           // order-2: nhận rồi trả lại Sale, chưa báo giá lần nào
           { assigneeId: 'order-2', acceptedAt: T0, returnedAt: new Date('2026-01-01T02:00:00Z'), status: 'NEED_MORE_INFO', updatedAt: T0, finalOptionId: null },
@@ -652,5 +649,27 @@ describe('QuoteAnalyticsService.getStats', () => {
     expect(prisma.quoteRequest.groupBy.mock.calls[1][0].where.status).toEqual({
       in: ['QUOTED'],
     });
+  });
+});
+
+describe('StaffPerformanceQueryDto', () => {
+  const invalidFields = (plain: Record<string, unknown>) =>
+    validateSync(plainToInstance(StaffPerformanceQueryDto, plain)).map(
+      (e) => e.property,
+    );
+
+  it.each(['closed', 'closeRate'])(
+    'từ chối saleSortField=%s (cột đã chốt đã gỡ)',
+    (field) => {
+      expect(invalidFields({ saleSortField: field })).toContain(
+        'saleSortField',
+      );
+    },
+  );
+
+  it.each(['name', 'total'])('chấp nhận saleSortField=%s', (field) => {
+    expect(invalidFields({ saleSortField: field })).not.toContain(
+      'saleSortField',
+    );
   });
 });
