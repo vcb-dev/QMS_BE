@@ -7,8 +7,8 @@ export class CustomerStatsQueryDto {
   search?: string;
 
   @IsOptional()
-  @IsIn(['TOP_SPEND', 'MOST_ORDERS', 'RECENT'])
-  sortMode?: 'TOP_SPEND' | 'MOST_ORDERS' | 'RECENT' = 'TOP_SPEND';
+  @IsIn(['MOST_ORDERS', 'RECENT'])
+  sortMode?: 'MOST_ORDERS' | 'RECENT' = 'MOST_ORDERS';
 
   @IsOptional()
   @IsString()

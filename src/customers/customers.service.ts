@@ -28,8 +28,6 @@ interface CustomerStatRow {
   provinceId: string | null;
   wardId: string | null;
   total_orders: number;
-  total_closed: number;
-  closed_value: string;
   last_order: Date | null;
 }
 
@@ -64,7 +62,7 @@ export class CustomersService {
     const limit = dto.limit ?? 12;
     const offset = (page - 1) * limit;
     const search = dto.search?.trim();
-    const sortMode = dto.sortMode ?? 'TOP_SPEND';
+    const sortMode = dto.sortMode ?? 'MOST_ORDERS';
 
     const filters: Prisma.Sql[] = [];
     if (search) {
@@ -100,11 +98,9 @@ export class CustomersService {
       : Prisma.empty;
 
     const orderBy =
-      sortMode === 'MOST_ORDERS'
-        ? Prisma.sql`total_orders DESC, c.id`
-        : sortMode === 'RECENT'
-          ? Prisma.sql`last_order DESC NULLS LAST, c.id`
-          : Prisma.sql`closed_value DESC, c.id`;
+      sortMode === 'RECENT'
+        ? Prisma.sql`last_order DESC NULLS LAST, c.id`
+        : Prisma.sql`total_orders DESC, c.id`;
 
     // CTE dùng chung cho trang hiện tại + đếm tổng — HAVING lọc theo last_order (aggregate) nên
     // không thể đếm bằng COUNT(*) đơn giản trên bảng customers như trước.
@@ -112,8 +108,6 @@ export class CustomersService {
       SELECT c.id, c.name, c.phone, c.address,
         c.province_id AS "provinceId", c.ward_id AS "wardId",
         COUNT(qr.id)::int AS total_orders,
-        COUNT(qr.id) FILTER (WHERE qr.status = 'CLOSED')::int AS total_closed,
-        COALESCE(SUM(qr.final_price) FILTER (WHERE qr.status = 'CLOSED'), 0)::numeric AS closed_value,
         MAX(qr.created_at) AS last_order
       FROM customers c
       LEFT JOIN quote_requests qr ON qr.customer_id = c.id
@@ -132,12 +126,6 @@ export class CustomersService {
       SELECT COUNT(*)::bigint AS count FROM (${cteSql}) t
     `);
     const total = Number(totalRaw);
-
-    const [{ sum: totalClosedValueAllRaw }] = await this.prisma.$queryRaw<
-      { sum: string | null }[]
-    >(Prisma.sql`
-      SELECT COALESCE(SUM(final_price), 0)::numeric AS sum FROM quote_requests WHERE status = 'CLOSED'
-    `);
 
     const provinceIds = [
       ...new Set(
@@ -185,15 +173,12 @@ export class CustomersService {
           : undefined,
       },
       totalOrders: r.total_orders,
-      totalClosed: r.total_closed,
-      closedValue: Number(r.closed_value),
       lastOrder: r.last_order,
     }));
 
     return {
       data,
       meta: { total, page, limit, totalPages: Math.ceil(total / limit) || 1 },
-      totalClosedValueAll: Number(totalClosedValueAllRaw),
     };
   }
 
@@ -311,9 +296,9 @@ export class CustomersService {
     return updated;
   }
 
-  // So sánh KPI tháng này với tháng trước cho 2 card đầu trang (Tổng khách hàng/Tổng giá trị đã
-  // chốt) — "khách hàng" ở đây tính là khách có ít nhất 1 yêu cầu báo giá tạo trong tháng (khách
-  // hoạt động trong tháng), không phải tổng khách hàng toàn hệ thống như bảng bên dưới.
+  // So sánh KPI tháng này với tháng trước cho card đầu trang (Khách hàng hoạt động) — "khách
+  // hàng" ở đây tính là khách có ít nhất 1 yêu cầu báo giá tạo trong tháng (khách hoạt động trong
+  // tháng), không phải tổng khách hàng toàn hệ thống như bảng bên dưới.
   async getMonthComparison(provinceId?: string, requesterId?: string) {
     const now = new Date();
     const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -336,19 +321,16 @@ export class CustomersService {
       if (requesterId)
         filters.push(Prisma.sql`qr.requester_id = ${requesterId}`);
 
-      const [row] = await this.prisma.$queryRaw<
-        { customer_count: bigint; closed_value: string }[]
-      >(Prisma.sql`
-        SELECT
-          COUNT(DISTINCT qr.customer_id)::bigint AS customer_count,
-          COALESCE(SUM(qr.final_price) FILTER (WHERE qr.status = 'CLOSED'), 0)::numeric AS closed_value
+      const [row] = await this.prisma.$queryRaw<{ customer_count: bigint }[]>(
+        Prisma.sql`
+        SELECT COUNT(DISTINCT qr.customer_id)::bigint AS customer_count
         FROM quote_requests qr
         JOIN customers c ON c.id = qr.customer_id
         WHERE ${Prisma.join(filters, ' AND ')}
-      `);
+      `,
+      );
       return {
         customerCount: Number(row?.customer_count || 0),
-        closedValue: Number(row?.closed_value || 0),
       };
     };
 
@@ -370,7 +352,6 @@ export class CustomersService {
         current.customerCount,
         previous.customerCount,
       ),
-      closedValueDeltaPct: pctChange(current.closedValue, previous.closedValue),
     };
   }
 
