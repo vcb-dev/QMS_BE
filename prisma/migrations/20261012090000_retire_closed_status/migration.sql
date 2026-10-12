@@ -65,3 +65,8 @@ BEGIN
   WHERE id = p_quote_request_id;
 END;
 $function$;
+
+-- 4. Action MARK_CLOSED đã xóa khỏi AuditAction: xóa đăng ký thông báo Lark còn lưu (nếu để lại, lần
+--    ADMIN lưu cấu hình webhook sẽ bị VALID_ACTIONS từ chối mà FE không còn ô nào để bỏ chọn).
+--    audit_logs.action là String nên log cũ giữ nguyên làm lịch sử.
+DELETE FROM "lark_webhook_subscription" WHERE "action" = 'MARK_CLOSED';

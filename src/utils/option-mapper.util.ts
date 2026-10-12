@@ -439,7 +439,6 @@ export function mapQuoteRequestDetail(quote: any) {
 // tổng giá): ưu tiên option đang SELECTED (chọn báo giá chính), rồi tới option có GIÁ MỚI NHẤT
 // (options orderBy createdAt asc) — không được lấy options[0] vô điều kiện, vì option đầu tiên
 // luôn là bản nháp rỗng "Yêu cầu ban đầu" tự tạo lúc Sale gửi yêu cầu, chưa có giá.
-// Khớp hàm SQL sync_final_option() (migration 20261012090000_retire_closed_status).
 export function pickPrimaryOption<T = any>(
   quote: { options?: T[] } | null | undefined,
 ): T | null {

@@ -24,7 +24,6 @@ export enum AuditAction {
   REJECT_QUOTE = 'REJECT_QUOTE',
   RETURN_QUOTE = 'RETURN_QUOTE', // trả lại, yêu cầu Sale bổ sung thông tin
   RESUBMIT_QUOTE = 'RESUBMIT_QUOTE', // Sale gửi lại sau khi bổ sung
-  MARK_CLOSED = 'MARK_CLOSED', // Đã ngừng phát sinh (gỡ tính năng "Đã chốt") — giữ key vì audit_logs cũ + subscription Lark đã lưu tham chiếu
   SELECT_OPTION = 'SELECT_OPTION', // Sale chọn phương án
   DELETE_QUOTE_OPTION = 'DELETE_QUOTE_OPTION',
   EDIT_QUOTED_PRICE = 'EDIT_QUOTED_PRICE', // ORDER/ADMIN sửa lại giá đã báo (đơn QUOTED)
@@ -57,7 +56,6 @@ export const AUDIT_ACTION_LABELS: Record<AuditAction, string> = {
   [AuditAction.REJECT_QUOTE]: 'Từ chối yêu cầu báo giá',
   [AuditAction.RETURN_QUOTE]: 'Trả lại - yêu cầu bổ sung thông tin',
   [AuditAction.RESUBMIT_QUOTE]: 'Gửi lại yêu cầu sau bổ sung',
-  [AuditAction.MARK_CLOSED]: 'Đánh dấu đã chốt',
   [AuditAction.SELECT_OPTION]: 'Chọn phương án báo giá',
   [AuditAction.DELETE_QUOTE_OPTION]: 'Xóa phương án báo giá',
   [AuditAction.EDIT_QUOTED_PRICE]: 'Sửa giá đã báo',
@@ -82,20 +80,11 @@ export const RICH_CARD_ACTIONS: ReadonlySet<AuditAction> = new Set([
 ]);
 
 /**
- * Action đã ngừng phát sinh: giữ trong enum (audit_logs cũ + subscription Lark đã lưu còn tham chiếu,
- * VALID_ACTIONS ở lark.service.ts vẫn nhận) nhưng không mời ADMIN đăng ký nhận thông báo nữa.
- */
-export const DEPRECATED_AUDIT_ACTIONS: ReadonlySet<AuditAction> = new Set([
-  AuditAction.MARK_CLOSED,
-]);
-
-/**
  * Danh sách hoạt động cho ADMIN chọn khi cấu hình webhook. Dùng hằng số này (KHÔNG dùng
  * SELECT DISTINCT action FROM audit_logs) để action mới xuất hiện ngay cả trước lần phát sinh đầu tiên.
  */
-export const NOTIFIABLE_ACTIONS: readonly AuditAction[] = Object.values(
-  AuditAction,
-).filter((action) => !DEPRECATED_AUDIT_ACTIONS.has(action));
+export const NOTIFIABLE_ACTIONS: readonly AuditAction[] =
+  Object.values(AuditAction);
 
 export interface NotifiableActionInfo {
   action: AuditAction;

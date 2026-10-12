@@ -284,13 +284,13 @@ export class QuoteAnalyticsService {
   }
 
   /**
-   * Hiệu suất Sale (tổng đơn/đã chốt/tỷ lệ chốt, TẤT CẢ sale active — không cắt top 8 như
+   * Hiệu suất Sale (tổng đơn, TẤT CẢ sale active — không cắt top 8 như
    * Dashboard) + hiệu suất người báo giá (số đơn được giao/đã báo giá, thời gian trung vị báo
    * giá tính từ lúc giao đơn, thời gian xử lý từ lúc tiếp nhận). Dùng finalOptionId cho quotedDate —
    * cùng nguyên tắc đã áp dụng ở getDashboardCharts.
    */
   async getStaffPerformance(query?: StaffPerformanceQueryDto) {
-    // Lọc theo quoteRequest.createdAt — chỉ đơn tạo trong kỳ được tính vào tổng/đã chốt/TB thời
+    // Lọc theo quoteRequest.createdAt — chỉ đơn tạo trong kỳ được tính vào tổng/TB thời
     // gian. Danh sách nhân viên (saleUsers/pricerUsers) KHÔNG lọc theo thời gian (chỉ lọc theo team
     // khi có teamId): người 0 việc trong kỳ vẫn hiện dòng số 0.
     const range = query
