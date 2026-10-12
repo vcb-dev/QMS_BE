@@ -26,6 +26,7 @@ enum QuoteStatus {
   REJECTED
   NEED_MORE_INFO
   CLOSED
+  CANCELLED // ADMIN hủy — trạng thái cuối, chỉ ADMIN thấy (xem utils/quote-visibility.util.ts)
 }
 
 enum StoneType {
@@ -320,6 +321,8 @@ model QuoteRequest {
   returnReason         String?             @map("return_reason") @db.Text // bắt buộc khi status = NEED_MORE_INFO
   acceptedAt           DateTime?           @map("accepted_at") // Mốc lúc PRICING tiếp nhận xử lý (status -> DANG_XLY)
   returnedAt           DateTime?           @map("returned_at") // Mốc lúc bị trả lại Sale (status -> NEED_MORE_INFO)
+  cancelledAt          DateTime?           @map("cancelled_at") // Mốc lúc ADMIN hủy (status -> CANCELLED); xóa khi khôi phục
+  cancelledFromStatus  QuoteStatus?        @map("cancelled_from_status") // Trạng thái ngay trước khi hủy — để khôi phục đúng; xóa khi khôi phục
   options              QuoteOption[]       @relation("RequestOptions") // Multi-options báo giá song song
   images               QuoteRequestImage[] // 6. Ảnh sản phẩm (nếu nhiều ảnh)
   videoUrl             String?             @map("video_url") @db.Text // Video sản phẩm/mẫu thực tế (1 video, Cloudinary resource_type=video)
