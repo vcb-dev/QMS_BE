@@ -25,6 +25,8 @@ enum QuoteStatus {
   QUOTED
   REJECTED
   NEED_MORE_INFO
+  // Deprecated — không còn dùng (migration 20261012090000_retire_closed_status chuyển đơn CLOSED về
+  // QUOTED). Giữ vì Postgres không DROP VALUE được và để Prisma đọc được dòng cũ nếu còn sót.
   CLOSED
 }
 
@@ -34,11 +36,13 @@ enum StoneType {
 }
 
 // Trạng thái được chọn của 1 QuoteOption trong danh sách phương án của 1 request —
-// SELECTED = phương án đang dùng để báo giá/hiển thị chính, CLOSED = khách đã chốt đúng phương án này,
+// SELECTED = phương án đang dùng để báo giá/hiển thị chính,
 // NONE = phương án phụ, không có ý nghĩa gì đặc biệt (mặc định).
 enum OptionSelectionStatus {
   NONE
   SELECTED
+  // Deprecated — không còn dùng (migration 20261012090000_retire_closed_status chuyển CLOSED →
+  // SELECTED). Giữ vì Postgres không DROP VALUE được và để Prisma đọc được dòng cũ nếu còn sót.
   CLOSED
 }
 
@@ -424,7 +428,7 @@ model QuoteOption {
   // Tên/mô tả đá khi Order nhập tay tổng tiền đá (không chọn từ danh mục Stone) — không có
   // QuoteOptionStone nào để tra tên, nên phải lưu snapshot text này, khác case đá chọn từ danh mục.
   stoneDescription String?               @map("stone_description") @db.Text
-  // SELECTED = phương án chính đang dùng để báo giá, CLOSED = khách đã chốt đúng phương án này —
+  // SELECTED = phương án chính đang dùng để báo giá —
   // nguồn sự thật duy nhất cho "phương án nào đang được chọn", thay cho QuoteRequest.selectedOptionId cũ.
   selectionStatus  OptionSelectionStatus @default(NONE) @map("selection_status")
 
