@@ -12,7 +12,7 @@ import {
 } from '../dto/update-quote-status.dto';
 import { CompleteQuoteInput } from '../dto/quote-complete.dto';
 import { randomUUID } from 'node:crypto';
-import { QuoteStatus, Role, OptionSelectionStatus } from '@prisma/client';
+import { Prisma, QuoteStatus, Role, OptionSelectionStatus } from '@prisma/client';
 import { QuoteQueryService } from './quote-query.service';
 import { MailService } from '../../mail/mail.service';
 import { AuditLogService } from '../../audit-log/audit-log.service';
@@ -67,6 +67,30 @@ export class QuoteWorkflowService {
       throw new ConflictException(
         'Yêu cầu đã bị hủy, không thể thực hiện thao tác này. Hãy khôi phục yêu cầu trước nếu cần.',
       );
+    }
+  }
+
+  // where của MỌI lần ghi lên đơn đang hoạt động: kèm "chưa hủy" để một thao tác đã qua guard không ghi
+  // đè được đơn mà ADMIN vừa hủy ngay sau đó (nếu không đơn "sống lại" với trạng thái cũ, còn sót
+  // cancelledAt/cancelledFromStatus và Sale/Order thấy lại nó).
+  private activeQuote(id: string) {
+    return { id, status: { not: QuoteStatus.CANCELLED } };
+  }
+
+  // Ghi lỗi P2025 = không còn bản ghi khớp where = đơn vừa bị hủy giữa lúc đọc và lúc ghi.
+  private async guardCancelRace<T>(write: () => Promise<T>): Promise<T> {
+    try {
+      return await write();
+    } catch (err) {
+      if (
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === 'P2025'
+      ) {
+        throw new ConflictException(
+          'Yêu cầu vừa bị hủy hoặc đã được cập nhật bởi người khác, vui lòng tải lại trang',
+        );
+      }
+      throw err;
     }
   }
 
@@ -339,18 +363,20 @@ export class QuoteWorkflowService {
     const keyMaps = lookups ?? undefined;
 
     if (opts.length === 0) {
-      const updatedNoOpts = await this.prisma.quoteRequest.update({
-        where: { id },
-        data: {
-          status: QuoteStatus.QUOTED,
-          assigneeId: userId,
-          version: { increment: 1 },
-          ...(dto.inspectionFee != null
-            ? { inspectionFee: dto.inspectionFee }
-            : {}),
-        },
-        include: REQUEST_DETAIL_INCLUDE,
-      });
+      const updatedNoOpts = await this.guardCancelRace(() =>
+        this.prisma.quoteRequest.update({
+          where: this.activeQuote(id),
+          data: {
+            status: QuoteStatus.QUOTED,
+            assigneeId: userId,
+            version: { increment: 1 },
+            ...(dto.inspectionFee != null
+              ? { inspectionFee: dto.inspectionFee }
+              : {}),
+          },
+          include: REQUEST_DETAIL_INCLUDE,
+        }),
+      );
       const mappedNoOpts = mapQuoteRequestDetail(updatedNoOpts);
       // Truyền object GỐC (chưa qua mapOptionDetail) để buildQuoteCardData đọc được
       // materials[].rawCost/stones[].unitPriceAtQuote — mapOptionDetail lược bỏ 2 field này.
@@ -401,29 +427,33 @@ export class QuoteWorkflowService {
       })),
     );
 
-    await this.prisma.$transaction([
-      this.prisma.quoteOption.deleteMany({ where: { quoteRequestId: id } }),
-      this.prisma.quoteRequest.update({
-        where: { id },
-        data: {
-          status: QuoteStatus.QUOTED,
-          assigneeId: userId,
-          version: { increment: 1 },
-          ...(dto.inspectionFee != null
-            ? { inspectionFee: dto.inspectionFee }
-            : {}),
-        },
-      }),
-      this.prisma.quoteOption.createMany({
-        data: optionWrites.map((w) => w.row),
-      }),
-      ...(materialRows.length > 0
-        ? [this.prisma.quoteOptionMaterial.createMany({ data: materialRows })]
-        : []),
-      ...(stoneRows.length > 0
-        ? [this.prisma.quoteOptionStone.createMany({ data: stoneRows })]
-        : []),
-    ]);
+    // Cả lô nằm trong 1 transaction: đơn vừa bị hủy thì lần update request fail (P2025) và toàn bộ
+    // việc xóa/ghi lại phương án được hoàn tác.
+    await this.guardCancelRace(() =>
+      this.prisma.$transaction([
+        this.prisma.quoteOption.deleteMany({ where: { quoteRequestId: id } }),
+        this.prisma.quoteRequest.update({
+          where: this.activeQuote(id),
+          data: {
+            status: QuoteStatus.QUOTED,
+            assigneeId: userId,
+            version: { increment: 1 },
+            ...(dto.inspectionFee != null
+              ? { inspectionFee: dto.inspectionFee }
+              : {}),
+          },
+        }),
+        this.prisma.quoteOption.createMany({
+          data: optionWrites.map((w) => w.row),
+        }),
+        ...(materialRows.length > 0
+          ? [this.prisma.quoteOptionMaterial.createMany({ data: materialRows })]
+          : []),
+        ...(stoneRows.length > 0
+          ? [this.prisma.quoteOptionStone.createMany({ data: stoneRows })]
+          : []),
+      ]),
+    );
 
     const updated = await this.prisma.quoteRequest.findUniqueOrThrow({
       where: { id },
@@ -511,25 +541,27 @@ export class QuoteWorkflowService {
       })),
     );
 
-    await this.prisma.$transaction([
-      this.prisma.quoteOption.deleteMany({ where: { quoteRequestId: id } }),
-      this.prisma.quoteRequest.update({
-        where: { id },
-        data: {
-          version: { increment: 1 },
-          ...(inspectionFee != null ? { inspectionFee } : {}),
-        },
-      }),
-      this.prisma.quoteOption.createMany({
-        data: optionWrites.map((w) => w.row),
-      }),
-      ...(materialRows.length > 0
-        ? [this.prisma.quoteOptionMaterial.createMany({ data: materialRows })]
-        : []),
-      ...(stoneRows.length > 0
-        ? [this.prisma.quoteOptionStone.createMany({ data: stoneRows })]
-        : []),
-    ]);
+    await this.guardCancelRace(() =>
+      this.prisma.$transaction([
+        this.prisma.quoteOption.deleteMany({ where: { quoteRequestId: id } }),
+        this.prisma.quoteRequest.update({
+          where: this.activeQuote(id),
+          data: {
+            version: { increment: 1 },
+            ...(inspectionFee != null ? { inspectionFee } : {}),
+          },
+        }),
+        this.prisma.quoteOption.createMany({
+          data: optionWrites.map((w) => w.row),
+        }),
+        ...(materialRows.length > 0
+          ? [this.prisma.quoteOptionMaterial.createMany({ data: materialRows })]
+          : []),
+        ...(stoneRows.length > 0
+          ? [this.prisma.quoteOptionStone.createMany({ data: stoneRows })]
+          : []),
+      ]),
+    );
 
     const updated = await this.prisma.quoteRequest.findUniqueOrThrow({
       where: { id },
@@ -586,16 +618,18 @@ export class QuoteWorkflowService {
    * Yêu cầu phải có lý do từ chối. Trạng thái chuyển sang REJECTED.
    */
   private async rejectQuote(id: string, userId: string, rejectReason: string) {
-    const updated = await this.prisma.quoteRequest.update({
-      where: { id },
-      data: {
-        rejectReason,
-        assigneeId: userId,
-        status: QuoteStatus.REJECTED,
-        version: { increment: 1 },
-      },
-      include: REQUEST_DETAIL_INCLUDE,
-    });
+    const updated = await this.guardCancelRace(() =>
+      this.prisma.quoteRequest.update({
+        where: this.activeQuote(id),
+        data: {
+          rejectReason,
+          assigneeId: userId,
+          status: QuoteStatus.REJECTED,
+          version: { increment: 1 },
+        },
+        include: REQUEST_DETAIL_INCLUDE,
+      }),
+    );
 
     const mapped = mapQuoteRequestDetail(updated);
     this.notifySaleQuoteRejected(mapped, rejectReason);
@@ -607,17 +641,19 @@ export class QuoteWorkflowService {
    * Trạng thái chuyển sang NEED_MORE_INFO kèm theo lý do cần bổ sung.
    */
   private async returnQuote(id: string, userId: string, returnReason: string) {
-    const updated = await this.prisma.quoteRequest.update({
-      where: { id },
-      data: {
-        returnReason,
-        assigneeId: userId,
-        status: QuoteStatus.NEED_MORE_INFO,
-        returnedAt: new Date(),
-        version: { increment: 1 },
-      },
-      include: REQUEST_DETAIL_INCLUDE,
-    });
+    const updated = await this.guardCancelRace(() =>
+      this.prisma.quoteRequest.update({
+        where: this.activeQuote(id),
+        data: {
+          returnReason,
+          assigneeId: userId,
+          status: QuoteStatus.NEED_MORE_INFO,
+          returnedAt: new Date(),
+          version: { increment: 1 },
+        },
+        include: REQUEST_DETAIL_INCLUDE,
+      }),
+    );
 
     const mapped = mapQuoteRequestDetail(updated);
     this.notifySaleNeedMoreInfo(mapped, returnReason);
@@ -709,15 +745,17 @@ export class QuoteWorkflowService {
         'Chỉ có thể gửi lại yêu cầu khi đang ở trạng thái Cần bổ sung thông tin',
       );
     }
-    const updated = await this.prisma.quoteRequest.update({
-      where: { id },
-      data: {
-        status: QuoteStatus.PENDING,
-        assigneeId: null,
-        version: { increment: 1 },
-      },
-      include: REQUEST_DETAIL_INCLUDE,
-    });
+    const updated = await this.guardCancelRace(() =>
+      this.prisma.quoteRequest.update({
+        where: this.activeQuote(id),
+        data: {
+          status: QuoteStatus.PENDING,
+          assigneeId: null,
+          version: { increment: 1 },
+        },
+        include: REQUEST_DETAIL_INCLUDE,
+      }),
+    );
     const mapped = mapQuoteRequestDetail(updated);
     // Sale gọi được action này — không được thấy cấu thành giá vốn trong response trả về.
     if (role === Role.SALE) {
@@ -903,28 +941,30 @@ export class QuoteWorkflowService {
         const quickQuoteKeyMaps = dto.options?.length
           ? await this.quoteOptionsService.buildOptionLookupMaps(dto.options)
           : undefined;
-        const updated = await this.prisma.quoteRequest.update({
-          where: { id },
-          data: {
-            status: QuoteStatus.PROCESSING,
-            options:
-              dto.options && dto.options.length > 0
-                ? {
-                    deleteMany: {},
-                    create: dto.options.map((opt, idx) =>
-                      buildOptionCreateInput(
-                        opt,
-                        idx,
-                        existing?.categoryId,
-                        undefined,
-                        quickQuoteKeyMaps,
+        const updated = await this.guardCancelRace(() =>
+          this.prisma.quoteRequest.update({
+            where: this.activeQuote(id),
+            data: {
+              status: QuoteStatus.PROCESSING,
+              options:
+                dto.options && dto.options.length > 0
+                  ? {
+                      deleteMany: {},
+                      create: dto.options.map((opt, idx) =>
+                        buildOptionCreateInput(
+                          opt,
+                          idx,
+                          existing?.categoryId,
+                          undefined,
+                          quickQuoteKeyMaps,
+                        ),
                       ),
-                    ),
-                  }
-                : undefined,
-          },
-          include: REQUEST_DETAIL_INCLUDE,
-        });
+                    }
+                  : undefined,
+            },
+            include: REQUEST_DETAIL_INCLUDE,
+          }),
+        );
         return mapQuoteRequestDetail(updated);
       }
 
@@ -962,29 +1002,31 @@ export class QuoteWorkflowService {
         const quickApproveKeyMaps = dto.options?.length
           ? await this.quoteOptionsService.buildOptionLookupMaps(dto.options)
           : undefined;
-        const approved = await this.prisma.quoteRequest.update({
-          where: { id },
-          data: {
-            status: QuoteStatus.QUOTED,
-            assigneeId: userId,
-            options:
-              dto.options && dto.options.length > 0
-                ? {
-                    deleteMany: {},
-                    create: dto.options.map((opt, idx) =>
-                      buildOptionCreateInput(
-                        opt,
-                        idx,
-                        existingReq.categoryId,
-                        undefined,
-                        quickApproveKeyMaps,
+        const approved = await this.guardCancelRace(() =>
+          this.prisma.quoteRequest.update({
+            where: this.activeQuote(id),
+            data: {
+              status: QuoteStatus.QUOTED,
+              assigneeId: userId,
+              options:
+                dto.options && dto.options.length > 0
+                  ? {
+                      deleteMany: {},
+                      create: dto.options.map((opt, idx) =>
+                        buildOptionCreateInput(
+                          opt,
+                          idx,
+                          existingReq.categoryId,
+                          undefined,
+                          quickApproveKeyMaps,
+                        ),
                       ),
-                    ),
-                  }
-                : undefined,
-          },
-          include: REQUEST_DETAIL_INCLUDE,
-        });
+                    }
+                  : undefined,
+            },
+            include: REQUEST_DETAIL_INCLUDE,
+          }),
+        );
         const mapped = mapQuoteRequestDetail(approved);
         this.notifySaleQuoteCompleted(approved, AuditAction.QUICK_APPROVE);
         return mapped;

@@ -418,3 +418,148 @@ describe('QuoteWorkflowService — hủy / khôi phục yêu cầu', () => {
 
 const svc_deleteOption = (svc: QuoteWorkflowService, role: Role) =>
   svc.deleteOption('q1', 'o1', 'order1', role);
+
+// ---------------------------------------------------------------------------------------------
+// Race: ADMIN hủy đơn NGAY SAU khi một thao tác khác đã qua guard nhưng CHƯA ghi. Thao tác kia không
+// được ghi đè đơn đã hủy (nếu không đơn "sống lại" với trạng thái cũ + dấu vết hủy còn sót).
+// ---------------------------------------------------------------------------------------------
+import { Prisma } from '@prisma/client';
+
+describe('QuoteWorkflowService — thao tác khác không ghi đè đơn vừa bị hủy (race)', () => {
+  const p2025 = () =>
+    new Prisma.PrismaClientKnownRequestError('Record to update not found', {
+      code: 'P2025',
+      clientVersion: 'test',
+    });
+
+  const PROCESSING = {
+    status: QuoteStatus.PROCESSING,
+    assigneeId: 'order1',
+    version: 1,
+    categoryId: 'c1',
+    cancelledFromStatus: null,
+    requesterId: 'sale1',
+    _count: { options: 1 },
+  };
+
+  // [action, userId, role, hàng trả về cho mọi findUnique, dto, ghi qua $transaction?]
+  const WRITES: [string, string, Role, any, any, boolean][] = [
+    [QuoteAction.REJECT, 'order1', Role.ORDER, PROCESSING, { rejectReason: 'x' }, false],
+    [QuoteAction.QUICK_REJECT, 'order1', Role.ORDER, PROCESSING, {}, false],
+    [QuoteAction.RETURN, 'order1', Role.ORDER, PROCESSING, { returnReason: 'x' }, false],
+    [
+      QuoteAction.RESUBMIT,
+      'sale1',
+      Role.SALE,
+      { ...PROCESSING, status: QuoteStatus.NEED_MORE_INFO },
+      {},
+      false,
+    ],
+    [QuoteAction.QUICK_QUOTE, 'order1', Role.ORDER, PROCESSING, {}, false],
+    [QuoteAction.QUICK_APPROVE, 'order1', Role.ORDER, PROCESSING, {}, false],
+    [
+      QuoteAction.QUOTE,
+      'order1',
+      Role.ORDER,
+      PROCESSING,
+      { options: [{ optionName: 'PA', quotedPrice: 1000 }] },
+      true,
+    ],
+    [
+      QuoteAction.EDIT_PRICE,
+      'admin1',
+      Role.ADMIN,
+      { ...PROCESSING, status: QuoteStatus.QUOTED },
+      { options: [{ optionName: 'PA', quotedPrice: 1000 }] },
+      true,
+    ],
+  ];
+
+  function make(row: any) {
+    const prisma: any = {
+      quoteRequest: {
+        findUnique: jest.fn().mockResolvedValue(row),
+        findUniqueOrThrow: jest.fn().mockResolvedValue({ id: 'q1', options: [] }),
+        update: jest.fn().mockResolvedValue({ id: 'q1', options: [] }),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      quoteOption: {
+        deleteMany: jest.fn(),
+        createMany: jest.fn(),
+        updateMany: jest.fn(),
+        update: jest.fn(),
+        delete: jest.fn(),
+      },
+      quoteOptionMaterial: { createMany: jest.fn() },
+      quoteOptionStone: { createMany: jest.fn() },
+      $transaction: jest.fn().mockResolvedValue([]),
+    };
+    const queryService = {
+      findOne: jest.fn().mockResolvedValue({ id: 'q1' }),
+      stripCostFieldsForSale: (options: any) => options,
+    };
+    const anything = new Proxy({}, { get: () => jest.fn() });
+    const optionsService = {
+      buildOptionLookupMaps: jest.fn().mockResolvedValue({
+        stonePriceMap: new Map(),
+        materialBaseMetal: new Map(),
+        stoneMeta: new Map(),
+      }),
+    };
+    const svc = new QuoteWorkflowService(
+      prisma,
+      queryService as any,
+      anything as any,
+      { logAction: jest.fn() } as any,
+      anything as any,
+      optionsService as any,
+    );
+    return { svc, prisma };
+  }
+
+  it.each(WRITES)(
+    '%s: lần ghi lên đơn mang điều kiện status ≠ CANCELLED',
+    async (action, userId, role, row, dto) => {
+      const { svc, prisma } = make(row);
+
+      await svc.updateStatus('q1', userId, role, { action, ...dto } as any);
+
+      const calls = prisma.quoteRequest.update.mock.calls;
+      expect(calls.length).toBeGreaterThanOrEqual(1);
+      for (const [args] of calls) {
+        expect(args.where).toEqual({
+          id: 'q1',
+          status: { not: QuoteStatus.CANCELLED },
+        });
+      }
+    },
+  );
+
+  it.each(WRITES)(
+    '%s: đơn vừa bị hủy giữa lúc đọc và lúc ghi (P2025) → 409, không ghi đè',
+    async (action, userId, role, row, dto, viaTx) => {
+      const { svc, prisma } = make(row);
+      if (viaTx) prisma.$transaction.mockRejectedValue(p2025());
+      else prisma.quoteRequest.update.mockRejectedValue(p2025());
+
+      const err: any = await svc
+        .updateStatus('q1', userId, role, { action, ...dto } as any)
+        .catch((e) => e);
+
+      expect(err).toBeInstanceOf(ConflictException);
+      expect(err.message).toContain('vừa bị hủy');
+    },
+  );
+
+  it('lỗi khác P2025 vẫn nổi lên nguyên vẹn (không bị nuốt thành 409)', async () => {
+    const { svc, prisma } = make(PROCESSING);
+    prisma.quoteRequest.update.mockRejectedValue(new Error('db down'));
+
+    await expect(
+      svc.updateStatus('q1', 'order1', Role.ORDER, {
+        action: QuoteAction.REJECT,
+        rejectReason: 'x',
+      } as any),
+    ).rejects.toThrow('db down');
+  });
+});
