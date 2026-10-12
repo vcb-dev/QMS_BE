@@ -356,3 +356,16 @@ describe('Export Excel — cột "Người được giao"', () => {
     });
   });
 });
+
+describe('QuoteRequestsService.pickAssignedOrderId — bỏ qua đơn đã hủy', () => {
+  it('cả 2 truy vấn (số đơn trong ngày, lần giao gần nhất) loại đơn CANCELLED', async () => {
+    const tx = makeTx({ orders: ['a', 'b'] });
+    await (makeSvc() as any).pickAssignedOrderId(tx);
+
+    const calls = tx.quoteRequest.groupBy.mock.calls.map(([args]: any[]) => args);
+    expect(calls).toHaveLength(2);
+    for (const args of calls) {
+      expect(args.where.status).toEqual({ not: 'CANCELLED' });
+    }
+  });
+});

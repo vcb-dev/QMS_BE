@@ -147,3 +147,98 @@ describe('QuoteRequestsService.remove', () => {
     expect(prisma.quoteRequest.delete).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('QuoteRequestsService — đơn đã hủy', () => {
+  let svc: any;
+  let prisma: any;
+  let realtimeGateway: any;
+  let workflowService: any;
+
+  beforeEach(() => {
+    prisma = {
+      quoteRequest: {
+        findUnique: jest.fn(),
+        update: jest.fn(),
+        delete: jest.fn(),
+      },
+    };
+    realtimeGateway = { broadcastStatusChanged: jest.fn() };
+    workflowService = { updateStatus: jest.fn() };
+    svc = new QuoteRequestsService(
+      prisma,
+      {} as any,
+      {} as any,
+      workflowService,
+      { logActionByUserId: jest.fn() } as any,
+      {} as any,
+      realtimeGateway,
+      {} as any,
+    );
+  });
+
+  describe('remove (xóa cứng)', () => {
+    it('SALE (kể cả người tạo hay người khác) → 404 y hệt đơn không tồn tại, không xóa', async () => {
+      for (const requesterId of ['sale1', 'sale2']) {
+        prisma.quoteRequest.findUnique.mockResolvedValue({
+          requesterId,
+          status: 'CANCELLED',
+        });
+        await expect(svc.remove('req1', 'sale1', 'SALE')).rejects.toThrow(
+          'Không tìm thấy yêu cầu báo giá',
+        );
+      }
+      expect(prisma.quoteRequest.delete).not.toHaveBeenCalled();
+    });
+
+    it('ADMIN → 409 "hồ sơ lịch sử" (hủy là để giữ hồ sơ, như REJECTED), không xóa', async () => {
+      prisma.quoteRequest.findUnique.mockResolvedValue({
+        requesterId: 'sale1',
+        status: 'CANCELLED',
+      });
+      await expect(svc.remove('req1', 'admin1', 'ADMIN')).rejects.toThrow(
+        'hồ sơ lịch sử',
+      );
+      expect(prisma.quoteRequest.delete).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('update (sửa yêu cầu)', () => {
+    const cancelled = (requesterId = 'sale1') => ({
+      requesterId,
+      status: 'CANCELLED',
+      requester: {},
+    });
+
+    it('SALE (chủ đơn hoặc không) → 400 "không tồn tại" y hệt đơn không có thật, không ghi', async () => {
+      for (const requesterId of ['sale1', 'sale2']) {
+        prisma.quoteRequest.findUnique.mockResolvedValue(cancelled(requesterId));
+        await expect(
+          svc.update('req1', 'sale1', 'SALE', {} as any),
+        ).rejects.toThrow('Yêu cầu báo giá không tồn tại');
+      }
+      expect(prisma.quoteRequest.update).not.toHaveBeenCalled();
+    });
+
+    it('ADMIN → 400 "đã bị hủy", không ghi', async () => {
+      prisma.quoteRequest.findUnique.mockResolvedValue(cancelled());
+      await expect(
+        svc.update('req1', 'admin1', 'ADMIN', {} as any),
+      ).rejects.toThrow('đã bị hủy');
+      expect(prisma.quoteRequest.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('updateStatus', () => {
+    it('kết quả CANCELLED được chuyển nguyên cho gateway — gateway là nơi tách người nhận theo role', async () => {
+      workflowService.updateStatus.mockResolvedValue({
+        id: 'q1',
+        status: 'CANCELLED',
+      });
+      await svc.updateStatus('q1', 'admin1', 'ADMIN', { action: 'CANCEL' });
+      expect(realtimeGateway.broadcastStatusChanged).toHaveBeenCalledWith(
+        'q1',
+        'CANCELLED',
+      );
+    });
+  });
+});
