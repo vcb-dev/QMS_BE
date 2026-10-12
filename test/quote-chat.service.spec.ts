@@ -222,11 +222,121 @@ describe('QuoteChatService', () => {
 
       const result = await service.getUnreadCounts('order-khac-1', ['req-1']);
 
+      // Không lọc theo requester/assignee (group chat) — nhưng ORDER không bao giờ thấy đơn đã hủy.
+      expect(prisma.quoteRequest.findMany).toHaveBeenCalledWith({
+        where: { id: { in: ['req-1'] }, status: { not: 'CANCELLED' } },
+        select: { id: true },
+      });
+      expect(result).toEqual({ 'req-1': 1 });
+    });
+
+    it('ADMIN: không lọc gì thêm (thấy cả đơn đã hủy trong tab "Đã hủy")', async () => {
+      prisma.user.findUnique.mockResolvedValueOnce({ role: 'ADMIN' });
+      prisma.quoteRequest.findMany.mockResolvedValue([{ id: 'req-1' }]);
+      prisma.quoteChatRead.findMany.mockResolvedValue([]);
+      prisma.quoteChatMessage.findMany.mockResolvedValue([]);
+
+      await service.getUnreadCounts('admin-1', ['req-1']);
+
       expect(prisma.quoteRequest.findMany).toHaveBeenCalledWith({
         where: { id: { in: ['req-1'] } },
         select: { id: true },
       });
-      expect(result).toEqual({ 'req-1': 1 });
+    });
+
+    it('SALE: lọc theo requester/assignee VÀ loại đơn đã hủy', async () => {
+      prisma.user.findUnique.mockResolvedValueOnce({ role: 'SALE' });
+      prisma.quoteRequest.findMany.mockResolvedValue([]);
+
+      await service.getUnreadCounts('sale-1', ['req-1']);
+
+      expect(prisma.quoteRequest.findMany).toHaveBeenCalledWith({
+        where: {
+          id: { in: ['req-1'] },
+          OR: [{ requesterId: 'sale-1' }, { assigneeId: 'sale-1' }],
+          status: { not: 'CANCELLED' },
+        },
+        select: { id: true },
+      });
+    });
+  });
+
+  describe('đơn đã hủy', () => {
+    const CANCELLED = {
+      requesterId: 'sale-1',
+      assigneeId: 'order-1',
+      status: 'CANCELLED',
+    };
+    const FORBIDDEN_MSG = 'Bạn không có quyền xem cuộc trò chuyện này';
+
+    beforeEach(() => {
+      prisma.quoteRequest.findUnique.mockResolvedValue(CANCELLED);
+      prisma.quoteChatRead.findUnique.mockResolvedValue(null);
+      prisma.quoteChatMessage.findMany.mockResolvedValue([]);
+      prisma.quoteChatMessage.count.mockResolvedValue(0);
+    });
+
+    it.each([
+      ['SALE là người tạo đơn', 'sale-1', 'SALE'],
+      ['ORDER là người tiếp nhận', 'order-1', 'ORDER'],
+      ['ORDER khác (group chat)', 'order-khac-1', 'ORDER'],
+      ['SALE khác', 'sale-khac-1', 'SALE'],
+    ])(
+      'assertParticipant: %s → bị chặn với đúng thông điệp của đơn không tồn tại',
+      async (_label, userId, role) => {
+        prisma.user.findUnique.mockResolvedValueOnce({ role });
+        await expect(
+          service.assertParticipant('req-1', userId),
+        ).rejects.toThrow(new ForbiddenException(FORBIDDEN_MSG));
+      },
+    );
+
+    it('assertParticipant: ADMIN vẫn vào được và biết đơn đã hủy', async () => {
+      prisma.user.findUnique.mockResolvedValueOnce({ role: 'ADMIN' });
+      await expect(
+        service.assertParticipant('req-1', 'admin-1'),
+      ).resolves.toEqual({
+        requesterId: 'sale-1',
+        assigneeId: 'order-1',
+        status: 'CANCELLED',
+      });
+    });
+
+    it('getMessages: ADMIN đọc được, SALE là người tạo thì không', async () => {
+      prisma.user.findUnique.mockResolvedValueOnce({ role: 'ADMIN' });
+      await expect(service.getMessages('req-1', 'admin-1')).resolves.toEqual({
+        messages: [],
+        unreadCount: 0,
+      });
+
+      prisma.user.findUnique.mockResolvedValueOnce({ role: 'SALE' });
+      await expect(service.getMessages('req-1', 'sale-1')).rejects.toThrow(
+        ForbiddenException,
+      );
+    });
+
+    it('markRead: SALE bị chặn, không ghi lastReadAt', async () => {
+      prisma.user.findUnique.mockResolvedValueOnce({ role: 'SALE' });
+      await expect(service.markRead('req-1', 'sale-1')).rejects.toThrow(
+        ForbiddenException,
+      );
+      expect(prisma.quoteChatRead.upsert).not.toHaveBeenCalled();
+    });
+
+    it('saveMessage: ngay cả ADMIN cũng không gửi thêm được vào đơn đã hủy', async () => {
+      prisma.user.findUnique.mockResolvedValueOnce({ role: 'ADMIN' });
+      await expect(
+        service.saveMessage('req-1', 'admin-1', 'xin chào'),
+      ).rejects.toThrow('đã bị hủy');
+      expect(prisma.quoteChatMessage.create).not.toHaveBeenCalled();
+    });
+
+    it('saveMessage: SALE bị chặn như đơn không tồn tại (Forbidden), không phải "đã bị hủy"', async () => {
+      prisma.user.findUnique.mockResolvedValueOnce({ role: 'SALE' });
+      await expect(
+        service.saveMessage('req-1', 'sale-1', 'xin chào'),
+      ).rejects.toThrow(new ForbiddenException(FORBIDDEN_MSG));
+      expect(prisma.quoteChatMessage.create).not.toHaveBeenCalled();
     });
   });
 

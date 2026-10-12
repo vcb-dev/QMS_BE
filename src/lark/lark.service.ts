@@ -35,6 +35,7 @@ import {
   NOTIFIABLE_ACTION_LIST,
   type NotifiableActionInfo,
 } from '../common/audit-actions';
+import { NOT_CANCELLED_WHERE } from '../utils/quote-visibility.util';
 
 const LARK_WEBHOOK_HOSTS = ['open.larksuite.com', 'open.feishu.cn'];
 
@@ -1116,7 +1117,11 @@ export class LarkService implements OnModuleInit {
       // parent_id. Khi đó coi như trả lời cho DM gần nhất bot gửi cho người này.
       const read = rootId
         ? await this.prisma.quoteChatRead.findFirst({
-            where: { larkAnchorMsgId: rootId },
+            // Đơn đã hủy không nhận thêm tin của ai: bỏ qua khi tra đơn nhận reply từ Lark.
+            where: {
+              larkAnchorMsgId: rootId,
+              quoteRequest: NOT_CANCELLED_WHERE,
+            },
             select: {
               quoteRequestId: true,
               userId: true,
@@ -1128,6 +1133,7 @@ export class LarkService implements OnModuleInit {
               where: {
                 larkAnchorMsgId: { not: null },
                 user: { larkOpenId: senderOpenId },
+                quoteRequest: NOT_CANCELLED_WHERE,
               },
               orderBy: { larkLastDmAt: { sort: 'desc', nulls: 'last' } },
               select: {
