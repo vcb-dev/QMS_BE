@@ -181,7 +181,7 @@ export class QuoteQueryService {
 
   // Cắt field cấu thành giá vốn khỏi từng option — Sale chỉ được xem quotedPrice (giá bán), không
   // được thấy laborCost/stoneCost/totalMetalCost/metalRawCost/stonePrice. Public vì
-  // QuoteWorkflowService (accept/markClosed/selectOption/resubmit...) cũng trả trực tiếp
+  // QuoteWorkflowService (accept/selectOption/resubmit...) cũng trả trực tiếp
   // mapQuoteRequestDetail() cho các action Sale được phép gọi, cần lọc lại y hệt ở đây.
   stripCostFieldsForSale(options: any[] | undefined) {
     if (!options) return options;

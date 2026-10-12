@@ -135,9 +135,15 @@ describe('QuoteRequestsService.remove', () => {
     expect(prisma.quoteRequest.delete).toHaveBeenCalledTimes(1);
   });
 
-  it('SALE (là người tạo) xóa đơn status: CLOSED -> reject ConflictException, delete không được gọi', async () => {
-    prisma.quoteRequest.findUnique.mockResolvedValue({ requesterId: 'sale1', status: 'CLOSED' });
-    await expect(svc.remove('req1', 'sale1', 'SALE')).rejects.toThrow('Yêu cầu đã chốt hoặc đã bị từ chối');
+  it('SALE (là người tạo) xóa đơn status: REJECTED -> reject ConflictException, delete không được gọi', async () => {
+    prisma.quoteRequest.findUnique.mockResolvedValue({ requesterId: 'sale1', status: 'REJECTED' });
+    await expect(svc.remove('req1', 'sale1', 'SALE')).rejects.toThrow('Yêu cầu đã bị từ chối — không thể hủy, đây là hồ sơ lịch sử');
     expect(prisma.quoteRequest.delete).not.toHaveBeenCalled();
+  });
+
+  it('ADMIN xóa đơn status: QUOTED -> resolve (đơn đã báo giá không còn bị khóa thành hồ sơ lịch sử)', async () => {
+    prisma.quoteRequest.findUnique.mockResolvedValue({ requesterId: 'sale1', status: 'QUOTED' });
+    await svc.remove('req1', 'admin1', 'ADMIN');
+    expect(prisma.quoteRequest.delete).toHaveBeenCalledTimes(1);
   });
 });

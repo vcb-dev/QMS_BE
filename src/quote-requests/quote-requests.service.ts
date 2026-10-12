@@ -428,17 +428,14 @@ export class QuoteRequestsService {
         'Bạn không có quyền chỉnh sửa yêu cầu báo giá này',
       );
     }
-    if (
-      existing.status === QuoteStatus.CLOSED ||
-      existing.status === QuoteStatus.REJECTED
-    ) {
+    if (existing.status === QuoteStatus.REJECTED) {
       throw new BadRequestException(
-        'Yêu cầu báo giá đã đóng hoặc bị từ chối, không thể chỉnh sửa',
+        'Yêu cầu báo giá đã bị từ chối, không thể chỉnh sửa',
       );
     }
     // SALE chỉ sửa được spec khi đơn CHƯA vào tay Order — PENDING (chưa ai tiếp nhận) hoặc
     // NEED_MORE_INFO (bị trả lại bổ sung). Từ PROCESSING trở đi Order đang/đã tính giá theo spec
-    // này, sửa spec sau lưng là sai luồng. ADMIN vẫn sửa được mọi trạng thái (trừ CLOSED/REJECTED).
+    // này, sửa spec sau lưng là sai luồng. ADMIN vẫn sửa được mọi trạng thái (trừ REJECTED).
     if (
       role === Role.SALE &&
       existing.status !== QuoteStatus.PENDING &&
@@ -527,13 +524,10 @@ export class QuoteRequestsService {
       );
     }
 
-    // Đơn đã chốt / đã từ chối là hồ sơ lịch sử — không xóa cứng, kể cả với người tạo.
-    if (
-      existing.status === QuoteStatus.CLOSED ||
-      existing.status === QuoteStatus.REJECTED
-    ) {
+    // Đơn đã từ chối là hồ sơ lịch sử — không xóa cứng, kể cả với người tạo.
+    if (existing.status === QuoteStatus.REJECTED) {
       throw new ConflictException(
-        'Yêu cầu đã chốt hoặc đã bị từ chối — không thể hủy, đây là hồ sơ lịch sử',
+        'Yêu cầu đã bị từ chối — không thể hủy, đây là hồ sơ lịch sử',
       );
     }
 
