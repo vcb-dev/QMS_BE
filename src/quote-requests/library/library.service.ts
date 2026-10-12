@@ -1,4 +1,4 @@
-// Thư Viện Sản Phẩm (Quản Lý Sản Phẩm) — mỗi yêu cầu báo giá đã QUOTED/CLOSED là 1 sản phẩm (1 thẻ),
+// Thư Viện Sản Phẩm (Quản Lý Sản Phẩm) — mỗi yêu cầu báo giá đã QUOTED là 1 sản phẩm (1 thẻ),
 // KHÔNG gộp các yêu cầu giống nhau lại. Chi tiết thẻ là "Lịch sử báo giá": các phương án đã báo giá
 // của chính yêu cầu đó, mỗi phương án có giá lúc báo giá + giá tính lại hôm nay. Không cache RAM —
 // query thẳng DB mỗi lần. Payload thẻ chỉ có giá bán (không có giá vốn/lãi), nên Sale và Order nhận
@@ -32,7 +32,7 @@ export class LibraryService {
   private buildLibraryFilters(dto: LibraryProductsQueryDto): Prisma.Sql[] {
     const filters: Prisma.Sql[] = [
       Prisma.sql`qo.quoted_price IS NOT NULL`,
-      Prisma.sql`qr.status IN ('QUOTED', 'CLOSED')`,
+      Prisma.sql`qr.status = 'QUOTED'`,
     ];
     if (dto.categoryId && dto.categoryId !== 'ALL') {
       filters.push(Prisma.sql`qr.category_id = ${dto.categoryId}`);
@@ -84,7 +84,7 @@ export class LibraryService {
   }
 
   /**
-   * Danh sách sản phẩm đã báo giá (Thư viện/Quản lý sản phẩm). 1 yêu cầu QUOTED/CLOSED = 1 thẻ.
+   * Danh sách sản phẩm đã báo giá (Thư viện/Quản lý sản phẩm). 1 yêu cầu QUOTED = 1 thẻ.
    *
    * SQL chỉ sắp xếp + phân trang theo yêu cầu (GROUP BY qr.id); sau đó hydrate + tính giá sống cho
    * các phương án đã báo giá của ĐÚNG các yêu cầu trong trang này. Sort PRICE_ASC/DESC theo giá ĐÃ

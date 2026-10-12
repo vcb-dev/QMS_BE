@@ -1,4 +1,8 @@
+import 'reflect-metadata';
 import { Prisma } from '@prisma/client';
+import { plainToInstance } from 'class-transformer';
+import { validateSync } from 'class-validator';
+import { FilterQuoteRequestDto } from '../src/quote-requests/dto/filter-quote-request.dto';
 import { QuoteRequestsService } from '../src/quote-requests/quote-requests.service';
 import { QuoteQueryService } from '../src/quote-requests/quote/quote-query.service';
 import { REQUEST_DETAIL_INCLUDE } from '../src/utils/option-mapper.util';
@@ -284,6 +288,48 @@ describe('buildQuoteWhereClause — lọc theo người được giao', () => {
     const hasIt = (where.AND ?? []).some((c: any) => 'assignedOrderId' in c);
     expect(hasIt).toBe(false);
   });
+});
+
+describe('buildQuoteWhereClause — lọc theo trạng thái', () => {
+  const admin = { id: 'admin1', role: 'ADMIN' } as any;
+
+  it('status hợp lệ → thêm điều kiện status', () => {
+    const where: any = buildQuoteWhereClause(
+      { status: 'QUOTED' } as any,
+      admin,
+    );
+    expect(where.AND).toContainEqual({ status: 'QUOTED' });
+  });
+
+  it('status=CLOSED (đã gỡ) → bị bỏ qua, không sinh điều kiện status', () => {
+    const where: any = buildQuoteWhereClause(
+      { status: 'CLOSED' } as any,
+      admin,
+    );
+    expect(where.AND).not.toContainEqual({ status: 'CLOSED' });
+  });
+});
+
+describe('FilterQuoteRequestDto — status', () => {
+  const statusErrors = (status: string) =>
+    validateSync(plainToInstance(FilterQuoteRequestDto, { status })).filter(
+      (e) => e.property === 'status',
+    );
+
+  it('từ chối status=CLOSED với thông báo "Trạng thái không hợp lệ"', () => {
+    const errors = statusErrors('CLOSED');
+    expect(errors).toHaveLength(1);
+    expect(Object.values(errors[0].constraints ?? {})).toContain(
+      'Trạng thái không hợp lệ',
+    );
+  });
+
+  it.each(['PENDING', 'PROCESSING', 'QUOTED', 'REJECTED', 'NEED_MORE_INFO'])(
+    'chấp nhận status=%s',
+    (status) => {
+      expect(statusErrors(status)).toHaveLength(0);
+    },
+  );
 });
 
 describe('Export Excel — cột "Người được giao"', () => {

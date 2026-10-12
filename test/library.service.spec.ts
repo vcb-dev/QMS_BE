@@ -218,6 +218,16 @@ describe('LibraryService.getLibraryProducts — mỗi yêu cầu là 1 sản ph�
     expect(query.values).toContain('%ab-01%');
   });
 
+  it('chỉ lấy đơn QUOTED — SQL không còn nhắc trạng thái CLOSED đã gỡ', async () => {
+    prisma.$queryRaw.mockResolvedValueOnce([]);
+
+    await service.getLibraryProducts({});
+
+    const sql: string = prisma.$queryRaw.mock.calls[0][0].sql;
+    expect(sql).toContain("qr.status = 'QUOTED'");
+    expect(sql).not.toContain('CLOSED');
+  });
+
   it('giá hôm nay: min/max giá sống các phương án, delta % từng phương án; null khi không tính được', async () => {
     setup(
       [

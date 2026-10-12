@@ -1,10 +1,11 @@
 import { Type } from 'class-transformer';
-import { IsEnum, IsInt, IsOptional, IsString, Min, MaxLength } from 'class-validator';
+import { IsIn, IsInt, IsOptional, IsString, Min, MaxLength } from 'class-validator';
 import { QuoteStatus } from '@prisma/client';
+import { FILTERABLE_QUOTE_STATUSES } from '../../common/constants';
 
 export class FilterQuoteRequestDto {
   @IsOptional()
-  @IsEnum(QuoteStatus, { message: 'Trạng thái không hợp lệ' })
+  @IsIn(FILTERABLE_QUOTE_STATUSES, { message: 'Trạng thái không hợp lệ' })
   status?: QuoteStatus;
 
   @IsOptional()

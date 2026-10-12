@@ -4,7 +4,7 @@
 
 import { FilterQuoteRequestDto } from '../quote-requests/dto/filter-quote-request.dto';
 import { QuoteStatus, User, Role } from '@prisma/client';
-import { APP_CONSTANTS } from '../common/constants';
+import { APP_CONSTANTS, FILTERABLE_QUOTE_STATUSES } from '../common/constants';
 import { resolveDateRange } from './date-range.util';
 import { buildTeamIdCondition } from './team-filter.util';
 
@@ -45,7 +45,7 @@ export function buildQuoteWhereClause(
     }
   }
 
-  if (status && Object.values(QuoteStatus).includes(status)) {
+  if (status && FILTERABLE_QUOTE_STATUSES.includes(status)) {
     andConditions.push({ status: status });
   }
 
@@ -93,7 +93,7 @@ export function buildQuoteWhereClause(
 
   // Ẩn đơn PENDING/PROCESSING mà người tạo (Sale) hoặc người xử lý (Order) đã bị khóa tài khoản
   // (isActive=false) — không ai nên tiếp tục làm việc trên đơn của nhân viên không còn hoạt động.
-  // Đơn đã có kết quả (QUOTED/CLOSED) không bị ảnh hưởng, vẫn là hồ sơ lịch sử bình thường.
+  // Đơn đã có kết quả (QUOTED) không bị ảnh hưởng, vẫn là hồ sơ lịch sử bình thường.
   // Chỉ ADMIN bật includeLocked=true mới thấy lại được — role khác gửi cờ này bị bỏ qua.
   if (!(includeLocked === 'true' && _user?.role === Role.ADMIN)) {
     andConditions.push({
