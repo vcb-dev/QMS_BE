@@ -633,6 +633,7 @@ describe('QuoteAnalyticsService.getStats', () => {
       needMoreInfo: 0,
       quoted: 2,
       rejected: 0,
+      cancelled: 0,
     });
   });
 

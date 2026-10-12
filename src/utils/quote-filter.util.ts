@@ -7,10 +7,35 @@ import { QuoteStatus, User, Role } from '@prisma/client';
 import { APP_CONSTANTS, FILTERABLE_QUOTE_STATUSES } from '../common/constants';
 import { resolveDateRange } from './date-range.util';
 import { buildTeamIdCondition } from './team-filter.util';
+import {
+  NOT_CANCELLED_WHERE,
+  canSeeCancelledQuotes,
+} from './quote-visibility.util';
+
+// Cùng một bộ lọc nhưng đơn hủy được đối xử khác nhau tùy mục đích:
+//  - 'totals' (MẶC ĐỊNH, an toàn nhất): thống kê/dashboard — loại đơn hủy cho MỌI role, kể cả ADMIN
+//    và kể cả khi filter gửi status=CANCELLED.
+//  - 'list': danh sách/export — non-admin luôn bị loại; ADMIN chỉ thấy đơn hủy khi chọn đúng
+//    status=CANCELLED (tab "Đã hủy"), còn lại cũng bị loại.
+//  - 'tabCounts': đếm theo tab — ADMIN không bị loại để groupBy trả cả nhóm CANCELLED (đếm riêng).
+export type QuoteWhereScope = 'totals' | 'list' | 'tabCounts';
+
+function cancelledVisibilityCondition(
+  scope: QuoteWhereScope,
+  user: User,
+  status: QuoteStatus | undefined,
+) {
+  if (!canSeeCancelledQuotes(user?.role) || scope === 'totals') {
+    return NOT_CANCELLED_WHERE;
+  }
+  if (scope === 'tabCounts') return null;
+  return status === QuoteStatus.CANCELLED ? null : NOT_CANCELLED_WHERE;
+}
 
 export function buildQuoteWhereClause(
   filterDto: FilterQuoteRequestDto,
   _user: User,
+  scope: QuoteWhereScope = 'totals',
 ) {
   const {
     status,
@@ -31,6 +56,11 @@ export function buildQuoteWhereClause(
   } = filterDto;
 
   const andConditions: any[] = [];
+
+  // Điều kiện hiển thị đơn hủy nằm ở phần tử AND RIÊNG (không trộn vào status của người dùng) nên dù
+  // người dùng chọn status/gõ từ khóa thế nào cũng chỉ THU HẸP kết quả, không thể nới ra.
+  const cancelledCondition = cancelledVisibilityCondition(scope, _user, status);
+  if (cancelledCondition) andConditions.push(cancelledCondition);
 
   if (customerId) {
     andConditions.push({ customerId });

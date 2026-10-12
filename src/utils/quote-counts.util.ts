@@ -4,7 +4,10 @@
 import { PrismaService } from '../prisma/prisma.service';
 import { QuoteStatus, User, Role } from '@prisma/client';
 import { pickPrimaryOption } from './option-mapper.util';
+import { NOT_CANCELLED_WHERE } from './quote-visibility.util';
 
+// `cancelled` chỉ để tab "Đã hủy" của ADMIN hiển thị; đơn hủy KHÔNG cộng vào `total` (tổng là số đơn
+// đang "sống"). Với non-admin / thống kê, groupBy đã loại sẵn nhóm CANCELLED nên luôn là 0.
 export function countsFromGroupBy(
   res: { status: QuoteStatus; _count: { _all: number } }[],
   myReqCnt: number,
@@ -17,9 +20,14 @@ export function countsFromGroupBy(
     needMoreInfo: 0,
     quoted: 0,
     rejected: 0,
+    cancelled: 0,
   };
   for (const item of res) {
     const cnt = item._count._all;
+    if (item.status === QuoteStatus.CANCELLED) {
+      map.cancelled = cnt;
+      continue;
+    }
     map.total += cnt;
     if (item.status === QuoteStatus.PENDING) map.pending = cnt;
     else if (item.status === QuoteStatus.PROCESSING) map.processing = cnt;
@@ -33,10 +41,12 @@ export function countsFromGroupBy(
 export function getMyReqCount(prisma: PrismaService, user: User) {
   if (!user?.id) return Promise.resolve(0);
   return prisma.quoteRequest.count({
-    where:
-      user.role === Role.ORDER
+    where: {
+      ...(user.role === Role.ORDER
         ? { assigneeId: user.id }
-        : { requesterId: user.id },
+        : { requesterId: user.id }),
+      ...NOT_CANCELLED_WHERE,
+    },
   });
 }
 
