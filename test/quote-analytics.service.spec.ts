@@ -11,7 +11,7 @@ describe('QuoteAnalyticsService.getDashboardCharts', () => {
   let prisma: any;
 
   const TIMELINE_ROWS = [
-    { createdAt: new Date('2026-08-05T10:00:00Z'), status: 'CLOSED' },
+    { createdAt: new Date('2026-08-05T10:00:00Z'), status: 'QUOTED' },
     { createdAt: new Date('2026-08-06T10:00:00Z'), status: 'PENDING' },
   ];
 
@@ -22,9 +22,9 @@ describe('QuoteAnalyticsService.getDashboardCharts', () => {
   ];
 
   const SALE_GROUPS = [
-    { requesterId: 'u1', status: 'CLOSED', _count: { _all: 3 } },
+    { requesterId: 'u1', status: 'QUOTED', _count: { _all: 3 } },
     { requesterId: 'u1', status: 'PENDING', _count: { _all: 1 } },
-    { requesterId: 'u2', status: 'CLOSED', _count: { _all: 1 } },
+    { requesterId: 'u2', status: 'QUOTED', _count: { _all: 1 } },
   ];
 
   const CATEGORY_GROUPS = [
@@ -133,8 +133,8 @@ describe('QuoteAnalyticsService.getDashboardCharts', () => {
       select: { id: true, name: true },
     });
     expect(result.saleStats).toEqual([
-      { id: 'u1', name: 'Sale A', total: 4, closed: 3 },
-      { id: 'u2', name: 'Sale B', total: 1, closed: 1 },
+      { id: 'u1', name: 'Sale A', total: 4 },
+      { id: 'u2', name: 'Sale B', total: 1 },
     ]);
   });
 
@@ -588,4 +588,69 @@ describe('QuoteAnalyticsService.getStaffPerformance — thời gian báo giá t�
     expect(medianOf(res, 'order-1')).toBeNull();
   });
 
+});
+
+describe('QuoteAnalyticsService.getStats', () => {
+  let service: QuoteAnalyticsService;
+  let prisma: any;
+
+  beforeEach(async () => {
+    prisma = {
+      quoteRequest: {
+        // groupBy lần 1: đếm theo status; lần 2: tổng finalPrice của các đơn QUOTED.
+        groupBy: jest
+          .fn()
+          .mockResolvedValueOnce([
+            { status: 'QUOTED', _count: { _all: 2 } },
+            { status: 'PENDING', _count: { _all: 1 } },
+          ])
+          .mockResolvedValueOnce([
+            { status: 'QUOTED', _sum: { finalPrice: 5_000_000 } },
+          ]),
+        count: jest.fn().mockResolvedValue(0),
+      },
+    };
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        QuoteAnalyticsService,
+        { provide: PrismaService, useValue: prisma },
+      ],
+    }).compile();
+
+    service = module.get(QuoteAnalyticsService);
+  });
+
+  const admin = { id: 'u1', role: 'ADMIN' } as any;
+
+  it('trả total, quotedRevenue và counts không còn khóa closed', async () => {
+    const result = await service.getStats({} as any, admin);
+
+    expect(result.total).toBe(3);
+    expect(result.quotedRevenue).toBe(5_000_000);
+    expect(result.counts).toEqual({
+      total: 3,
+      myReq: 0,
+      pending: 1,
+      processing: 0,
+      needMoreInfo: 0,
+      quoted: 2,
+      rejected: 0,
+    });
+  });
+
+  it('không còn trả closeRate / closedRevenue', async () => {
+    const result = await service.getStats({} as any, admin);
+
+    expect(result).not.toHaveProperty('closeRate');
+    expect(result).not.toHaveProperty('closedRevenue');
+  });
+
+  it('chỉ cộng doanh thu của đơn QUOTED', async () => {
+    await service.getStats({} as any, admin);
+
+    expect(prisma.quoteRequest.groupBy.mock.calls[1][0].where.status).toEqual({
+      in: ['QUOTED'],
+    });
+  });
 });

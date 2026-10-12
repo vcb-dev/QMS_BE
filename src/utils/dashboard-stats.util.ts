@@ -28,7 +28,6 @@ export interface TimelineBucket {
   needMoreInfo: number;
   quoted: number;
   rejected: number;
-  closed: number;
   total: number;
 }
 
@@ -41,7 +40,6 @@ function makeBucket(key: string, label: string): TimelineBucket {
     needMoreInfo: 0,
     quoted: 0,
     rejected: 0,
-    closed: 0,
     total: 0,
   };
 }
@@ -53,7 +51,6 @@ function increment(b: TimelineBucket, status: string) {
   else if (status === 'NEED_MORE_INFO') b.needMoreInfo += 1;
   else if (status === 'QUOTED') b.quoted += 1;
   else if (status === 'REJECTED') b.rejected += 1;
-  else if (status === 'CLOSED') b.closed += 1;
 }
 
 export function bucketTimeline(

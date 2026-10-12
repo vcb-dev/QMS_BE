@@ -21,7 +21,7 @@ describe('bucketTimeline', () => {
 
   it('THIS_MONTH — mỗi ngày trong tháng 1 bucket, đếm đúng theo status', () => {
     const rows = [
-      { createdAt: new Date('2026-01-05T10:00:00Z'), status: 'CLOSED' },
+      { createdAt: new Date('2026-01-05T10:00:00Z'), status: 'PENDING' },
       { createdAt: new Date('2026-01-05T11:00:00Z'), status: 'QUOTED' },
     ];
     const result = bucketTimeline(
@@ -30,9 +30,11 @@ describe('bucketTimeline', () => {
       new Date('2026-01-05T00:00:00Z'),
     );
     const day5 = result.find((b) => b.label === '05/01');
-    expect(day5?.closed).toBe(1);
+    expect(day5?.pending).toBe(1);
     expect(day5?.quoted).toBe(1);
     expect(day5?.total).toBe(2);
+    // Trạng thái "Đã chốt" đã gỡ — bucket không còn khóa closed.
+    expect(day5).not.toHaveProperty('closed');
   });
 
   it('bản ghi createdAt null bị bỏ qua, không throw', () => {
