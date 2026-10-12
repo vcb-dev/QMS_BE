@@ -11,6 +11,7 @@ import {
   attachPriceBreakdowns,
 } from '../../utils/option-mapper.util';
 import { buildQuoteWhereClause } from '../../utils/quote-filter.util';
+import { quoteVisibilityWhere } from '../../utils/quote-visibility.util';
 import {
   countsFromGroupBy,
   getMyReqCount,
@@ -29,7 +30,8 @@ export class QuoteQueryService {
     const limitNum = Math.max(1, Math.min(100, Number(limit) || 10));
     const skip = (pageNum - 1) * limitNum;
 
-    const where = buildQuoteWhereClause(filterDto, _user);
+    // 'list': non-admin không bao giờ thấy đơn hủy; ADMIN chỉ thấy khi chọn đúng tab "Đã hủy".
+    const where = buildQuoteWhereClause(filterDto, _user, 'list');
 
     // Counts sidebar = 2 query thêm (groupBy status + count MY_REQ). Chỉ tính khi FE xin
     // (includeCounts=true) — phân trang thuần và socket refresh không đổi bộ lọc thì FE giữ counts
@@ -41,9 +43,11 @@ export class QuoteQueryService {
       ? Promise.all([
           this.prisma.quoteRequest.groupBy({
             by: ['status'],
+            // 'tabCounts': ADMIN không bị loại đơn hủy để groupBy trả cả nhóm CANCELLED (số tab "Đã hủy").
             where: buildQuoteWhereClause(
               { ...filterDto, status: undefined },
               _user,
+              'tabCounts',
             ),
             _count: { _all: true },
           }),
@@ -235,7 +239,7 @@ export class QuoteQueryService {
    * Chặn trần MAX_EXPORT_ROWS để tránh kéo quá nhiều dòng cùng lúc.
    */
   async findAllForExport(filterDto: FilterQuoteRequestDto, user: User) {
-    const where = buildQuoteWhereClause(filterDto, user);
+    const where = buildQuoteWhereClause(filterDto, user, 'list');
 
     const items = await this.prisma.quoteRequest.findMany({
       where,
@@ -304,9 +308,14 @@ export class QuoteQueryService {
   }
 
   async findOne(idOrCode: string, role?: Role) {
+    // Đơn đã hủy chỉ ADMIN mở được; role khác (hoặc role vắng) nhận đúng lỗi "không tìm thấy" như đơn
+    // không tồn tại — cả khi tra bằng id lẫn bằng mã.
     const quote = await this.prisma.quoteRequest.findFirst({
       where: {
-        OR: [{ id: idOrCode }, { code: idOrCode }],
+        AND: [
+          { OR: [{ id: idOrCode }, { code: idOrCode }] },
+          quoteVisibilityWhere(role),
+        ],
       },
       include: REQUEST_DETAIL_INCLUDE,
     });
