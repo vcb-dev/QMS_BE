@@ -4,7 +4,20 @@
 -- chuyển giao. Migration chỉ làm cho không còn dòng nào mang giá trị đó.
 -- Idempotent: chạy lại nhiều lần không lỗi. Chạy với search_path đúng schema `qms`.
 
--- 1. Đơn có option CLOSED: option SELECTED khác về NONE để sau bước 2 mỗi đơn chỉ còn đúng 1 SELECTED.
+-- 1a. Đơn có NHIỀU option CLOSED (dữ liệu lệch — không có ràng buộc DB chặn): chỉ giữ option CLOSED
+--     tạo sớm nhất, các option CLOSED còn lại về NONE. Đây cũng chính là option mà sync_final_option()
+--     cũ chọn làm final (CLOSED trước, rồi created_at ASC) nên final_option_id không đổi.
+UPDATE "quote_options" o
+SET "selection_status" = 'NONE'
+WHERE o."selection_status" = 'CLOSED'
+  AND EXISTS (
+    SELECT 1 FROM "quote_options" k
+    WHERE k."quote_request_id" = o."quote_request_id"
+      AND k."selection_status" = 'CLOSED'
+      AND (k."created_at", k."id") < (o."created_at", o."id")
+  );
+
+-- 1b. Đơn có option CLOSED: option SELECTED khác về NONE để sau bước 2 mỗi đơn chỉ còn đúng 1 SELECTED.
 UPDATE "quote_options" o
 SET "selection_status" = 'NONE'
 WHERE o."selection_status" = 'SELECTED'
