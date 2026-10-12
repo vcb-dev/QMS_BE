@@ -218,6 +218,21 @@ describe('LibraryService.getLibraryProducts — mỗi yêu cầu là 1 sản ph�
     expect(query.values).toContain('%ab-01%');
   });
 
+  it('đơn đã hủy không bao giờ vào Thư viện: SQL chỉ lấy QUOTED và bước hydrate cũng ép status QUOTED (đóng khe race hủy giữa 2 truy vấn)', async () => {
+    prisma.$queryRaw.mockResolvedValueOnce([{ request_id: 'r1', total: 1n }]);
+    prisma.quoteRequest.findMany.mockResolvedValue([]);
+
+    await service.getLibraryProducts({});
+
+    const sql: string = prisma.$queryRaw.mock.calls[0][0].sql;
+    expect(sql).toContain("qr.status = 'QUOTED'");
+    expect(sql).not.toContain('CANCELLED');
+    expect(prisma.quoteRequest.findMany.mock.calls[0][0].where).toEqual({
+      id: { in: ['r1'] },
+      status: 'QUOTED',
+    });
+  });
+
   it('chỉ lấy đơn QUOTED — SQL không còn nhắc trạng thái CLOSED đã gỡ', async () => {
     prisma.$queryRaw.mockResolvedValueOnce([]);
 

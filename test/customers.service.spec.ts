@@ -145,3 +145,79 @@ describe('CustomerStatsQueryDto', () => {
     );
   });
 });
+
+// Đơn đã hủy chỉ ADMIN thấy → trang Khách hàng (số đơn, đơn gần nhất, số khách hoạt động, chi tiết) không
+// được đếm/nhắc tới chúng. SQL thô nên kiểm bằng text câu SQL thật sinh ra.
+describe('CustomersService — loại đơn đã hủy', () => {
+  let service: CustomersService;
+  let prisma: any;
+  const squash = (sql: string) => sql.replace(/\s+/g, ' ');
+
+  beforeEach(async () => {
+    prisma = {
+      $queryRaw: jest.fn().mockResolvedValue([{ count: 0n, customer_count: 0n }]),
+      province: { findMany: jest.fn().mockResolvedValue([]) },
+      ward: { findMany: jest.fn().mockResolvedValue([]) },
+      customer: { findUnique: jest.fn().mockResolvedValue({ id: 'c1' }) },
+    };
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        CustomersService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: AuditLogService, useValue: { logAction: jest.fn() } },
+      ],
+    }).compile();
+    service = module.get(CustomersService);
+  });
+
+  it('getStats: điều kiện loại đơn hủy nằm trong ON của LEFT JOIN (khách chỉ có đơn hủy vẫn hiện, số đơn = 0) — cho cả câu lấy dòng lẫn câu đếm', async () => {
+    await service.getStats({ page: 1, limit: 12 } as any);
+
+    expect(prisma.$queryRaw).toHaveBeenCalledTimes(2);
+    for (const [query] of prisma.$queryRaw.mock.calls) {
+      expect(squash(query.sql)).toContain(
+        "LEFT JOIN quote_requests qr ON qr.customer_id = c.id AND qr.status <> 'CANCELLED'",
+      );
+    }
+  });
+
+  it('getStats: lọc "đơn gần nhất" (HAVING MAX(created_at)) chạy trên tập đã loại đơn hủy', async () => {
+    await service.getStats({
+      page: 1,
+      limit: 12,
+      startDate: '2026-01-01',
+    } as any);
+
+    const sql = squash(prisma.$queryRaw.mock.calls[0][0].sql);
+    expect(sql).toContain('HAVING MAX(qr.created_at) >=');
+    expect(sql).toContain("qr.status <> 'CANCELLED'");
+    expect(sql.indexOf("qr.status <> 'CANCELLED'")).toBeLessThan(
+      sql.indexOf('HAVING'),
+    );
+  });
+
+  it('getStats: lọc theo nhân viên Sale (EXISTS) cũng bỏ qua đơn hủy', async () => {
+    await service.getStats({ page: 1, limit: 12, requesterId: 'sale1' } as any);
+
+    const sql = squash(prisma.$queryRaw.mock.calls[0][0].sql);
+    expect(sql).toContain("qr2.status <> 'CANCELLED'");
+  });
+
+  it('getMonthComparison: đếm khách hoạt động của CẢ HAI kỳ đều loại đơn hủy', async () => {
+    await service.getMonthComparison();
+
+    expect(prisma.$queryRaw).toHaveBeenCalledTimes(2);
+    for (const [query] of prisma.$queryRaw.mock.calls) {
+      expect(squash(query.sql)).toContain("qr.status <> 'CANCELLED'");
+    }
+  });
+
+  it('findOne: danh sách quoteRequests lồng không chứa đơn hủy', async () => {
+    await service.findOne('c1');
+
+    const { include } = prisma.customer.findUnique.mock.calls[0][0];
+    expect(include.quoteRequests).toEqual({
+      where: { status: { not: 'CANCELLED' } },
+    });
+  });
+});
