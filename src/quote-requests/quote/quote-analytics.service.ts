@@ -17,6 +17,7 @@ import {
 } from '../../utils/dashboard-stats.util';
 import { computeQuoteTurnaroundMs } from '../../utils/order-assignment.util';
 import { AuditAction } from '../../common/audit-actions';
+import { NOT_CANCELLED_WHERE } from '../../utils/quote-visibility.util';
 
 // Tách khỏi QuoteQueryService (god-service cũ gộp cả read path chính lẫn thống kê/dashboard) —
 // 3 hàm ở đây chỉ đọc/tổng hợp số liệu cho Dashboard/Hiệu suất, không đụng cache danh sách hay
@@ -30,6 +31,7 @@ export class QuoteAnalyticsService {
    * Dùng cho % thay đổi kỳ trước & KPI, thay vì kéo cả list rồi tính tay ở FE.
    */
   async getStats(filterDto: FilterQuoteRequestDto, _user: User) {
+    // scope mặc định 'totals': loại đơn hủy với MỌI role (kể cả ADMIN, kể cả khi filter gửi status=CANCELLED).
     const where = buildQuoteWhereClause(filterDto, _user);
 
     const [groupByRes, myReqCnt, revenueGroups] = await Promise.all([
@@ -193,6 +195,9 @@ export class QuoteAnalyticsService {
               where: {
                 id: { in: featuredFinalIds },
                 quotedPrice: { not: null },
+                // id đã đi qua bộ lọc ở trên; điều kiện lồng này giữ bất biến "mọi lần đọc đơn đều
+                // mang quy tắc hủy" ngay tại chỗ, phòng sau này ai đó đổi nguồn id.
+                quoteRequest: NOT_CANCELLED_WHERE,
               },
               orderBy: { quotedDate: 'desc' },
               take: 4,
@@ -313,6 +318,7 @@ export class QuoteAnalyticsService {
         by: ['requesterId', 'status'],
         where: {
           ...createdAtWhere,
+          ...NOT_CANCELLED_WHERE,
           requester: { role: Role.SALE, isActive: true },
         },
         _count: { _all: true },
@@ -324,6 +330,7 @@ export class QuoteAnalyticsService {
       this.prisma.quoteRequest.findMany({
         where: {
           ...createdAtWhere,
+          ...NOT_CANCELLED_WHERE,
           assignee: { role: Role.ORDER, isActive: true },
           acceptedAt: { not: null },
         },
@@ -344,13 +351,18 @@ export class QuoteAnalyticsService {
       // handled/quoted bên dưới tính theo assignee (người thực sự tiếp nhận/báo giá).
       this.prisma.quoteRequest.groupBy({
         by: ['assignedOrderId'],
-        where: { ...createdAtWhere, assignedOrderId: { not: null } },
+        where: {
+          ...createdAtWhere,
+          ...NOT_CANCELLED_WHERE,
+          assignedOrderId: { not: null },
+        },
         _count: { _all: true },
       }),
       // Đơn theo NGƯỜI ĐƯỢC GIAO — nguồn của "thời gian báo giá" (từ lúc giao đơn, không phải lúc nhận).
       this.prisma.quoteRequest.findMany({
         where: {
           ...createdAtWhere,
+          ...NOT_CANCELLED_WHERE,
           assignedOrder: { role: Role.ORDER, isActive: true },
         },
         select: {
