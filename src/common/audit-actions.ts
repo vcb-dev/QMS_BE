@@ -43,6 +43,25 @@ export enum AuditAction {
   EXPORT_QUOTE_LIST = 'EXPORT_QUOTE_LIST',
 }
 
+/**
+ * Action ghi `audit_logs` cho ADMIN xem, CỐ Ý nằm NGOÀI enum AuditAction: enum đó chính là checklist
+ * đăng ký thông báo Lark (NOTIFIABLE_ACTIONS = Object.values(AuditAction)) — đưa hủy/khôi phục vào đó
+ * thì có thể đăng ký bắn thẻ Lark về một đơn mà Sale/Order không được phép thấy. Không có đăng ký nào
+ * → dispatch bỏ qua.
+ */
+export const ADMIN_ONLY_AUDIT_ACTIONS = {
+  CANCEL_QUOTE: 'CANCEL_QUOTE',
+  RESTORE_QUOTE: 'RESTORE_QUOTE',
+} as const;
+
+export const ADMIN_ONLY_AUDIT_ACTION_LABELS: Record<
+  keyof typeof ADMIN_ONLY_AUDIT_ACTIONS,
+  string
+> = {
+  CANCEL_QUOTE: 'Hủy yêu cầu báo giá',
+  RESTORE_QUOTE: 'Khôi phục yêu cầu báo giá',
+};
+
 /** Nhãn tiếng Việt hiển thị trên thẻ Lark tóm tắt và trên checklist cấu hình. */
 export const AUDIT_ACTION_LABELS: Record<AuditAction, string> = {
   [AuditAction.CREATE_QUOTE]: 'Tạo yêu cầu báo giá mới',
