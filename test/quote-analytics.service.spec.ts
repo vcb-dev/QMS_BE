@@ -125,6 +125,20 @@ describe('QuoteAnalyticsService.getDashboardCharts', () => {
     expect(result).toHaveProperty('featuredProducts');
   });
 
+  it('khoảng ngày tùy chọn (startDate/endDate, không timeRange) → timeline theo đúng các ngày đã chọn, không rơi về tháng hiện tại', async () => {
+    const result = await service.getDashboardCharts(
+      {
+        startDate: '2026-08-04T17:00:00.000Z', // 05/08 00:00 giờ VN
+        endDate: '2026-08-06T16:59:59.000Z', // 06/08 23:59:59 giờ VN
+      },
+      { id: 'u1', role: 'ADMIN' } as any,
+    );
+
+    expect(result.timeline.map((b) => b.label)).toEqual(['05/08', '06/08']);
+    expect(result.timeline[0].quoted).toBe(1);
+    expect(result.timeline[1].pending).toBe(1);
+  });
+
   it('joins saleStats names/totals from the mocked user lookup, sorted by total desc', async () => {
     const result = await service.getDashboardCharts(
       { timeRange: 'THIS_MONTH' } as any,

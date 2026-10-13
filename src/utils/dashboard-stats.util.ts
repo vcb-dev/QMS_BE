@@ -167,6 +167,67 @@ export function bucketTimeline(
   return buckets;
 }
 
+// Khoảng ngày tùy chọn dài tới mức này vẫn vẽ mỗi ngày 1 cột; dài hơn thì gộp theo tháng cho
+// biểu đồ không quá dày.
+const CUSTOM_RANGE_MAX_DAILY_DAYS = 62;
+const DAY_MS = 86_400_000;
+
+// Bucket cho khoảng ngày tùy chọn (startDate/endDate), thay cho bucketTimeline vốn chỉ biết các
+// preset. Ranh giới ngày tính theo giờ VN cố định như bucketTimeline. Cùng 1 ngày -> 8 khung 3 giờ
+// (như TODAY); tới 62 ngày -> mỗi ngày 1 cột; dài hơn -> mỗi tháng 1 cột. Không có endDate thì
+// kéo tới `now`, cùng quy tắc "chỉ có startDate" của resolveDateRange.
+export function bucketCustomRange(
+  rows: { createdAt: Date | string | null; status: string }[],
+  startDate: string,
+  endDate?: string,
+  now: Date = new Date(),
+): TimelineBucket[] {
+  const start = toVnParts(new Date(startDate));
+  const end = toVnParts(endDate ? new Date(endDate) : now);
+  const startDayMs = Date.UTC(start.year, start.month, start.date);
+  const endDayMs = Date.UTC(end.year, end.month, end.date);
+  const dayCount = Math.round((endDayMs - startDayMs) / DAY_MS) + 1;
+
+  if (dayCount === 1) return bucketTimeline(rows, 'TODAY');
+
+  const buckets: TimelineBucket[] = [];
+  const map = new Map<string, TimelineBucket>();
+  const add = (key: string, label: string) => {
+    const b = makeBucket(key, label);
+    map.set(key, b);
+    buckets.push(b);
+  };
+  const daily = dayCount <= CUSTOM_RANGE_MAX_DAILY_DAYS;
+
+  if (daily) {
+    for (let i = 0; i < dayCount; i++) {
+      const d = new Date(startDayMs + i * DAY_MS);
+      const day = pad2(d.getUTCDate());
+      const month = pad2(d.getUTCMonth() + 1);
+      add(`${d.getUTCFullYear()}-${month}-${day}`, `${day}/${month}`);
+    }
+  } else {
+    const monthCount =
+      (end.year - start.year) * 12 + end.month - start.month + 1;
+    for (let i = 0; i < monthCount; i++) {
+      const monthIndex = start.month + i;
+      const y = start.year + Math.floor(monthIndex / 12);
+      const m = monthIndex % 12;
+      add(`${y}-${pad2(m + 1)}`, `Thg ${m + 1}/${String(y).slice(-2)}`);
+    }
+  }
+
+  for (const r of rows) {
+    if (!r.createdAt) continue;
+    const p = toVnParts(new Date(r.createdAt));
+    const monthKey = `${p.year}-${pad2(p.month + 1)}`;
+    const b = map.get(daily ? `${monthKey}-${pad2(p.date)}` : monthKey);
+    if (b) increment(b, r.status);
+  }
+
+  return buckets;
+}
+
 export const PRICE_RANGES = [
   { label: '< 5tr', min: 0, max: 5_000_000 },
   { label: '5-15tr', min: 5_000_000, max: 15_000_000 },

@@ -13,6 +13,7 @@ import {
 } from '../../utils/quote-counts.util';
 import {
   bucketTimeline,
+  bucketCustomRange,
   bucketPriceRange,
 } from '../../utils/dashboard-stats.util';
 import { computeQuoteTurnaroundMs } from '../../utils/order-assignment.util';
@@ -138,10 +139,11 @@ export class QuoteAnalyticsService {
       }),
     ]);
 
-    const timeline = bucketTimeline(
-      timelineRows,
-      filterDto.timeRange || 'THIS_MONTH',
-    );
+    // Khoảng ngày tùy chọn ưu tiên hơn preset (cùng quy tắc với resolveDateRange) — nếu không,
+    // bucketTimeline rơi về 'THIS_MONTH' và vẽ sai các ngày của tháng hiện tại.
+    const timeline = filterDto.startDate
+      ? bucketCustomRange(timelineRows, filterDto.startDate, filterDto.endDate)
+      : bucketTimeline(timelineRows, filterDto.timeRange || 'THIS_MONTH');
 
     // Gom id cần cho đợt 2 từ kết quả đợt 1.
     const saleTotals = new Map<string, { total: number }>();
