@@ -369,3 +369,44 @@ describe('QuoteRequestsService.pickAssignedOrderId — bỏ qua đơn đã hủy
     }
   });
 });
+
+describe('QuoteQueryService.findAll — cột "Chất liệu"', () => {
+  const user = { id: 'admin1', role: 'ADMIN' } as any;
+  const draft = (id: string, name: string) => ({
+    id: `opt-${id}`,
+    selectionStatus: 'UNSELECTED',
+    quotedPrice: null,
+    materials: [{ materialId: id, material: { id, name } }],
+  });
+
+  it('chọn 4 chất liệu (4 phương án nháp) → danh sách trả đủ cả 4 chất liệu, không chỉ chất liệu đầu', async () => {
+    const item = {
+      id: 'q1',
+      images: [],
+      options: [
+        draft('a', 'Vàng 10K'),
+        draft('b', 'Vàng 14K'),
+        draft('c', 'Vàng 18K'),
+        draft('d', 'Bạc'),
+      ],
+    };
+    const prisma = {
+      quoteRequest: {
+        findMany: jest.fn().mockResolvedValue([item]),
+        count: jest.fn().mockResolvedValue(1),
+      },
+    };
+    const svc = new QuoteQueryService(prisma as any);
+
+    const res = await svc.findAll({}, user);
+
+    expect(res.data[0].materials.map((m: any) => m.name)).toEqual([
+      'Vàng 10K',
+      'Vàng 14K',
+      'Vàng 18K',
+      'Bạc',
+    ]);
+    // field đơn `material` vẫn là chất liệu đầu — FE cũ còn đọc field này
+    expect(res.data[0].material.name).toBe('Vàng 10K');
+  });
+});

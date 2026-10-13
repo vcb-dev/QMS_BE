@@ -1,4 +1,5 @@
 import {
+  collectRequestMaterials,
   computeFinalOption,
   buildOptionCreateInput,
   buildStoneRowsWithGroup,
@@ -430,5 +431,68 @@ describe('mapOptionDetail — trả thêm id + parentStoneId cho từng dòng đ
       ],
     });
     expect(out.stones![0].parentStoneId).toBeNull();
+  });
+});
+
+describe('collectRequestMaterials — chất liệu của cả yêu cầu, không chỉ phương án đại diện', () => {
+  const mat = (id: string, name: string) => ({
+    materialId: id,
+    material: { id, name },
+  });
+  const opt = (id: string, mats: ReturnType<typeof mat>[], extra = {}) => ({
+    id,
+    selectionStatus: 'UNSELECTED',
+    quotedPrice: null,
+    materials: mats,
+    ...extra,
+  });
+
+  it('Sale chọn 4 chất liệu → 4 phương án, mỗi phương án 1 chất liệu: trả đủ 4, không chỉ chất liệu của phương án đại diện', () => {
+    const options = [
+      opt('o1', [mat('a', 'Vàng 10K')]),
+      opt('o2', [mat('b', 'Vàng 14K')]),
+      opt('o3', [mat('c', 'Vàng 18K')]),
+      opt('o4', [mat('d', 'Bạc')]),
+    ];
+    const result = collectRequestMaterials(options, options[0]);
+    expect(result.map((m) => m.name)).toEqual([
+      'Vàng 10K',
+      'Vàng 14K',
+      'Vàng 18K',
+      'Bạc',
+    ]);
+  });
+
+  it('chất liệu của phương án đại diện (phương án có giá đang hiển thị) đứng đầu, còn lại theo thứ tự phương án', () => {
+    const options = [
+      opt('o1', [mat('a', 'Vàng 10K')]),
+      opt('o2', [mat('b', 'Vàng 14K')]),
+      opt('o3', [mat('c', 'Vàng 18K')], {
+        selectionStatus: 'SELECTED',
+        quotedPrice: 20_000_000,
+      }),
+    ];
+    const result = collectRequestMaterials(options, options[2]);
+    expect(result.map((m) => m.name)).toEqual([
+      'Vàng 18K',
+      'Vàng 10K',
+      'Vàng 14K',
+    ]);
+  });
+
+  it('chất liệu lặp lại ở nhiều phương án chỉ tính 1 lần (theo id)', () => {
+    const options = [
+      opt('o1', [mat('a', 'Vàng 10K'), mat('b', 'Vàng 14K')]),
+      opt('o2', [mat('b', 'Vàng 14K'), mat('c', 'Vàng 18K')]),
+    ];
+    const result = collectRequestMaterials(options, options[0]);
+    expect(result.map((m) => m.id)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('không có phương án hoặc phương án không có chất liệu → mảng rỗng', () => {
+    expect(collectRequestMaterials(undefined, null)).toEqual([]);
+    expect(collectRequestMaterials([], null)).toEqual([]);
+    const empty = opt('o1', []);
+    expect(collectRequestMaterials([empty], empty)).toEqual([]);
   });
 });

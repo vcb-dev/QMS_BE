@@ -451,6 +451,37 @@ export function pickPrimaryOption<T = any>(
   return options[0];
 }
 
+// Chất liệu của CẢ yêu cầu = gộp chất liệu của mọi phương án, bỏ trùng theo id. Sale chọn N chất liệu
+// lúc tạo đơn thì BE tách thành N phương án, mỗi phương án 1 chất liệu (buildEffectiveOptions) — chỉ
+// lấy chất liệu của phương án đại diện sẽ làm danh sách mất N-1 chất liệu còn lại. Chất liệu của
+// phương án đại diện đứng đầu (cùng phương án với giá đang hiển thị), các phương án khác theo thứ tự
+// trong `options`.
+type MaterialRef = { id: string; name: string };
+type OptionWithMaterials = {
+  materials?: { material?: MaterialRef | null }[] | null;
+};
+
+export function collectRequestMaterials(
+  options: OptionWithMaterials[] | null | undefined,
+  primaryOption: OptionWithMaterials | null | undefined,
+): MaterialRef[] {
+  const all = Array.isArray(options) ? options : [];
+  const ordered = primaryOption
+    ? [primaryOption, ...all.filter((o) => o !== primaryOption)]
+    : all;
+  const seen = new Set<string>();
+  const result: MaterialRef[] = [];
+  for (const opt of ordered) {
+    for (const m of opt.materials ?? []) {
+      const material = m.material;
+      if (!material || seen.has(material.id)) continue;
+      seen.add(material.id);
+      result.push(material);
+    }
+  }
+  return result;
+}
+
 // Rút gọn kết quả pickPrimaryOption thành 2 giá trị cần denormalize xuống QuoteRequest —
 // dùng bởi syncFinalOption() trong quote-workflow.service.ts, tách riêng để test thuần không cần
 // mock Prisma.

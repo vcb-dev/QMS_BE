@@ -8,6 +8,7 @@ import {
   OPTION_LIST_SELECT,
   mapQuoteRequestDetail,
   pickPrimaryOption,
+  collectRequestMaterials,
   attachPriceBreakdowns,
 } from '../../utils/option-mapper.util';
 import { buildQuoteWhereClause } from '../../utils/quote-filter.util';
@@ -213,7 +214,7 @@ export class QuoteQueryService {
 
   private sanitizeItem(item: any) {
     const primaryOption = pickPrimaryOption(item);
-    const matArr = (primaryOption?.materials || []).map((m: any) => m.material);
+    const matArr = collectRequestMaterials(item.options, primaryOption);
 
     if (Array.isArray(item.options))
       item.options = item.options.map((o: any) => attachPriceBreakdowns(o));
