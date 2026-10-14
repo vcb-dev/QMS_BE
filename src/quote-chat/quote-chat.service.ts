@@ -3,9 +3,13 @@ import {
   ForbiddenException,
   BadRequestException,
 } from '@nestjs/common';
-import { Role } from '@prisma/client';
+import { QuoteStatus, Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ChatMessageDto } from './dto/quote-chat.types';
+import {
+  canSeeCancelledQuotes,
+  quoteVisibilityWhere,
+} from '../utils/quote-visibility.util';
 
 @Injectable()
 export class QuoteChatService {
@@ -14,11 +18,13 @@ export class QuoteChatService {
   // Phòng chat 1 đơn: người tạo (Sale) + người tiếp nhận (assignee) luôn vào được, CỘNG bất kỳ
   // ORDER/ADMIN nào khác (group chat — toàn bộ Order/Admin theo dõi được mọi đơn, không chỉ đơn
   // mình đang xử lý).
+  // Đơn đã hủy chỉ ADMIN còn vào được; với người khác nó bị đối xử y hệt đơn không tồn tại (cùng lỗi).
+  // Đây là cổng DUY NHẤT của saveMessage/getMessages/markRead/joinRequest/cầu Lark nên chặn ở đây là đủ.
   async assertParticipant(quoteRequestId: string, userId: string) {
     const [request, user] = await Promise.all([
       this.prisma.quoteRequest.findUnique({
         where: { id: quoteRequestId },
-        select: { requesterId: true, assigneeId: true },
+        select: { requesterId: true, assigneeId: true, status: true },
       }),
       this.prisma.user.findUnique({
         where: { id: userId },
@@ -26,7 +32,11 @@ export class QuoteChatService {
       }),
     ]);
 
-    if (!request) {
+    if (
+      !request ||
+      (request.status === QuoteStatus.CANCELLED &&
+        !canSeeCancelledQuotes(user?.role))
+    ) {
       throw new ForbiddenException(
         'Bạn không có quyền xem cuộc trò chuyện này',
       );
@@ -46,6 +56,7 @@ export class QuoteChatService {
     return {
       requesterId: request.requesterId,
       assigneeId: request.assigneeId,
+      status: request.status,
     };
   }
 
@@ -55,7 +66,13 @@ export class QuoteChatService {
     content?: string,
     imageUrl?: string,
   ): Promise<ChatMessageDto> {
-    await this.assertParticipant(quoteRequestId, userId);
+    const { status } = await this.assertParticipant(quoteRequestId, userId);
+    // Đơn đã hủy là trạng thái cuối: ADMIN đọc được lịch sử nhưng không ai gửi thêm tin.
+    if (status === QuoteStatus.CANCELLED) {
+      throw new BadRequestException(
+        'Yêu cầu đã bị hủy, không thể gửi thêm tin nhắn',
+      );
+    }
 
     const trimmedContent = content?.trim();
     if (!trimmedContent && !imageUrl) {
@@ -152,6 +169,8 @@ export class QuoteChatService {
         ...(isOrderOrAdmin
           ? {}
           : { OR: [{ requesterId: userId }, { assigneeId: userId }] }),
+        // Badge tin chưa đọc không được kéo theo đơn đã hủy của non-admin.
+        ...quoteVisibilityWhere(user?.role),
       },
       select: { id: true },
     });

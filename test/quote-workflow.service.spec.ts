@@ -107,3 +107,459 @@ describe('QuoteWorkflowService — gỡ trạng thái "Đã chốt"', () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------------------------
+// Hủy / khôi phục yêu cầu (chỉ ADMIN) + chặn mọi thao tác khác trên đơn đã hủy
+// ---------------------------------------------------------------------------------------------
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
+
+describe('QuoteWorkflowService — hủy / khôi phục yêu cầu', () => {
+  const DETAIL = { id: 'q1', status: 'CANCELLED' };
+
+  function make(row: any, updateManyCount = 1) {
+    const prisma = {
+      quoteRequest: {
+        findUnique: jest.fn().mockResolvedValue(row),
+        update: jest.fn(),
+        updateMany: jest.fn().mockResolvedValue({ count: updateManyCount }),
+      },
+      quoteOption: {
+        delete: jest.fn(),
+        deleteMany: jest.fn(),
+        updateMany: jest.fn(),
+        update: jest.fn(),
+        createMany: jest.fn(),
+      },
+      $transaction: jest.fn(),
+    };
+    const queryService = { findOne: jest.fn().mockResolvedValue(DETAIL) };
+    const mailService = {
+      sendQuoteCompleted: jest.fn(),
+      sendQuoteRejected: jest.fn(),
+      sendNeedMoreInfo: jest.fn(),
+    };
+    const auditLog = { logAction: jest.fn() };
+    const larkService = {
+      dispatchQuoteCard: jest.fn(),
+      dispatchSummary: jest.fn(),
+    };
+    const svc = new QuoteWorkflowService(
+      prisma as any,
+      queryService as any,
+      mailService as any,
+      auditLog as any,
+      larkService as any,
+      {} as any,
+    );
+    return { svc, prisma, queryService, mailService, auditLog, larkService };
+  }
+  const anyWrite = (prisma: any) =>
+    [
+      prisma.quoteRequest.update,
+      prisma.quoteRequest.updateMany,
+      prisma.quoteOption.delete,
+      prisma.quoteOption.deleteMany,
+      prisma.quoteOption.updateMany,
+      prisma.quoteOption.update,
+      prisma.quoteOption.createMany,
+      prisma.$transaction,
+    ].some((fn) => fn.mock.calls.length > 0);
+
+  describe('CANCEL', () => {
+    it.each([
+      QuoteStatus.PENDING,
+      QuoteStatus.PROCESSING,
+      QuoteStatus.NEED_MORE_INFO,
+      QuoteStatus.QUOTED,
+    ])(
+      'ADMIN hủy được đơn %s: ghi CANCELLED + trạng thái trước + mốc hủy, ghi audit, KHÔNG mail/Lark',
+      async (status) => {
+        const { svc, prisma, queryService, auditLog, mailService, larkService } =
+          make({ status, cancelledFromStatus: null });
+
+        const res = await svc.updateStatus('q1', 'admin1', Role.ADMIN, {
+          action: QuoteAction.CANCEL,
+        });
+
+        expect(prisma.quoteRequest.updateMany).toHaveBeenCalledWith({
+          where: { id: 'q1', status },
+          data: {
+            status: QuoteStatus.CANCELLED,
+            cancelledFromStatus: status,
+            cancelledAt: expect.any(Date),
+            version: { increment: 1 },
+          },
+        });
+        expect(auditLog.logAction).toHaveBeenCalledWith(
+          'admin1',
+          Role.ADMIN,
+          'CANCEL_QUOTE',
+          'QuoteRequest',
+          'q1',
+        );
+        expect(queryService.findOne).toHaveBeenCalledWith('q1', Role.ADMIN);
+        expect(res).toBe(DETAIL);
+        for (const fn of Object.values(mailService)) expect(fn).not.toHaveBeenCalled();
+        for (const fn of Object.values(larkService)) expect(fn).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each([Role.SALE, Role.ORDER])(
+      '%s KHÔNG được hủy (403) — kể cả đơn QUOTED',
+      async (role) => {
+        const { svc, prisma, auditLog } = make({
+          status: QuoteStatus.QUOTED,
+          cancelledFromStatus: null,
+        });
+
+        await expect(
+          svc.updateStatus('q1', 'u1', role, { action: QuoteAction.CANCEL }),
+        ).rejects.toThrow(ForbiddenException);
+
+        expect(anyWrite(prisma)).toBe(false);
+        expect(auditLog.logAction).not.toHaveBeenCalled();
+      },
+    );
+
+    it('không hủy được đơn đã từ chối (REJECTED là trạng thái cuối)', async () => {
+      const { svc, prisma } = make({
+        status: QuoteStatus.REJECTED,
+        cancelledFromStatus: null,
+      });
+      await expect(
+        svc.updateStatus('q1', 'admin1', Role.ADMIN, { action: QuoteAction.CANCEL }),
+      ).rejects.toThrow(ConflictException);
+      expect(anyWrite(prisma)).toBe(false);
+    });
+
+    it('hủy lần hai trên đơn đã hủy → 409 "đã bị hủy"', async () => {
+      const { svc, prisma } = make({
+        status: QuoteStatus.CANCELLED,
+        cancelledFromStatus: QuoteStatus.QUOTED,
+      });
+      await expect(
+        svc.updateStatus('q1', 'admin1', Role.ADMIN, { action: QuoteAction.CANCEL }),
+      ).rejects.toThrow('đã bị hủy');
+      expect(anyWrite(prisma)).toBe(false);
+    });
+
+    it('trạng thái đổi giữa lúc đọc và lúc ghi (updateMany count 0) → 409 và KHÔNG ghi audit', async () => {
+      const { svc, auditLog } = make(
+        { status: QuoteStatus.QUOTED, cancelledFromStatus: null },
+        0,
+      );
+      await expect(
+        svc.updateStatus('q1', 'admin1', Role.ADMIN, { action: QuoteAction.CANCEL }),
+      ).rejects.toThrow(ConflictException);
+      expect(auditLog.logAction).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('RESTORE', () => {
+    it('ADMIN khôi phục đơn hủy từ QUOTED về QUOTED, xóa dấu vết hủy, ghi audit', async () => {
+      const { svc, prisma, queryService, auditLog } = make({
+        status: QuoteStatus.CANCELLED,
+        cancelledFromStatus: QuoteStatus.QUOTED,
+      });
+
+      const res = await svc.updateStatus('q1', 'admin1', Role.ADMIN, {
+        action: QuoteAction.RESTORE,
+      });
+
+      expect(prisma.quoteRequest.updateMany).toHaveBeenCalledWith({
+        where: { id: 'q1', status: QuoteStatus.CANCELLED },
+        data: {
+          status: QuoteStatus.QUOTED,
+          cancelledFromStatus: null,
+          cancelledAt: null,
+          version: { increment: 1 },
+        },
+      });
+      expect(auditLog.logAction).toHaveBeenCalledWith(
+        'admin1',
+        Role.ADMIN,
+        'RESTORE_QUOTE',
+        'QuoteRequest',
+        'q1',
+      );
+      expect(queryService.findOne).toHaveBeenCalledWith('q1', Role.ADMIN);
+      expect(res).toBe(DETAIL);
+    });
+
+    it('không biết trạng thái trước khi hủy (cancelledFromStatus null) → 400, không ghi', async () => {
+      const { svc, prisma } = make({
+        status: QuoteStatus.CANCELLED,
+        cancelledFromStatus: null,
+      });
+      await expect(
+        svc.updateStatus('q1', 'admin1', Role.ADMIN, { action: QuoteAction.RESTORE }),
+      ).rejects.toThrow(BadRequestException);
+      expect(anyWrite(prisma)).toBe(false);
+    });
+
+    it('khôi phục đơn chưa bị hủy → 409', async () => {
+      const { svc, prisma } = make({
+        status: QuoteStatus.PENDING,
+        cancelledFromStatus: null,
+      });
+      await expect(
+        svc.updateStatus('q1', 'admin1', Role.ADMIN, { action: QuoteAction.RESTORE }),
+      ).rejects.toThrow(ConflictException);
+      expect(anyWrite(prisma)).toBe(false);
+    });
+
+    it('SALE/ORDER khôi phục đơn thường → 403; khôi phục đơn hủy → 404 (đơn như biến mất)', async () => {
+      for (const role of [Role.SALE, Role.ORDER]) {
+        const normal = make({ status: QuoteStatus.QUOTED, cancelledFromStatus: null });
+        await expect(
+          normal.svc.updateStatus('q1', 'u1', role, { action: QuoteAction.RESTORE }),
+        ).rejects.toThrow(ForbiddenException);
+
+        const cancelled = make({
+          status: QuoteStatus.CANCELLED,
+          cancelledFromStatus: QuoteStatus.QUOTED,
+        });
+        await expect(
+          cancelled.svc.updateStatus('q1', 'u1', role, { action: QuoteAction.RESTORE }),
+        ).rejects.toThrow(NotFoundException);
+        expect(anyWrite(cancelled.prisma)).toBe(false);
+      }
+    });
+
+    it('trạng thái đổi giữa lúc đọc và lúc ghi (count 0) → 409', async () => {
+      const { svc, auditLog } = make(
+        { status: QuoteStatus.CANCELLED, cancelledFromStatus: QuoteStatus.QUOTED },
+        0,
+      );
+      await expect(
+        svc.updateStatus('q1', 'admin1', Role.ADMIN, { action: QuoteAction.RESTORE }),
+      ).rejects.toThrow(ConflictException);
+      expect(auditLog.logAction).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('mọi thao tác khác trên đơn đã hủy', () => {
+    const others = Object.values(QuoteAction).filter(
+      (a) => a !== QuoteAction.RESTORE,
+    );
+    const cancelledRow = {
+      status: QuoteStatus.CANCELLED,
+      cancelledFromStatus: QuoteStatus.QUOTED,
+    };
+
+    it.each(others)('ADMIN gọi %s → 409 "đã bị hủy", không ghi gì, không audit', async (action) => {
+      const { svc, prisma, auditLog } = make(cancelledRow);
+      await expect(
+        svc.updateStatus('q1', 'admin1', Role.ADMIN, { action } as any),
+      ).rejects.toThrow('đã bị hủy');
+      expect(anyWrite(prisma)).toBe(false);
+      expect(auditLog.logAction).not.toHaveBeenCalled();
+    });
+
+    it.each(others)('ORDER và SALE gọi %s → 404 y hệt đơn không tồn tại, không ghi gì', async (action) => {
+      for (const role of [Role.ORDER, Role.SALE]) {
+        const { svc, prisma, auditLog } = make(cancelledRow);
+        await expect(
+          svc.updateStatus('q1', 'u1', role, { action } as any),
+        ).rejects.toThrow(new NotFoundException('Không tìm thấy yêu cầu báo giá'));
+        expect(anyWrite(prisma)).toBe(false);
+        expect(auditLog.logAction).not.toHaveBeenCalled();
+      }
+    });
+
+    it('id không tồn tại → 404 với mọi role', async () => {
+      for (const role of [Role.ADMIN, Role.ORDER, Role.SALE]) {
+        const { svc } = make(null);
+        await expect(
+          svc.updateStatus('nope', 'u1', role, { action: QuoteAction.CANCEL }),
+        ).rejects.toThrow(NotFoundException);
+      }
+    });
+
+    it('đơn bình thường vẫn đi qua guard (ORDER tiếp nhận đơn PENDING)', async () => {
+      const { svc, prisma } = make({
+        status: QuoteStatus.PENDING,
+        cancelledFromStatus: null,
+      });
+      await svc.updateStatus('q1', 'order1', Role.ORDER, {
+        action: QuoteAction.ACCEPT,
+      });
+      expect(prisma.quoteRequest.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'q1', status: QuoteStatus.PENDING },
+        }),
+      );
+    });
+
+    it('deleteOption trên đơn đã hủy: ADMIN → 409, ORDER → 404, không xóa phương án', async () => {
+      const row = {
+        status: QuoteStatus.CANCELLED,
+        assigneeId: 'order1',
+        options: [{ id: 'o1' }, { id: 'o2' }],
+      };
+      const admin = make(row);
+      await expect(
+        svc_deleteOption(admin.svc, Role.ADMIN),
+      ).rejects.toThrow('đã bị hủy');
+      expect(admin.prisma.quoteOption.delete).not.toHaveBeenCalled();
+
+      const order = make(row);
+      await expect(
+        svc_deleteOption(order.svc, Role.ORDER),
+      ).rejects.toThrow(NotFoundException);
+      expect(order.prisma.quoteOption.delete).not.toHaveBeenCalled();
+    });
+  });
+});
+
+const svc_deleteOption = (svc: QuoteWorkflowService, role: Role) =>
+  svc.deleteOption('q1', 'o1', 'order1', role);
+
+// ---------------------------------------------------------------------------------------------
+// Race: ADMIN hủy đơn NGAY SAU khi một thao tác khác đã qua guard nhưng CHƯA ghi. Thao tác kia không
+// được ghi đè đơn đã hủy (nếu không đơn "sống lại" với trạng thái cũ + dấu vết hủy còn sót).
+// ---------------------------------------------------------------------------------------------
+import { Prisma } from '@prisma/client';
+
+describe('QuoteWorkflowService — thao tác khác không ghi đè đơn vừa bị hủy (race)', () => {
+  const p2025 = () =>
+    new Prisma.PrismaClientKnownRequestError('Record to update not found', {
+      code: 'P2025',
+      clientVersion: 'test',
+    });
+
+  const PROCESSING = {
+    status: QuoteStatus.PROCESSING,
+    assigneeId: 'order1',
+    version: 1,
+    categoryId: 'c1',
+    cancelledFromStatus: null,
+    requesterId: 'sale1',
+    _count: { options: 1 },
+  };
+
+  // [action, userId, role, hàng trả về cho mọi findUnique, dto, ghi qua $transaction?]
+  const WRITES: [string, string, Role, any, any, boolean][] = [
+    [QuoteAction.REJECT, 'order1', Role.ORDER, PROCESSING, { rejectReason: 'x' }, false],
+    [QuoteAction.QUICK_REJECT, 'order1', Role.ORDER, PROCESSING, {}, false],
+    [QuoteAction.RETURN, 'order1', Role.ORDER, PROCESSING, { returnReason: 'x' }, false],
+    [
+      QuoteAction.RESUBMIT,
+      'sale1',
+      Role.SALE,
+      { ...PROCESSING, status: QuoteStatus.NEED_MORE_INFO },
+      {},
+      false,
+    ],
+    [QuoteAction.QUICK_QUOTE, 'order1', Role.ORDER, PROCESSING, {}, false],
+    [QuoteAction.QUICK_APPROVE, 'order1', Role.ORDER, PROCESSING, {}, false],
+    [
+      QuoteAction.QUOTE,
+      'order1',
+      Role.ORDER,
+      PROCESSING,
+      { options: [{ optionName: 'PA', quotedPrice: 1000 }] },
+      true,
+    ],
+    [
+      QuoteAction.EDIT_PRICE,
+      'admin1',
+      Role.ADMIN,
+      { ...PROCESSING, status: QuoteStatus.QUOTED },
+      { options: [{ optionName: 'PA', quotedPrice: 1000 }] },
+      true,
+    ],
+  ];
+
+  function make(row: any) {
+    const prisma: any = {
+      quoteRequest: {
+        findUnique: jest.fn().mockResolvedValue(row),
+        findUniqueOrThrow: jest.fn().mockResolvedValue({ id: 'q1', options: [] }),
+        update: jest.fn().mockResolvedValue({ id: 'q1', options: [] }),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      quoteOption: {
+        deleteMany: jest.fn(),
+        createMany: jest.fn(),
+        updateMany: jest.fn(),
+        update: jest.fn(),
+        delete: jest.fn(),
+      },
+      quoteOptionMaterial: { createMany: jest.fn() },
+      quoteOptionStone: { createMany: jest.fn() },
+      $transaction: jest.fn().mockResolvedValue([]),
+    };
+    const queryService = {
+      findOne: jest.fn().mockResolvedValue({ id: 'q1' }),
+      stripCostFieldsForSale: (options: any) => options,
+    };
+    const anything = new Proxy({}, { get: () => jest.fn() });
+    const optionsService = {
+      buildOptionLookupMaps: jest.fn().mockResolvedValue({
+        stonePriceMap: new Map(),
+        materialBaseMetal: new Map(),
+        stoneMeta: new Map(),
+      }),
+    };
+    const svc = new QuoteWorkflowService(
+      prisma,
+      queryService as any,
+      anything as any,
+      { logAction: jest.fn() } as any,
+      anything as any,
+      optionsService as any,
+    );
+    return { svc, prisma };
+  }
+
+  it.each(WRITES)(
+    '%s: lần ghi lên đơn mang điều kiện status ≠ CANCELLED',
+    async (action, userId, role, row, dto) => {
+      const { svc, prisma } = make(row);
+
+      await svc.updateStatus('q1', userId, role, { action, ...dto } as any);
+
+      const calls = prisma.quoteRequest.update.mock.calls;
+      expect(calls.length).toBeGreaterThanOrEqual(1);
+      for (const [args] of calls) {
+        expect(args.where).toEqual({
+          id: 'q1',
+          status: { not: QuoteStatus.CANCELLED },
+        });
+      }
+    },
+  );
+
+  it.each(WRITES)(
+    '%s: đơn vừa bị hủy giữa lúc đọc và lúc ghi (P2025) → 409, không ghi đè',
+    async (action, userId, role, row, dto, viaTx) => {
+      const { svc, prisma } = make(row);
+      if (viaTx) prisma.$transaction.mockRejectedValue(p2025());
+      else prisma.quoteRequest.update.mockRejectedValue(p2025());
+
+      const err: any = await svc
+        .updateStatus('q1', userId, role, { action, ...dto } as any)
+        .catch((e) => e);
+
+      expect(err).toBeInstanceOf(ConflictException);
+      expect(err.message).toContain('vừa bị hủy');
+    },
+  );
+
+  it('lỗi khác P2025 vẫn nổi lên nguyên vẹn (không bị nuốt thành 409)', async () => {
+    const { svc, prisma } = make(PROCESSING);
+    prisma.quoteRequest.update.mockRejectedValue(new Error('db down'));
+
+    await expect(
+      svc.updateStatus('q1', 'order1', Role.ORDER, {
+        action: QuoteAction.REJECT,
+        rejectReason: 'x',
+      } as any),
+    ).rejects.toThrow('db down');
+  });
+});

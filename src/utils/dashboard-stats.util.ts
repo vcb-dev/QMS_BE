@@ -45,6 +45,8 @@ function makeBucket(key: string, label: string): TimelineBucket {
 }
 
 function increment(b: TimelineBucket, status: string) {
+  // Đơn đã hủy không bao giờ vào số liệu. Đầu vào vốn đã được lọc ở where; đây là lớp phòng thủ thứ hai.
+  if (status === 'CANCELLED') return;
   b.total += 1;
   if (status === 'PENDING') b.pending += 1;
   else if (status === 'PROCESSING') b.processing += 1;

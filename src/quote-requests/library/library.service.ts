@@ -5,7 +5,7 @@
 // cùng một dữ liệu.
 
 import { Injectable } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { Prisma, QuoteStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LibraryProductsQueryDto } from '../dto/library-products-query.dto';
 import {
@@ -150,8 +150,10 @@ export class LibraryService {
   // Các yêu cầu của trang hiện tại kèm MỌI phương án đã có giá (kể cả phương án không khớp bộ lọc
   // chất liệu — thẻ phải hiện đủ lịch sử báo giá của yêu cầu đó).
   private hydrateRequests(requestIds: string[]) {
+    // status QUOTED ép lại ở đây (SQL phía trên đã lọc): nếu ADMIN hủy đơn giữa 2 truy vấn thì thẻ
+    // của đơn vừa hủy bị bỏ, không lọt ra Thư viện.
     return this.prisma.quoteRequest.findMany({
-      where: { id: { in: requestIds } },
+      where: { id: { in: requestIds }, status: QuoteStatus.QUOTED },
       select: {
         id: true,
         code: true,

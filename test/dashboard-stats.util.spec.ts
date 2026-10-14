@@ -61,3 +61,21 @@ describe('bucketPriceRange', () => {
     ]);
   });
 });
+
+describe('bucketTimeline — đơn đã hủy', () => {
+  it('bỏ qua dòng CANCELLED: không cộng vào total hay bất kỳ cột nào (phòng thủ lớp 2, đầu vào vốn đã lọc)', () => {
+    const rows = [
+      { createdAt: new Date('2026-01-05T10:00:00Z'), status: 'CANCELLED' },
+      { createdAt: new Date('2026-01-05T11:00:00Z'), status: 'QUOTED' },
+    ];
+    const result = bucketTimeline(
+      rows,
+      'THIS_MONTH',
+      new Date('2026-01-05T00:00:00Z'),
+    );
+    const day5 = result.find((b) => b.label === '05/01');
+    expect(day5?.total).toBe(1);
+    expect(day5?.quoted).toBe(1);
+    expect(result.reduce((s, b) => s + b.total, 0)).toBe(1);
+  });
+});

@@ -12,13 +12,20 @@ import {
 } from '../dto/update-quote-status.dto';
 import { CompleteQuoteInput } from '../dto/quote-complete.dto';
 import { randomUUID } from 'node:crypto';
-import { QuoteStatus, Role, OptionSelectionStatus } from '@prisma/client';
+import { Prisma, QuoteStatus, Role, OptionSelectionStatus } from '@prisma/client';
 import { QuoteQueryService } from './quote-query.service';
 import { MailService } from '../../mail/mail.service';
 import { AuditLogService } from '../../audit-log/audit-log.service';
 import { LarkService } from '../../lark/lark.service';
 import { QuoteCardData } from '../../common/lark.types';
-import { AuditAction } from '../../common/audit-actions';
+import {
+  AuditAction,
+  ADMIN_ONLY_AUDIT_ACTIONS,
+} from '../../common/audit-actions';
+import {
+  APP_CONSTANTS,
+  CANCELLABLE_QUOTE_STATUSES,
+} from '../../common/constants';
 import { QuoteOptionsService } from '../quote-option/quote-options.service';
 import {
   REQUEST_DETAIL_INCLUDE,
@@ -42,6 +49,48 @@ export class QuoteWorkflowService {
   private assertRole(role: Role, allowed: Role[], message: string) {
     if (!allowed.includes(role)) {
       throw new ForbiddenException(message);
+    }
+  }
+
+  // Đơn đã hủy chỉ ADMIN còn "thấy": role khác nhận đúng lỗi như đơn không tồn tại (không lộ việc đơn
+  // có tồn tại); ADMIN chỉ được khôi phục (allowRestore), mọi thao tác khác bị chặn bằng 409.
+  private assertNotCancelled(
+    status: QuoteStatus,
+    role: Role,
+    allowRestore = false,
+  ) {
+    if (status !== QuoteStatus.CANCELLED) return;
+    if (role !== Role.ADMIN) {
+      throw new NotFoundException('Không tìm thấy yêu cầu báo giá');
+    }
+    if (!allowRestore) {
+      throw new ConflictException(
+        'Yêu cầu đã bị hủy, không thể thực hiện thao tác này. Hãy khôi phục yêu cầu trước nếu cần.',
+      );
+    }
+  }
+
+  // where của MỌI lần ghi lên đơn đang hoạt động: kèm "chưa hủy" để một thao tác đã qua guard không ghi
+  // đè được đơn mà ADMIN vừa hủy ngay sau đó (nếu không đơn "sống lại" với trạng thái cũ, còn sót
+  // cancelledAt/cancelledFromStatus và Sale/Order thấy lại nó).
+  private activeQuote(id: string) {
+    return { id, status: { not: QuoteStatus.CANCELLED } };
+  }
+
+  // Ghi lỗi P2025 = không còn bản ghi khớp where = đơn vừa bị hủy giữa lúc đọc và lúc ghi.
+  private async guardCancelRace<T>(write: () => Promise<T>): Promise<T> {
+    try {
+      return await write();
+    } catch (err) {
+      if (
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === 'P2025'
+      ) {
+        throw new ConflictException(
+          'Yêu cầu vừa bị hủy hoặc đã được cập nhật bởi người khác, vui lòng tải lại trang',
+        );
+      }
+      throw err;
     }
   }
 
@@ -314,18 +363,20 @@ export class QuoteWorkflowService {
     const keyMaps = lookups ?? undefined;
 
     if (opts.length === 0) {
-      const updatedNoOpts = await this.prisma.quoteRequest.update({
-        where: { id },
-        data: {
-          status: QuoteStatus.QUOTED,
-          assigneeId: userId,
-          version: { increment: 1 },
-          ...(dto.inspectionFee != null
-            ? { inspectionFee: dto.inspectionFee }
-            : {}),
-        },
-        include: REQUEST_DETAIL_INCLUDE,
-      });
+      const updatedNoOpts = await this.guardCancelRace(() =>
+        this.prisma.quoteRequest.update({
+          where: this.activeQuote(id),
+          data: {
+            status: QuoteStatus.QUOTED,
+            assigneeId: userId,
+            version: { increment: 1 },
+            ...(dto.inspectionFee != null
+              ? { inspectionFee: dto.inspectionFee }
+              : {}),
+          },
+          include: REQUEST_DETAIL_INCLUDE,
+        }),
+      );
       const mappedNoOpts = mapQuoteRequestDetail(updatedNoOpts);
       // Truyền object GỐC (chưa qua mapOptionDetail) để buildQuoteCardData đọc được
       // materials[].rawCost/stones[].unitPriceAtQuote — mapOptionDetail lược bỏ 2 field này.
@@ -376,29 +427,33 @@ export class QuoteWorkflowService {
       })),
     );
 
-    await this.prisma.$transaction([
-      this.prisma.quoteOption.deleteMany({ where: { quoteRequestId: id } }),
-      this.prisma.quoteRequest.update({
-        where: { id },
-        data: {
-          status: QuoteStatus.QUOTED,
-          assigneeId: userId,
-          version: { increment: 1 },
-          ...(dto.inspectionFee != null
-            ? { inspectionFee: dto.inspectionFee }
-            : {}),
-        },
-      }),
-      this.prisma.quoteOption.createMany({
-        data: optionWrites.map((w) => w.row),
-      }),
-      ...(materialRows.length > 0
-        ? [this.prisma.quoteOptionMaterial.createMany({ data: materialRows })]
-        : []),
-      ...(stoneRows.length > 0
-        ? [this.prisma.quoteOptionStone.createMany({ data: stoneRows })]
-        : []),
-    ]);
+    // Cả lô nằm trong 1 transaction: đơn vừa bị hủy thì lần update request fail (P2025) và toàn bộ
+    // việc xóa/ghi lại phương án được hoàn tác.
+    await this.guardCancelRace(() =>
+      this.prisma.$transaction([
+        this.prisma.quoteOption.deleteMany({ where: { quoteRequestId: id } }),
+        this.prisma.quoteRequest.update({
+          where: this.activeQuote(id),
+          data: {
+            status: QuoteStatus.QUOTED,
+            assigneeId: userId,
+            version: { increment: 1 },
+            ...(dto.inspectionFee != null
+              ? { inspectionFee: dto.inspectionFee }
+              : {}),
+          },
+        }),
+        this.prisma.quoteOption.createMany({
+          data: optionWrites.map((w) => w.row),
+        }),
+        ...(materialRows.length > 0
+          ? [this.prisma.quoteOptionMaterial.createMany({ data: materialRows })]
+          : []),
+        ...(stoneRows.length > 0
+          ? [this.prisma.quoteOptionStone.createMany({ data: stoneRows })]
+          : []),
+      ]),
+    );
 
     const updated = await this.prisma.quoteRequest.findUniqueOrThrow({
       where: { id },
@@ -486,25 +541,27 @@ export class QuoteWorkflowService {
       })),
     );
 
-    await this.prisma.$transaction([
-      this.prisma.quoteOption.deleteMany({ where: { quoteRequestId: id } }),
-      this.prisma.quoteRequest.update({
-        where: { id },
-        data: {
-          version: { increment: 1 },
-          ...(inspectionFee != null ? { inspectionFee } : {}),
-        },
-      }),
-      this.prisma.quoteOption.createMany({
-        data: optionWrites.map((w) => w.row),
-      }),
-      ...(materialRows.length > 0
-        ? [this.prisma.quoteOptionMaterial.createMany({ data: materialRows })]
-        : []),
-      ...(stoneRows.length > 0
-        ? [this.prisma.quoteOptionStone.createMany({ data: stoneRows })]
-        : []),
-    ]);
+    await this.guardCancelRace(() =>
+      this.prisma.$transaction([
+        this.prisma.quoteOption.deleteMany({ where: { quoteRequestId: id } }),
+        this.prisma.quoteRequest.update({
+          where: this.activeQuote(id),
+          data: {
+            version: { increment: 1 },
+            ...(inspectionFee != null ? { inspectionFee } : {}),
+          },
+        }),
+        this.prisma.quoteOption.createMany({
+          data: optionWrites.map((w) => w.row),
+        }),
+        ...(materialRows.length > 0
+          ? [this.prisma.quoteOptionMaterial.createMany({ data: materialRows })]
+          : []),
+        ...(stoneRows.length > 0
+          ? [this.prisma.quoteOptionStone.createMany({ data: stoneRows })]
+          : []),
+      ]),
+    );
 
     const updated = await this.prisma.quoteRequest.findUniqueOrThrow({
       where: { id },
@@ -561,16 +618,18 @@ export class QuoteWorkflowService {
    * Yêu cầu phải có lý do từ chối. Trạng thái chuyển sang REJECTED.
    */
   private async rejectQuote(id: string, userId: string, rejectReason: string) {
-    const updated = await this.prisma.quoteRequest.update({
-      where: { id },
-      data: {
-        rejectReason,
-        assigneeId: userId,
-        status: QuoteStatus.REJECTED,
-        version: { increment: 1 },
-      },
-      include: REQUEST_DETAIL_INCLUDE,
-    });
+    const updated = await this.guardCancelRace(() =>
+      this.prisma.quoteRequest.update({
+        where: this.activeQuote(id),
+        data: {
+          rejectReason,
+          assigneeId: userId,
+          status: QuoteStatus.REJECTED,
+          version: { increment: 1 },
+        },
+        include: REQUEST_DETAIL_INCLUDE,
+      }),
+    );
 
     const mapped = mapQuoteRequestDetail(updated);
     this.notifySaleQuoteRejected(mapped, rejectReason);
@@ -582,17 +641,19 @@ export class QuoteWorkflowService {
    * Trạng thái chuyển sang NEED_MORE_INFO kèm theo lý do cần bổ sung.
    */
   private async returnQuote(id: string, userId: string, returnReason: string) {
-    const updated = await this.prisma.quoteRequest.update({
-      where: { id },
-      data: {
-        returnReason,
-        assigneeId: userId,
-        status: QuoteStatus.NEED_MORE_INFO,
-        returnedAt: new Date(),
-        version: { increment: 1 },
-      },
-      include: REQUEST_DETAIL_INCLUDE,
-    });
+    const updated = await this.guardCancelRace(() =>
+      this.prisma.quoteRequest.update({
+        where: this.activeQuote(id),
+        data: {
+          returnReason,
+          assigneeId: userId,
+          status: QuoteStatus.NEED_MORE_INFO,
+          returnedAt: new Date(),
+          version: { increment: 1 },
+        },
+        include: REQUEST_DETAIL_INCLUDE,
+      }),
+    );
 
     const mapped = mapQuoteRequestDetail(updated);
     this.notifySaleNeedMoreInfo(mapped, returnReason);
@@ -626,6 +687,7 @@ export class QuoteWorkflowService {
     if (!quote) {
       throw new NotFoundException('Không tìm thấy yêu cầu báo giá');
     }
+    this.assertNotCancelled(quote.status, role);
 
     // ORDER chỉ xóa phương án trên đơn do mình tiếp nhận — giống assertPricingCanProcess. ADMIN tự do.
     if (role === Role.ORDER && quote.assigneeId !== userId) {
@@ -683,15 +745,17 @@ export class QuoteWorkflowService {
         'Chỉ có thể gửi lại yêu cầu khi đang ở trạng thái Cần bổ sung thông tin',
       );
     }
-    const updated = await this.prisma.quoteRequest.update({
-      where: { id },
-      data: {
-        status: QuoteStatus.PENDING,
-        assigneeId: null,
-        version: { increment: 1 },
-      },
-      include: REQUEST_DETAIL_INCLUDE,
-    });
+    const updated = await this.guardCancelRace(() =>
+      this.prisma.quoteRequest.update({
+        where: this.activeQuote(id),
+        data: {
+          status: QuoteStatus.PENDING,
+          assigneeId: null,
+          version: { increment: 1 },
+        },
+        include: REQUEST_DETAIL_INCLUDE,
+      }),
+    );
     const mapped = mapQuoteRequestDetail(updated);
     // Sale gọi được action này — không được thấy cấu thành giá vốn trong response trả về.
     if (role === Role.SALE) {
@@ -700,12 +764,118 @@ export class QuoteWorkflowService {
     return mapped;
   }
 
+  /**
+   * ADMIN hủy yêu cầu: trạng thái cuối, hồ sơ giữ nguyên. Nhớ trạng thái ngay trước khi hủy để khôi
+   * phục. KHÔNG mail, KHÔNG Lark, KHÔNG báo Sale — đơn đã hủy vô hình với họ; chỉ ghi audit cho ADMIN.
+   */
+  private async cancelQuote(
+    id: string,
+    userId: string,
+    role: Role,
+    status: QuoteStatus,
+  ) {
+    if (!CANCELLABLE_QUOTE_STATUSES.includes(status)) {
+      const label =
+        (APP_CONSTANTS.QUOTE_STATUS_LABELS as Record<string, string>)[
+          status
+        ] ?? status;
+      throw new ConflictException(
+        `Không thể hủy yêu cầu đang ở trạng thái "${label}"`,
+      );
+    }
+
+    // where kèm đúng trạng thái đã đọc: người khác đổi trạng thái giữa chừng thì count = 0.
+    const result = await this.prisma.quoteRequest.updateMany({
+      where: { id, status },
+      data: {
+        status: QuoteStatus.CANCELLED,
+        cancelledFromStatus: status,
+        cancelledAt: new Date(),
+        version: { increment: 1 },
+      },
+    });
+    if (result.count !== 1) {
+      throw new ConflictException(
+        'Yêu cầu vừa được cập nhật bởi người khác, vui lòng tải lại trang',
+      );
+    }
+
+    await this.auditLog.logAction(
+      userId,
+      role,
+      ADMIN_ONLY_AUDIT_ACTIONS.CANCEL_QUOTE,
+      'QuoteRequest',
+      id,
+    );
+    return this.queryService.findOne(id, Role.ADMIN);
+  }
+
+  /** ADMIN khôi phục đơn đã hủy về đúng trạng thái trước khi hủy; đơn hiện lại với Sale/Order. */
+  private async restoreQuote(
+    id: string,
+    userId: string,
+    role: Role,
+    status: QuoteStatus,
+    cancelledFromStatus: QuoteStatus | null,
+  ) {
+    if (status !== QuoteStatus.CANCELLED) {
+      throw new ConflictException(
+        'Yêu cầu chưa bị hủy nên không cần khôi phục',
+      );
+    }
+    if (!cancelledFromStatus) {
+      throw new BadRequestException(
+        'Không xác định được trạng thái trước khi hủy nên không thể khôi phục tự động',
+      );
+    }
+
+    const result = await this.prisma.quoteRequest.updateMany({
+      where: { id, status: QuoteStatus.CANCELLED },
+      data: {
+        status: cancelledFromStatus,
+        cancelledFromStatus: null,
+        cancelledAt: null,
+        version: { increment: 1 },
+      },
+    });
+    if (result.count !== 1) {
+      throw new ConflictException(
+        'Yêu cầu vừa được cập nhật bởi người khác, vui lòng tải lại trang',
+      );
+    }
+
+    await this.auditLog.logAction(
+      userId,
+      role,
+      ADMIN_ONLY_AUDIT_ACTIONS.RESTORE_QUOTE,
+      'QuoteRequest',
+      id,
+    );
+    return this.queryService.findOne(id, Role.ADMIN);
+  }
+
   async updateStatus(
     id: string,
     userId: string,
     role: Role,
     dto: UpdateQuoteStatusDto,
   ) {
+    // Guard TRUNG TÂM cho mọi action: đọc trạng thái một lần ở đây thay vì rải kiểm tra "đã hủy" vào
+    // từng action (mỗi action tự truy vấn riêng, rất dễ sót). Đơn đã hủy: non-admin → 404, ADMIN chỉ
+    // được RESTORE. Đổi nhỏ chấp nhận: id không tồn tại + sai role giờ trả 404 thay vì 403.
+    const current = await this.prisma.quoteRequest.findUnique({
+      where: { id },
+      select: { status: true, cancelledFromStatus: true },
+    });
+    if (!current) {
+      throw new NotFoundException('Không tìm thấy yêu cầu báo giá');
+    }
+    this.assertNotCancelled(
+      current.status,
+      role,
+      dto.action === QuoteAction.RESTORE,
+    );
+
     switch (dto.action) {
       case QuoteAction.ACCEPT:
         this.assertRole(
@@ -771,28 +941,30 @@ export class QuoteWorkflowService {
         const quickQuoteKeyMaps = dto.options?.length
           ? await this.quoteOptionsService.buildOptionLookupMaps(dto.options)
           : undefined;
-        const updated = await this.prisma.quoteRequest.update({
-          where: { id },
-          data: {
-            status: QuoteStatus.PROCESSING,
-            options:
-              dto.options && dto.options.length > 0
-                ? {
-                    deleteMany: {},
-                    create: dto.options.map((opt, idx) =>
-                      buildOptionCreateInput(
-                        opt,
-                        idx,
-                        existing?.categoryId,
-                        undefined,
-                        quickQuoteKeyMaps,
+        const updated = await this.guardCancelRace(() =>
+          this.prisma.quoteRequest.update({
+            where: this.activeQuote(id),
+            data: {
+              status: QuoteStatus.PROCESSING,
+              options:
+                dto.options && dto.options.length > 0
+                  ? {
+                      deleteMany: {},
+                      create: dto.options.map((opt, idx) =>
+                        buildOptionCreateInput(
+                          opt,
+                          idx,
+                          existing?.categoryId,
+                          undefined,
+                          quickQuoteKeyMaps,
+                        ),
                       ),
-                    ),
-                  }
-                : undefined,
-          },
-          include: REQUEST_DETAIL_INCLUDE,
-        });
+                    }
+                  : undefined,
+            },
+            include: REQUEST_DETAIL_INCLUDE,
+          }),
+        );
         return mapQuoteRequestDetail(updated);
       }
 
@@ -830,29 +1002,31 @@ export class QuoteWorkflowService {
         const quickApproveKeyMaps = dto.options?.length
           ? await this.quoteOptionsService.buildOptionLookupMaps(dto.options)
           : undefined;
-        const approved = await this.prisma.quoteRequest.update({
-          where: { id },
-          data: {
-            status: QuoteStatus.QUOTED,
-            assigneeId: userId,
-            options:
-              dto.options && dto.options.length > 0
-                ? {
-                    deleteMany: {},
-                    create: dto.options.map((opt, idx) =>
-                      buildOptionCreateInput(
-                        opt,
-                        idx,
-                        existingReq.categoryId,
-                        undefined,
-                        quickApproveKeyMaps,
+        const approved = await this.guardCancelRace(() =>
+          this.prisma.quoteRequest.update({
+            where: this.activeQuote(id),
+            data: {
+              status: QuoteStatus.QUOTED,
+              assigneeId: userId,
+              options:
+                dto.options && dto.options.length > 0
+                  ? {
+                      deleteMany: {},
+                      create: dto.options.map((opt, idx) =>
+                        buildOptionCreateInput(
+                          opt,
+                          idx,
+                          existingReq.categoryId,
+                          undefined,
+                          quickApproveKeyMaps,
+                        ),
                       ),
-                    ),
-                  }
-                : undefined,
-          },
-          include: REQUEST_DETAIL_INCLUDE,
-        });
+                    }
+                  : undefined,
+            },
+            include: REQUEST_DETAIL_INCLUDE,
+          }),
+        );
         const mapped = mapQuoteRequestDetail(approved);
         this.notifySaleQuoteCompleted(approved, AuditAction.QUICK_APPROVE);
         return mapped;
@@ -982,6 +1156,28 @@ export class QuoteWorkflowService {
           dto.inspectionFee,
         );
       }
+
+      case QuoteAction.CANCEL:
+        this.assertRole(
+          role,
+          [Role.ADMIN],
+          'Chỉ có vai trò ADMIN mới được phép hủy yêu cầu',
+        );
+        return this.cancelQuote(id, userId, role, current.status);
+
+      case QuoteAction.RESTORE:
+        this.assertRole(
+          role,
+          [Role.ADMIN],
+          'Chỉ có vai trò ADMIN mới được phép khôi phục yêu cầu',
+        );
+        return this.restoreQuote(
+          id,
+          userId,
+          role,
+          current.status,
+          current.cancelledFromStatus,
+        );
 
       default:
         throw new BadRequestException(

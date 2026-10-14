@@ -633,6 +633,7 @@ describe('QuoteAnalyticsService.getStats', () => {
       needMoreInfo: 0,
       quoted: 2,
       rejected: 0,
+      cancelled: 0,
     });
   });
 
@@ -671,5 +672,103 @@ describe('StaffPerformanceQueryDto', () => {
     expect(invalidFields({ saleSortField: field })).not.toContain(
       'saleSortField',
     );
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Đơn đã hủy: mọi con số tổng (stats, dashboard, hiệu suất nhân viên) loại đơn hủy với MỌI role
+// ---------------------------------------------------------------------------------------------
+describe('QuoteAnalyticsService — loại đơn đã hủy khỏi số liệu', () => {
+  const notCancelled = JSON.stringify({ not: 'CANCELLED' });
+  const hasNot = (node: any): boolean => {
+    if (!node || typeof node !== 'object') return false;
+    if (Array.isArray(node)) return node.some(hasNot);
+    if (JSON.stringify(node.status) === notCancelled) return true;
+    return Object.values(node).some(hasNot);
+  };
+  const user = (role: string) => ({ id: `u-${role}`, role }) as any;
+
+  const buildService = async () => {
+    const row = {
+      createdAt: new Date(),
+      status: 'QUOTED',
+      finalOptionId: 'o1',
+      finalPrice: 1,
+    };
+    const prisma: any = {
+      quoteRequest: {
+        findMany: jest.fn().mockResolvedValue([row]),
+        groupBy: jest.fn().mockResolvedValue([]),
+        count: jest.fn().mockResolvedValue(0),
+      },
+      user: { findMany: jest.fn().mockResolvedValue([]) },
+      productCategory: { findMany: jest.fn().mockResolvedValue([]) },
+      quoteOptionMaterial: { findMany: jest.fn().mockResolvedValue([]) },
+      quoteOption: { findMany: jest.fn().mockResolvedValue([]) },
+      auditLog: { findMany: jest.fn().mockResolvedValue([]) },
+    };
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        QuoteAnalyticsService,
+        { provide: PrismaService, useValue: prisma },
+      ],
+    }).compile();
+    return { service: module.get(QuoteAnalyticsService), prisma };
+  };
+
+  it.each(['SALE', 'ORDER', 'ADMIN'])(
+    'getStats (%s) kể cả khi gửi status=CANCELLED: 2 groupBy và "của tôi" đều loại đơn hủy, cancelled = 0',
+    async (role) => {
+      const { service, prisma } = await buildService();
+
+      const res = await service.getStats({ status: 'CANCELLED' } as any, user(role));
+
+      for (const [args] of prisma.quoteRequest.groupBy.mock.calls) {
+        expect(hasNot(args.where)).toBe(true);
+      }
+      expect(prisma.quoteRequest.groupBy).toHaveBeenCalledTimes(2);
+      expect(hasNot(prisma.quoteRequest.count.mock.calls[0][0].where)).toBe(true);
+      expect(res.counts.cancelled).toBe(0);
+    },
+  );
+
+  it.each(['SALE', 'ORDER', 'ADMIN'])(
+    'getDashboardCharts (%s): cả 5 query đọc đơn (timeline, theo sale, theo danh mục, giá, nổi bật mọi thời kỳ) đều loại đơn hủy',
+    async (role) => {
+      const { service, prisma } = await buildService();
+
+      await service.getDashboardCharts({ status: 'CANCELLED' } as any, user(role));
+
+      const calls = [
+        ...prisma.quoteRequest.findMany.mock.calls,
+        ...prisma.quoteRequest.groupBy.mock.calls,
+      ];
+      expect(calls).toHaveLength(5);
+      for (const [args] of calls) expect(hasNot(args.where)).toBe(true);
+    },
+  );
+
+  it('getDashboardCharts: truy vấn phương án nổi bật có điều kiện lồng quoteRequest không-hủy (không chỉ dựa vào id đã lọc)', async () => {
+    const { service, prisma } = await buildService();
+
+    await service.getDashboardCharts({} as any, user('ADMIN'));
+
+    const { where } = prisma.quoteOption.findMany.mock.calls[0][0];
+    expect(where.quoteRequest).toEqual({ status: { not: 'CANCELLED' } });
+  });
+
+  it('getStaffPerformance: cả 4 truy vấn đơn (sale, người báo giá, đơn được giao ×2) loại đơn hủy', async () => {
+    const { service, prisma } = await buildService();
+
+    await service.getStaffPerformance();
+
+    const calls = [
+      ...prisma.quoteRequest.groupBy.mock.calls,
+      ...prisma.quoteRequest.findMany.mock.calls,
+    ];
+    expect(calls).toHaveLength(4);
+    for (const [args] of calls) {
+      expect(args.where.status).toEqual({ not: 'CANCELLED' });
+    }
   });
 });

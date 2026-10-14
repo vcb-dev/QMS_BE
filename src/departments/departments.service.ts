@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { NOT_CANCELLED_WHERE } from '../utils/quote-visibility.util';
 
 @Injectable()
 export class DepartmentsService {
@@ -24,7 +25,8 @@ export class DepartmentsService {
         orderBy: { name: 'asc' },
         include: {
           _count: {
-            select: { quoteRequests: true }
+            // Số yêu cầu của phòng ban không tính đơn đã hủy.
+            select: { quoteRequests: { where: NOT_CANCELLED_WHERE } }
           }
         }
       }),

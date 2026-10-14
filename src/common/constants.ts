@@ -62,6 +62,17 @@ export const FILTERABLE_QUOTE_STATUSES: readonly QuoteStatus[] = [
   'QUOTED',
   'REJECTED',
   'NEED_MORE_INFO',
+  // CANCELLED có mặt ở đây để DTO chấp nhận; việc ai được THẤY đơn hủy do buildQuoteWhereClause quyết
+  // (non-admin gửi status=CANCELLED chỉ nhận danh sách rỗng).
+  'CANCELLED',
+];
+
+// ADMIN chỉ hủy được đơn đang mở. REJECTED/CANCELLED đã là trạng thái cuối.
+export const CANCELLABLE_QUOTE_STATUSES: readonly QuoteStatus[] = [
+  'PENDING',
+  'PROCESSING',
+  'NEED_MORE_INFO',
+  'QUOTED',
 ];
 
 export const APP_CONSTANTS = {
@@ -127,6 +138,7 @@ export const APP_CONSTANTS = {
     NEED_MORE_INFO: 'Cần bổ sung thông tin',
     QUOTED: 'Hoàn thành / Đã báo giá',
     REJECTED: 'Bị từ chối',
+    CANCELLED: 'Đã hủy',
   },
   VANG_TODAY_SOURCES: [
     { code: 'SJL1L10', label: 'SJC 9999' },

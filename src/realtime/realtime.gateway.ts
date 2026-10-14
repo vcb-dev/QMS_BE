@@ -3,6 +3,7 @@ import {
   WebSocketServer,
   SubscribeMessage,
   OnGatewayInit,
+  OnGatewayConnection,
   OnGatewayDisconnect,
   MessageBody,
   ConnectedSocket,
@@ -40,10 +41,17 @@ interface AuthedSocket extends Socket {
   },
 })
 export class RealtimeGateway
-  implements OnGatewayInit, OnGatewayDisconnect, OnModuleInit
+  implements
+    OnGatewayInit,
+    OnGatewayConnection,
+    OnGatewayDisconnect,
+    OnModuleInit
 {
   @WebSocketServer()
   server!: Server;
+
+  // Phòng của mọi socket ADMIN — để phát riêng các sự kiện chỉ ADMIN được biết (đơn đã hủy).
+  static readonly ADMIN_ROOM = 'role:ADMIN';
 
   private readonly logger = new Logger(RealtimeGateway.name);
 
@@ -70,6 +78,13 @@ export class RealtimeGateway
     this.lark.reply$.subscribe((dto) => {
       this.server.to(this.roomName(dto.quoteRequestId)).emit('newMessage', dto);
     });
+  }
+
+  // Chạy sau middleware JWT nên client.data.user đã có. Role lấy từ access token.
+  handleConnection(client: AuthedSocket) {
+    if (client.data?.user?.role === 'ADMIN') {
+      client.join(RealtimeGateway.ADMIN_ROOM);
+    }
   }
 
   handleDisconnect(client: AuthedSocket) {
@@ -118,8 +133,37 @@ export class RealtimeGateway
   }
 
   // Broadcast sự kiện statusChanged cho tất cả socket đã xác thực — không cần room riêng.
+  // NGOẠI LỆ đơn đã hủy (CANCELLED): chỉ ADMIN được biết. ADMIN nhận CANCELLED; mọi socket khác nhận
+  // sự kiện "đơn biến mất" (DELETED — cùng sự kiện remove() vẫn phát) để FE ẩn đơn đi mà không lộ
+  // trạng thái hủy. Đặt logic ở ĐÂY nên không caller nào có thể vô tình lộ CANCELLED ra toàn cục.
   broadcastStatusChanged(quoteRequestId: string, status: string) {
+    if (status === 'CANCELLED') {
+      this.server
+        .to(RealtimeGateway.ADMIN_ROOM)
+        .emit('statusChanged', { quoteRequestId, status });
+      this.server
+        .except(RealtimeGateway.ADMIN_ROOM)
+        .emit('statusChanged', { quoteRequestId, status: 'DELETED' });
+      void this.evictNonAdminsFromChat(quoteRequestId);
+      return;
+    }
     this.server.emit('statusChanged', { quoteRequestId, status });
+  }
+
+  // Socket non-admin đang ở phòng chat của đơn vừa hủy không được nhận thêm gì từ phòng đó nữa.
+  // Fire-and-forget: lỗi adapter chỉ log, không làm hỏng việc phát sự kiện ở trên.
+  private async evictNonAdminsFromChat(quoteRequestId: string) {
+    const room = this.roomName(quoteRequestId);
+    try {
+      const sockets = await this.server.in(room).fetchSockets();
+      for (const s of sockets) {
+        if (s.data?.user?.role !== 'ADMIN') s.leave(room);
+      }
+    } catch (err: any) {
+      this.logger.warn(
+        `Không đuổi được socket khỏi phòng chat (quote ${quoteRequestId}): ${err?.message ?? err}`,
+      );
+    }
   }
 
   // Tạo tên phòng chat dựa trên quoteRequestId để phân biệt các cuộc trò chuyện khác nhau.

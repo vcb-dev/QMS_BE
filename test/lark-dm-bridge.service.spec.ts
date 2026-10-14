@@ -283,6 +283,32 @@ describe('LarkService — cầu chat web <-> Lark DM', () => {
       );
     });
 
+    it('reply có root_id: tra anchor bỏ qua đơn đã hủy (không đẩy tin vào đơn mà người nhận không còn thấy)', async () => {
+      await service.handleInboundLarkMessage(base as any);
+      expect(prisma.quoteChatRead.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            larkAnchorMsgId: 'om_anchor',
+            quoteRequest: { status: { not: 'CANCELLED' } },
+          },
+        }),
+      );
+    });
+
+    it('gõ thẳng không root/parent: anchor gần nhất cũng bỏ qua đơn đã hủy', async () => {
+      await service.handleInboundLarkMessage({
+        ...base,
+        message: { ...base.message, root_id: undefined, parent_id: undefined },
+      } as any);
+      expect(prisma.quoteChatRead.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            quoteRequest: { status: { not: 'CANCELLED' } },
+          }),
+        }),
+      );
+    });
+
     it('không phải user (bot) => bỏ hẳn', async () => {
       await service.handleInboundLarkMessage({
         ...base,

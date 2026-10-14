@@ -5,6 +5,10 @@ import { UpdateCustomerDto } from './dto/update-customer.dto';
 import { CustomerStatsQueryDto } from './dto/customer-stats-query.dto';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { Role, Prisma } from '@prisma/client';
+import {
+  NOT_CANCELLED_WHERE,
+  notCancelledSql,
+} from '../utils/quote-visibility.util';
 
 const CUSTOMER_INCLUDE = { province: true, ward: true } as const;
 
@@ -77,7 +81,7 @@ export class CustomersService {
       // Lọc theo nhân viên SALE đang theo dõi đơn — requesterId nằm ở quote_requests, không phải
       // cột nào của customers, nên dùng EXISTS thay vì join trực tiếp (tránh nhân bản dòng).
       filters.push(
-        Prisma.sql`EXISTS (SELECT 1 FROM quote_requests qr2 WHERE qr2.customer_id = c.id AND qr2.requester_id = ${dto.requesterId})`,
+        Prisma.sql`EXISTS (SELECT 1 FROM quote_requests qr2 WHERE qr2.customer_id = c.id AND qr2.requester_id = ${dto.requesterId} AND ${notCancelledSql('qr2')})`,
       );
     }
     const whereSql = filters.length
@@ -104,13 +108,15 @@ export class CustomersService {
 
     // CTE dùng chung cho trang hiện tại + đếm tổng — HAVING lọc theo last_order (aggregate) nên
     // không thể đếm bằng COUNT(*) đơn giản trên bảng customers như trước.
+    // Loại đơn đã hủy NGAY TRONG điều kiện ON của LEFT JOIN (không phải WHERE): khách chỉ có đơn hủy
+    // vẫn hiện nhưng total_orders = 0 / last_order = NULL, và HAVING MAX(created_at) chạy trên tập đã loại.
     const cteSql = Prisma.sql`
       SELECT c.id, c.name, c.phone, c.address,
         c.province_id AS "provinceId", c.ward_id AS "wardId",
         COUNT(qr.id)::int AS total_orders,
         MAX(qr.created_at) AS last_order
       FROM customers c
-      LEFT JOIN quote_requests qr ON qr.customer_id = c.id
+      LEFT JOIN quote_requests qr ON qr.customer_id = c.id AND ${notCancelledSql('qr')}
       ${whereSql}
       GROUP BY c.id
       ${havingSql}
@@ -185,7 +191,12 @@ export class CustomersService {
   async findOne(id: string) {
     const customer = await this.prisma.customer.findUnique({
       where: { id },
-      include: { ...CUSTOMER_INCLUDE, quoteRequests: true },
+      // Danh sách đơn của khách không được kèm đơn đã hủy (chỉ ADMIN thấy đơn hủy, và ở trang này
+      // số liệu loại đơn hủy với mọi role).
+      include: {
+        ...CUSTOMER_INCLUDE,
+        quoteRequests: { where: NOT_CANCELLED_WHERE },
+      },
     });
     if (!customer) {
       throw new NotFoundException('Không tìm thấy thông tin khách hàng');
@@ -316,6 +327,7 @@ export class CustomersService {
       const filters: Prisma.Sql[] = [
         Prisma.sql`qr.created_at >= ${start}`,
         Prisma.sql`qr.created_at <= ${end}`,
+        notCancelledSql('qr'),
       ];
       if (provinceId) filters.push(Prisma.sql`c.province_id = ${provinceId}`);
       if (requesterId)

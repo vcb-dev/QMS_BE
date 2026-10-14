@@ -23,6 +23,9 @@ export enum QuoteAction {
   QUICK_APPROVE = 'QUICK_APPROVE',
   QUICK_REJECT = 'QUICK_REJECT',
   EDIT_PRICE = 'EDIT_PRICE',
+  // Chỉ ADMIN: hủy đơn (trạng thái cuối, chỉ ADMIN thấy) và khôi phục về trạng thái trước khi hủy.
+  CANCEL = 'CANCEL',
+  RESTORE = 'RESTORE',
 }
 
 export class UpdateQuoteStatusDto {

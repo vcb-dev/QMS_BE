@@ -30,6 +30,10 @@ import {
   pickLeastLoadedOrder,
   startOfVietnamDay,
 } from '../utils/order-assignment.util';
+import {
+  NOT_CANCELLED_WHERE,
+  canSeeCancelledQuotes,
+} from '../utils/quote-visibility.util';
 
 @Injectable()
 export class QuoteRequestsService {
@@ -80,12 +84,15 @@ export class QuoteRequestsService {
         where: {
           assignedOrderId: { in: ids },
           createdAt: { gte: startOfVietnamDay(new Date()) },
+          // Đơn đã hủy không còn là việc của Order: không tính vào hạn mức trong ngày (khớp số
+          // "được giao" hiển thị ở hiệu suất nhân viên, cũng đã loại đơn hủy).
+          ...NOT_CANCELLED_WHERE,
         },
         _count: { _all: true },
       }),
       tx.quoteRequest.groupBy({
         by: ['assignedOrderId'],
-        where: { assignedOrderId: { in: ids } },
+        where: { assignedOrderId: { in: ids }, ...NOT_CANCELLED_WHERE },
         _max: { createdAt: true },
       }),
     ]);
@@ -423,6 +430,15 @@ export class QuoteRequestsService {
     if (!existing) {
       throw new BadRequestException('Yêu cầu báo giá không tồn tại');
     }
+    // Đơn đã hủy: non-admin nhận đúng lỗi của đơn không tồn tại (kiểm TRƯỚC quyền sở hữu để không phân
+    // biệt được); ADMIN được báo rõ để khôi phục trước nếu muốn sửa.
+    if (existing.status === QuoteStatus.CANCELLED) {
+      throw new BadRequestException(
+        canSeeCancelledQuotes(role)
+          ? 'Yêu cầu báo giá đã bị hủy, không thể chỉnh sửa'
+          : 'Yêu cầu báo giá không tồn tại',
+      );
+    }
     if (userId !== existing.requesterId && role !== Role.ADMIN) {
       throw new BadRequestException(
         'Bạn không có quyền chỉnh sửa yêu cầu báo giá này',
@@ -515,6 +531,17 @@ export class QuoteRequestsService {
     });
     if (!existing) {
       throw new NotFoundException('Không tìm thấy yêu cầu báo giá');
+    }
+
+    // Đơn đã hủy là hồ sơ lịch sử như REJECTED. Non-admin: 404 (đơn như biến mất, kiểm TRƯỚC quyền
+    // sở hữu); ADMIN: chặn xóa cứng — hủy sinh ra để GIỮ hồ sơ.
+    if (existing.status === QuoteStatus.CANCELLED) {
+      if (!canSeeCancelledQuotes(role)) {
+        throw new NotFoundException('Không tìm thấy yêu cầu báo giá');
+      }
+      throw new ConflictException(
+        'Yêu cầu đã bị hủy — không thể xóa, đây là hồ sơ lịch sử',
+      );
     }
 
     // Cùng quy tắc sở hữu với update(): SALE chỉ thao tác trên đơn do mình tạo, ADMIN tự do.
