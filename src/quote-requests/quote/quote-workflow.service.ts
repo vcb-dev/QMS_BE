@@ -124,7 +124,7 @@ export class QuoteWorkflowService {
   // liệu = quotedPrice - stonePrice, giá đá = stonePrice, KHÔNG lộ giá vốn), tổng = phương án đại diện.
   private buildQuoteCardData(quote: any): QuoteCardData {
     // Card Lark đưa TẤT CẢ phương án đã có giá (không chỉ phương án chính) để nhóm Lark thấy hết các
-    // lựa chọn đã báo — phương án đại diện (CLOSED > SELECTED > giá mới nhất) được đánh dấu riêng.
+    // lựa chọn đã báo — phương án đại diện (SELECTED > giá mới nhất) được đánh dấu riêng.
     const primaryOpt = pickPrimaryOption(quote);
     const allOptions = Array.isArray(quote.options) ? quote.options : [];
     const priced = allOptions.filter((o: any) => o?.quotedPrice != null);
@@ -411,13 +411,10 @@ export class QuoteWorkflowService {
   }
 
   /**
-   * Sửa lại giá đã báo cho 1 yêu cầu ĐÃ CÓ giá (QUOTED/CLOSED) — dùng khi Order/Admin tính nhầm
-   * hoặc khách yêu cầu điều chỉnh. Hành vi GIỐNG HỆT completeQuote (xóa hết option cũ, ghi lại
-   * toàn bộ option mới — sửa/thêm/bớt phương án tự do, không chỉ đúng 1 phương án chính), chỉ
-   * khác 2 điểm: (1) KHÔNG đổi status/assigneeId — đơn CLOSED sửa giá thì vẫn CLOSED, không bị
-   * đẩy về QUOTED/đổi người báo giá như lúc báo giá lần đầu; (2) nếu đơn đang CLOSED, phương án
-   * Order đang tích chọn (isSelected -> SELECTED) phải ghi thành CLOSED thay vì SELECTED thường,
-   * giữ đúng ý "khách đã chốt phương án này", không âm thầm "mở khóa" nó.
+   * Sửa lại giá đã báo cho 1 yêu cầu ĐÃ CÓ giá (QUOTED) — dùng khi Order/Admin tính nhầm hoặc
+   * khách yêu cầu điều chỉnh. Hành vi GIỐNG HỆT completeQuote (xóa hết option cũ, ghi lại toàn bộ
+   * option mới — sửa/thêm/bớt phương án tự do, không chỉ đúng 1 phương án chính), chỉ khác: KHÔNG
+   * đổi status/assigneeId — đơn vẫn QUOTED, không bị đổi người báo giá như lúc báo giá lần đầu.
    */
   private async editQuotedPrice(
     id: string,
@@ -434,12 +431,9 @@ export class QuoteWorkflowService {
     if (!quote) {
       throw new NotFoundException('Không tìm thấy yêu cầu báo giá');
     }
-    if (
-      quote.status !== QuoteStatus.QUOTED &&
-      quote.status !== QuoteStatus.CLOSED
-    ) {
+    if (quote.status !== QuoteStatus.QUOTED) {
       throw new ConflictException(
-        'Chỉ sửa được giá cho yêu cầu đã báo giá (đang QUOTED hoặc CLOSED)',
+        'Chỉ sửa được giá cho yêu cầu đã báo giá (đang QUOTED)',
       );
     }
     // EDIT_PRICE: cho phép bất kỳ Order sửa giá — đồng bộ với QUOTE/QUICK_APPROVE
@@ -455,8 +449,6 @@ export class QuoteWorkflowService {
       );
     }
 
-    const wasClosed = quote.status === QuoteStatus.CLOSED;
-
     const keyMaps = await this.quoteOptionsService.buildOptionLookupMaps(opts);
     const stonePriceMap = keyMaps.stonePriceMap;
 
@@ -469,12 +461,6 @@ export class QuoteWorkflowService {
         stonePriceMap,
         keyMaps,
       );
-      if (
-        wasClosed &&
-        built.selectionStatus === OptionSelectionStatus.SELECTED
-      ) {
-        built.selectionStatus = OptionSelectionStatus.CLOSED;
-      }
       delete built.materials;
       delete built.stones;
       const optionId = randomUUID();
@@ -542,7 +528,7 @@ export class QuoteWorkflowService {
     if (!quote) {
       throw new NotFoundException('Không tìm thấy yêu cầu báo giá');
     }
-    // Sale chỉ chọn phương án trên đơn do CHÍNH MÌNH tạo — cùng quy tắc với markClosed().
+    // Sale chỉ chọn phương án trên đơn do CHÍNH MÌNH tạo — cùng quy tắc sở hữu với QuoteRequestsService.update().
     if (role === Role.SALE && quote.requesterId !== userId) {
       throw new ForbiddenException(
         'Bạn chỉ được chọn phương án trên yêu cầu do mình tạo',
@@ -613,86 +599,6 @@ export class QuoteWorkflowService {
     return mapped;
   }
 
-  /**
-   * Đánh dấu đơn hàng là đã chốt (Khách đồng ý mua).
-   * Yêu cầu phải chọn 1 phương án cuối cùng (optionId) mà khách đã chọn.
-   */
-  private async markClosed(
-    id: string,
-    userId: string,
-    role: Role,
-    optionId?: string,
-  ) {
-    const quote = await this.prisma.quoteRequest.findUnique({
-      where: { id },
-      select: {
-        status: true,
-        requesterId: true,
-        options: {
-          select: { id: true, quotedPrice: true, selectionStatus: true },
-          orderBy: { createdAt: 'asc' },
-        },
-      },
-    });
-
-    if (!quote) {
-      throw new NotFoundException('Không tìm thấy yêu cầu báo giá');
-    }
-
-    // Sale chỉ được chốt đơn do CHÍNH MÌNH tạo (Order/Admin thao tác trên đơn bất kỳ) — nhất quán
-    // với check quyền sở hữu ở QuoteRequestsService.update().
-    if (role === Role.SALE && quote.requesterId !== userId) {
-      throw new ForbiddenException(
-        'Bạn chỉ được đánh dấu Đã chốt trên yêu cầu do mình tạo',
-      );
-    }
-
-    if (quote.status !== QuoteStatus.QUOTED) {
-      throw new ConflictException(
-        'Chỉ đánh dấu Đã chốt được khi yêu cầu đã có báo giá (QUOTED)',
-      );
-    }
-
-    // Sale chỉ chọn phương án cuối cùng trên UI (không gọi API riêng khi bấm từng thẻ) —
-    // phương án được chọn chỉ ghi xuống DB cùng lúc với hành động "Đánh Dấu Đã Chốt".
-    // FE không phải lúc nào cũng gửi optionId (VD: chỉ có 1 phương án, Sale không cần bấm chọn) —
-    // tự suy ra phương án đại diện bằng pickPrimaryOption, không được để selectionStatus đứng yên.
-    const targetOptionId = optionId || pickPrimaryOption(quote)?.id;
-
-    if (targetOptionId) {
-      const target = quote.options.find((o) => o.id === targetOptionId);
-      if (!target) {
-        throw new NotFoundException(
-          'Không tìm thấy phương án báo giá tương ứng',
-        );
-      }
-      await this.prisma.$transaction([
-        this.prisma.quoteOption.updateMany({
-          where: { quoteRequestId: id },
-          data: { selectionStatus: OptionSelectionStatus.NONE },
-        }),
-        this.prisma.quoteOption.update({
-          where: { id: targetOptionId },
-          data: { selectionStatus: OptionSelectionStatus.CLOSED },
-        }),
-      ]);
-    }
-
-    const updated = await this.prisma.quoteRequest.update({
-      where: { id },
-      data: {
-        status: QuoteStatus.CLOSED,
-      },
-      include: REQUEST_DETAIL_INCLUDE,
-    });
-    const mapped = mapQuoteRequestDetail(updated);
-    // Sale gọi được action này — không được thấy cấu thành giá vốn trong response trả về.
-    if (role === Role.SALE) {
-      mapped.options = this.queryService.stripCostFieldsForSale(mapped.options);
-    }
-    return mapped;
-  }
-
   // ORDER/ADMIN xóa 1 phương án báo giá không muốn đề xuất nữa (VD: nhập nhầm, hoặc phương án
   // quá cao/thấp không đáng để Sale cân nhắc) — chỉ trong lúc request còn đang xử lý, và luôn phải
   // giữ lại ít nhất 1 phương án để request còn có giá để hiển thị.
@@ -725,12 +631,6 @@ export class QuoteWorkflowService {
     if (role === Role.ORDER && quote.assigneeId !== userId) {
       throw new ForbiddenException(
         'Bạn chỉ được thao tác trên yêu cầu do mình tiếp nhận xử lý',
-      );
-    }
-
-    if (quote.status === QuoteStatus.CLOSED) {
-      throw new ConflictException(
-        'Yêu cầu đã chốt, không thể xóa phương án báo giá',
       );
     }
 
@@ -773,7 +673,7 @@ export class QuoteWorkflowService {
       throw new NotFoundException('Không tìm thấy yêu cầu báo giá');
     }
 
-    // Sale chỉ gửi lại đơn do CHÍNH MÌNH tạo — cùng quy tắc với markClosed().
+    // Sale chỉ gửi lại đơn do CHÍNH MÌNH tạo — cùng quy tắc sở hữu với QuoteRequestsService.update().
     if (role === Role.SALE && curent.requesterId !== userId) {
       throw new ForbiddenException('Bạn chỉ được gửi lại yêu cầu do mình tạo');
     }
@@ -1034,21 +934,6 @@ export class QuoteWorkflowService {
           id,
         );
         return this.resubmitQuote(id, userId, role);
-
-      case QuoteAction.MARK_CLOSED:
-        this.assertRole(
-          role,
-          [Role.SALE, Role.ADMIN],
-          'Chỉ có vai trò SALE hoặc ADMIN mới được phép đánh dấu Đã chốt',
-        );
-        await this.auditLog.logAction(
-          userId,
-          role,
-          'MARK_CLOSED',
-          'QuoteRequest',
-          id,
-        );
-        return this.markClosed(id, userId, role, dto.optionId);
 
       case QuoteAction.SELECT_OPTION:
         this.assertRole(

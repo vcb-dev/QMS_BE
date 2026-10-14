@@ -211,19 +211,19 @@ describe('computeFinalOption', () => {
     });
   });
 
-  it('ưu tiên option CLOSED dù không phải mới nhất', () => {
+  it('option mang giá trị CLOSED đã ngừng dùng không còn được ưu tiên', () => {
     const options = [
       { id: 'o1', quotedPrice: 1_000_000, selectionStatus: 'NONE' },
       { id: 'o2', quotedPrice: 2_000_000, selectionStatus: 'CLOSED' },
       { id: 'o3', quotedPrice: 3_000_000, selectionStatus: 'NONE' },
     ];
     expect(computeFinalOption(options)).toEqual({
-      finalOptionId: 'o2',
-      finalPrice: 2_000_000,
+      finalOptionId: 'o3',
+      finalPrice: 3_000_000,
     });
   });
 
-  it('ưu tiên SELECTED khi không có CLOSED', () => {
+  it('ưu tiên SELECTED', () => {
     const options = [
       { id: 'o1', quotedPrice: 1_000_000, selectionStatus: 'NONE' },
       { id: 'o2', quotedPrice: 2_000_000, selectionStatus: 'SELECTED' },
@@ -234,7 +234,7 @@ describe('computeFinalOption', () => {
     });
   });
 
-  it('không có CLOSED/SELECTED — lấy option có giá MỚI NHẤT (cuối mảng, theo createdAt asc)', () => {
+  it('không có SELECTED — lấy option có giá MỚI NHẤT (cuối mảng, theo createdAt asc)', () => {
     const options = [
       { id: 'o1', quotedPrice: 1_000_000, selectionStatus: 'NONE' },
       { id: 'o2', quotedPrice: 2_000_000, selectionStatus: 'NONE' },

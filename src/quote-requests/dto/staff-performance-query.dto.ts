@@ -15,8 +15,8 @@ export class StaffPerformanceQueryDto extends TimeRangeQueryDto {
   saleSearch?: string;
 
   @IsOptional()
-  @IsIn(['name', 'total', 'closed', 'closeRate'])
-  saleSortField?: 'name' | 'total' | 'closed' | 'closeRate' = 'total';
+  @IsIn(['name', 'total'])
+  saleSortField?: 'name' | 'total' = 'total';
 
   @IsOptional()
   @IsIn(['asc', 'desc'])

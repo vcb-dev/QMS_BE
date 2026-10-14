@@ -1,4 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { plainToInstance } from 'class-transformer';
+import { validateSync } from 'class-validator';
+import { StaffPerformanceQueryDto } from '../src/quote-requests/dto/staff-performance-query.dto';
 import { QuoteAnalyticsService } from '../src/quote-requests/quote/quote-analytics.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 
@@ -11,7 +14,7 @@ describe('QuoteAnalyticsService.getDashboardCharts', () => {
   let prisma: any;
 
   const TIMELINE_ROWS = [
-    { createdAt: new Date('2026-08-05T10:00:00Z'), status: 'CLOSED' },
+    { createdAt: new Date('2026-08-05T10:00:00Z'), status: 'QUOTED' },
     { createdAt: new Date('2026-08-06T10:00:00Z'), status: 'PENDING' },
   ];
 
@@ -22,9 +25,9 @@ describe('QuoteAnalyticsService.getDashboardCharts', () => {
   ];
 
   const SALE_GROUPS = [
-    { requesterId: 'u1', status: 'CLOSED', _count: { _all: 3 } },
+    { requesterId: 'u1', status: 'QUOTED', _count: { _all: 3 } },
     { requesterId: 'u1', status: 'PENDING', _count: { _all: 1 } },
-    { requesterId: 'u2', status: 'CLOSED', _count: { _all: 1 } },
+    { requesterId: 'u2', status: 'QUOTED', _count: { _all: 1 } },
   ];
 
   const CATEGORY_GROUPS = [
@@ -133,8 +136,8 @@ describe('QuoteAnalyticsService.getDashboardCharts', () => {
       select: { id: true, name: true },
     });
     expect(result.saleStats).toEqual([
-      { id: 'u1', name: 'Sale A', total: 4, closed: 3 },
-      { id: 'u2', name: 'Sale B', total: 1, closed: 1 },
+      { id: 'u1', name: 'Sale A', total: 4 },
+      { id: 'u2', name: 'Sale B', total: 1 },
     ]);
   });
 
@@ -206,7 +209,7 @@ describe('QuoteAnalyticsService.getStaffPerformance', () => {
     prisma = {
       quoteRequest: {
         groupBy: jest.fn().mockResolvedValue([
-          { requesterId: 'sale-1', status: 'CLOSED', _count: { _all: 2 } },
+          { requesterId: 'sale-1', status: 'PENDING', _count: { _all: 2 } },
           { requesterId: 'sale-1', status: 'QUOTED', _count: { _all: 1 } },
         ]),
         findMany: jest.fn().mockResolvedValue([
@@ -214,7 +217,7 @@ describe('QuoteAnalyticsService.getStaffPerformance', () => {
             assigneeId: 'order-1',
             acceptedAt: new Date('2026-01-01T00:00:00Z'),
             returnedAt: null,
-            status: 'CLOSED',
+            status: 'QUOTED',
             updatedAt: new Date('2026-01-02T00:00:00Z'),
             finalOptionId: 'o1',
           },
@@ -256,14 +259,8 @@ describe('QuoteAnalyticsService.getStaffPerformance', () => {
     const result = await service.getStaffPerformance();
     expect(result.saleStats.items).toEqual(
       expect.arrayContaining([
-        {
-          id: 'sale-1',
-          name: 'Sale A',
-          total: 3,
-          closed: 2,
-          closeRate: (2 / 3) * 100,
-        },
-        { id: 'sale-2', name: 'Sale B', total: 0, closed: 0, closeRate: 0 },
+        { id: 'sale-1', name: 'Sale A', total: 3 },
+        { id: 'sale-2', name: 'Sale B', total: 0 },
       ]),
     );
   });
@@ -347,7 +344,7 @@ describe('QuoteAnalyticsService.getStaffPerformance — số đơn được giao
         findMany: jest.fn().mockResolvedValue([
           // order-1: 2 đơn đã báo giá (o1 đúng chiều, o2 ngày báo giá TRƯỚC lúc nhận — dữ liệu lệch), 1 đơn bị từ chối
           { assigneeId: 'order-1', acceptedAt: T0, returnedAt: null, status: 'QUOTED', updatedAt: T0, finalOptionId: 'o1' },
-          { assigneeId: 'order-1', acceptedAt: T0, returnedAt: null, status: 'CLOSED', updatedAt: T0, finalOptionId: 'o2' },
+          { assigneeId: 'order-1', acceptedAt: T0, returnedAt: null, status: 'QUOTED', updatedAt: T0, finalOptionId: 'o2' },
           { assigneeId: 'order-1', acceptedAt: T0, returnedAt: null, status: 'REJECTED', updatedAt: T0, finalOptionId: null },
           // order-2: nhận rồi trả lại Sale, chưa báo giá lần nào
           { assigneeId: 'order-2', acceptedAt: T0, returnedAt: new Date('2026-01-01T02:00:00Z'), status: 'NEED_MORE_INFO', updatedAt: T0, finalOptionId: null },
@@ -588,4 +585,91 @@ describe('QuoteAnalyticsService.getStaffPerformance — thời gian báo giá t�
     expect(medianOf(res, 'order-1')).toBeNull();
   });
 
+});
+
+describe('QuoteAnalyticsService.getStats', () => {
+  let service: QuoteAnalyticsService;
+  let prisma: any;
+
+  beforeEach(async () => {
+    prisma = {
+      quoteRequest: {
+        // groupBy lần 1: đếm theo status; lần 2: tổng finalPrice của các đơn QUOTED.
+        groupBy: jest
+          .fn()
+          .mockResolvedValueOnce([
+            { status: 'QUOTED', _count: { _all: 2 } },
+            { status: 'PENDING', _count: { _all: 1 } },
+          ])
+          .mockResolvedValueOnce([
+            { status: 'QUOTED', _sum: { finalPrice: 5_000_000 } },
+          ]),
+        count: jest.fn().mockResolvedValue(0),
+      },
+    };
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        QuoteAnalyticsService,
+        { provide: PrismaService, useValue: prisma },
+      ],
+    }).compile();
+
+    service = module.get(QuoteAnalyticsService);
+  });
+
+  const admin = { id: 'u1', role: 'ADMIN' } as any;
+
+  it('trả total, quotedRevenue và counts không còn khóa closed', async () => {
+    const result = await service.getStats({} as any, admin);
+
+    expect(result.total).toBe(3);
+    expect(result.quotedRevenue).toBe(5_000_000);
+    expect(result.counts).toEqual({
+      total: 3,
+      myReq: 0,
+      pending: 1,
+      processing: 0,
+      needMoreInfo: 0,
+      quoted: 2,
+      rejected: 0,
+    });
+  });
+
+  it('không còn trả closeRate / closedRevenue', async () => {
+    const result = await service.getStats({} as any, admin);
+
+    expect(result).not.toHaveProperty('closeRate');
+    expect(result).not.toHaveProperty('closedRevenue');
+  });
+
+  it('chỉ cộng doanh thu của đơn QUOTED', async () => {
+    await service.getStats({} as any, admin);
+
+    expect(prisma.quoteRequest.groupBy.mock.calls[1][0].where.status).toEqual({
+      in: ['QUOTED'],
+    });
+  });
+});
+
+describe('StaffPerformanceQueryDto', () => {
+  const invalidFields = (plain: Record<string, unknown>) =>
+    validateSync(plainToInstance(StaffPerformanceQueryDto, plain)).map(
+      (e) => e.property,
+    );
+
+  it.each(['closed', 'closeRate'])(
+    'từ chối saleSortField=%s (cột đã chốt đã gỡ)',
+    (field) => {
+      expect(invalidFields({ saleSortField: field })).toContain(
+        'saleSortField',
+      );
+    },
+  );
+
+  it.each(['name', 'total'])('chấp nhận saleSortField=%s', (field) => {
+    expect(invalidFields({ saleSortField: field })).not.toContain(
+      'saleSortField',
+    );
+  });
 });

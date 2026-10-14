@@ -1,9 +1,10 @@
 import { computeFinalOption } from '../src/utils/option-mapper.util';
 
 // ĐẶC TẢ TRIGGER sync_final_option() PHÍA JS.
-// SQL trigger thật sống trong DBeaver (migration 20260826_final_option_db_trigger),
-// KHÔNG có trong repo. Nếu sửa trigger đó thì PHẢI sửa `pickPrimaryOption` +
-// `referenceTriggerLogic` bên dưới cho khớp — đây là chốt canh 2 nguồn sự thật.
+// Hàm SQL thật sống trong DBeaver (migration 20260826_final_option_db_trigger), KHÔNG có trong
+// repo; bản hiện tại không còn nhánh CLOSED (migration 20261012090000_retire_closed_status).
+// Nếu sửa hàm đó thì PHẢI sửa `pickPrimaryOption` + `referenceTriggerLogic` bên dưới cho khớp —
+// đây là chốt canh 2 nguồn sự thật.
 // Lưu ý: mảng options truyền vào được giả định đã sắp xếp theo createdAt ASC.
 type Opt = {
   id: string;
@@ -17,10 +18,6 @@ function referenceTriggerLogic(options: Opt[]): {
   finalPrice: any;
 } {
   if (options.length === 0) return { finalOptionId: null, finalPrice: null };
-
-  const closed = options.find((o) => o.selectionStatus === 'CLOSED');
-  if (closed)
-    return { finalOptionId: closed.id, finalPrice: closed.quotedPrice };
 
   const selected = options.find((o) => o.selectionStatus === 'SELECTED');
   if (selected)
@@ -55,10 +52,10 @@ const CASES: Opt[][] = [
     { id: 'a', quotedPrice: 4, selectionStatus: 'SELECTED', createdAt: D(1) },
     { id: 'b', quotedPrice: 9, selectionStatus: 'NONE', createdAt: D(2) },
   ],
-  // 4: option a SELECTED, option b CLOSED -> ưu tiên CLOSED
+  // 4: option a SELECTED nhưng chưa có giá, option b NONE có giá -> vẫn ưu tiên SELECTED (finalPrice null)
   [
-    { id: 'a', quotedPrice: 4, selectionStatus: 'SELECTED', createdAt: D(1) },
-    { id: 'b', quotedPrice: 9, selectionStatus: 'CLOSED', createdAt: D(2) },
+    { id: 'a', quotedPrice: null, selectionStatus: 'SELECTED', createdAt: D(1) },
+    { id: 'b', quotedPrice: 9, selectionStatus: 'NONE', createdAt: D(2) },
   ],
   // 5: toàn chưa có giá (thứ tự createdAt asc: b cũ D(1) trước, a mới D(3) sau)
   [

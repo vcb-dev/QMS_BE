@@ -53,6 +53,17 @@ export interface VangTodaySource {
   label: string;
 }
 
+// Trạng thái được phép lọc theo ở API danh sách yêu cầu. Enum Prisma vẫn còn giá trị CLOSED (đã ngừng
+// dùng, giữ vì Postgres không DROP VALUE) nên KHÔNG dùng Object.values(QuoteStatus) — API không được
+// chấp nhận hay quảng cáo trạng thái đã gỡ.
+export const FILTERABLE_QUOTE_STATUSES: readonly QuoteStatus[] = [
+  'PENDING',
+  'PROCESSING',
+  'QUOTED',
+  'REJECTED',
+  'NEED_MORE_INFO',
+];
+
 export const APP_CONSTANTS = {
   PORT: requiredNumberEnv('PORT'),
   JWT_SECRET: requiredEnv('JWT_SECRET'),
@@ -115,7 +126,6 @@ export const APP_CONSTANTS = {
     PROCESSING: 'Đang xử lý',
     NEED_MORE_INFO: 'Cần bổ sung thông tin',
     QUOTED: 'Hoàn thành / Đã báo giá',
-    CLOSED: 'Đã chốt',
     REJECTED: 'Bị từ chối',
   },
   VANG_TODAY_SOURCES: [

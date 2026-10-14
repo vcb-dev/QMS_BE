@@ -17,7 +17,6 @@ export function countsFromGroupBy(
     needMoreInfo: 0,
     quoted: 0,
     rejected: 0,
-    closed: 0,
   };
   for (const item of res) {
     const cnt = item._count._all;
@@ -27,7 +26,6 @@ export function countsFromGroupBy(
     else if (item.status === QuoteStatus.NEED_MORE_INFO) map.needMoreInfo = cnt;
     else if (item.status === QuoteStatus.QUOTED) map.quoted = cnt;
     else if (item.status === QuoteStatus.REJECTED) map.rejected = cnt;
-    else if (item.status === QuoteStatus.CLOSED) map.closed = cnt;
   }
   return map;
 }
@@ -43,7 +41,7 @@ export function getMyReqCount(prisma: PrismaService, user: User) {
 }
 
 // Giá đại diện của 1 request cho mục đích thống kê/hiển thị nhanh — dùng chung logic với
-// pickPrimaryOption (ưu tiên option CLOSED, rồi SELECTED, rồi option có giá mới nhất).
+// pickPrimaryOption (ưu tiên option SELECTED, rồi option có giá mới nhất).
 // quotedPrice không còn ở QuoteRequest nên không thể groupBy._sum trực tiếp như trước,
 // phải tự cộng ở app layer.
 export function primaryOptionPrice(row: { options?: any[] }): number {

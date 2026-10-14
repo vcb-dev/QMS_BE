@@ -46,7 +46,7 @@ export class QuoteAnalyticsService {
         by: ['status'],
         where: {
           ...where,
-          status: { in: [QuoteStatus.QUOTED, QuoteStatus.CLOSED] },
+          status: { in: [QuoteStatus.QUOTED] },
         },
         _sum: { finalPrice: true },
       }),
@@ -54,18 +54,13 @@ export class QuoteAnalyticsService {
 
     const counts = countsFromGroupBy(groupByRes, myReqCnt);
 
-    const sumFor = (s: QuoteStatus) =>
-      Number(revenueGroups.find((g) => g.status === s)?._sum.finalPrice ?? 0);
-    const closedRevenue = sumFor(QuoteStatus.CLOSED);
-    const quotedRevenue = sumFor(QuoteStatus.QUOTED);
-
-    const closeRate =
-      counts.total > 0 ? (counts.closed / counts.total) * 100 : 0;
+    const quotedRevenue = Number(
+      revenueGroups.find((g) => g.status === QuoteStatus.QUOTED)?._sum
+        .finalPrice ?? 0,
+    );
 
     return {
       total: counts.total,
-      closeRate,
-      closedRevenue,
       quotedRevenue,
       counts,
     };
@@ -74,7 +69,7 @@ export class QuoteAnalyticsService {
   /**
    * Dữ liệu 6 biểu đồ/bảng của Dashboard (timeline, sale ranking, phân bố danh mục/chất liệu/giá,
    * sản phẩm nổi bật) — tính hết ở BE, gọi 1 lần cho kỳ hiện tại (KHÔNG gọi lại cho kỳ trước, kỳ
-   * trước chỉ cần getStats()). Dùng finalOptionId (đúng phương án CLOSED/SELECTED) cho
+   * trước chỉ cần getStats()). Dùng finalOptionId (đúng phương án SELECTED) cho
    * materialDistribution/featuredProducts thay vì "option mới nhất" như hành vi FE cũ.
    */
   async getDashboardCharts(filterDto: FilterQuoteRequestDto, _user: User) {
@@ -147,11 +142,10 @@ export class QuoteAnalyticsService {
     );
 
     // Gom id cần cho đợt 2 từ kết quả đợt 1.
-    const saleTotals = new Map<string, { total: number; closed: number }>();
+    const saleTotals = new Map<string, { total: number }>();
     for (const g of saleGroups) {
-      const cur = saleTotals.get(g.requesterId) || { total: 0, closed: 0 };
+      const cur = saleTotals.get(g.requesterId) || { total: 0 };
       cur.total += g._count._all;
-      if (g.status === QuoteStatus.CLOSED) cur.closed += g._count._all;
       saleTotals.set(g.requesterId, cur);
     }
     const saleIds = [...saleTotals.keys()];
@@ -228,7 +222,6 @@ export class QuoteAnalyticsService {
         id,
         name: saleNameById.get(id) || 'Chưa rõ',
         total: saleTotals.get(id)!.total,
-        closed: saleTotals.get(id)!.closed,
       }))
       .sort((a, b) => b.total - a.total)
       .slice(0, 8);
@@ -291,13 +284,13 @@ export class QuoteAnalyticsService {
   }
 
   /**
-   * Hiệu suất Sale (tổng đơn/đã chốt/tỷ lệ chốt, TẤT CẢ sale active — không cắt top 8 như
+   * Hiệu suất Sale (tổng đơn, TẤT CẢ sale active — không cắt top 8 như
    * Dashboard) + hiệu suất người báo giá (số đơn được giao/đã báo giá, thời gian trung vị báo
    * giá tính từ lúc giao đơn, thời gian xử lý từ lúc tiếp nhận). Dùng finalOptionId cho quotedDate —
    * cùng nguyên tắc đã áp dụng ở getDashboardCharts.
    */
   async getStaffPerformance(query?: StaffPerformanceQueryDto) {
-    // Lọc theo quoteRequest.createdAt — chỉ đơn tạo trong kỳ được tính vào tổng/đã chốt/TB thời
+    // Lọc theo quoteRequest.createdAt — chỉ đơn tạo trong kỳ được tính vào tổng/TB thời
     // gian. Danh sách nhân viên (saleUsers/pricerUsers) KHÔNG lọc theo thời gian (chỉ lọc theo team
     // khi có teamId): người 0 việc trong kỳ vẫn hiện dòng số 0.
     const range = query
@@ -376,21 +369,18 @@ export class QuoteAnalyticsService {
       }
     }
 
-    const saleTotals = new Map<string, { total: number; closed: number }>();
+    const saleTotals = new Map<string, { total: number }>();
     for (const g of saleGroups) {
-      const cur = saleTotals.get(g.requesterId) || { total: 0, closed: 0 };
+      const cur = saleTotals.get(g.requesterId) || { total: 0 };
       cur.total += g._count._all;
-      if (g.status === QuoteStatus.CLOSED) cur.closed += g._count._all;
       saleTotals.set(g.requesterId, cur);
     }
     const allSaleStats = saleUsers.map((u) => {
-      const t = saleTotals.get(u.id) || { total: 0, closed: 0 };
+      const t = saleTotals.get(u.id) || { total: 0 };
       return {
         id: u.id,
         name: u.name,
         total: t.total,
-        closed: t.closed,
-        closeRate: t.total > 0 ? (t.closed / t.total) * 100 : 0,
       };
     });
 

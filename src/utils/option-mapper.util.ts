@@ -436,17 +436,14 @@ export function mapQuoteRequestDetail(quote: any) {
 }
 
 // Phương án "đại diện" của 1 request khi cần 1 con số duy nhất (mail, thống kê nhanh, hiển thị
-// tổng giá chốt): ưu tiên option đã CLOSED (khách chốt), rồi tới option đang SELECTED (chọn báo
-// giá chính), rồi tới option có GIÁ MỚI NHẤT (options orderBy createdAt asc) — không được lấy
-// options[0] vô điều kiện, vì option đầu tiên luôn là bản nháp rỗng "Yêu cầu ban đầu" tự tạo lúc
-// Sale gửi yêu cầu, chưa có giá.
+// tổng giá): ưu tiên option đang SELECTED (chọn báo giá chính), rồi tới option có GIÁ MỚI NHẤT
+// (options orderBy createdAt asc) — không được lấy options[0] vô điều kiện, vì option đầu tiên
+// luôn là bản nháp rỗng "Yêu cầu ban đầu" tự tạo lúc Sale gửi yêu cầu, chưa có giá.
 export function pickPrimaryOption<T = any>(
   quote: { options?: T[] } | null | undefined,
 ): T | null {
   const options = Array.isArray(quote?.options) ? quote.options : [];
   if (options.length === 0) return null;
-  const closed = options.find((o: any) => o?.selectionStatus === 'CLOSED');
-  if (closed) return closed;
   const selected = options.find((o: any) => o?.selectionStatus === 'SELECTED');
   if (selected) return selected;
   const priced = options.filter((o: any) => o?.quotedPrice != null);
