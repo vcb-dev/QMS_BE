@@ -43,5 +43,14 @@ export class RegisterDto {
   })
   role?: Role;
 
+  // Team chọn lúc đăng ký — bỏ trống = "Chưa có team". Chỉ để ADMIN thấy sẵn khi duyệt (vẫn đổi
+  // được); team chỉ dùng để lọc/hiển thị, không cấp quyền gì.
+  @ApiPropertyOptional({
+    example: 'clx1abc0000team',
+    description: 'ID team (lấy từ GET /auth/teams) — bỏ trống nếu chưa có team',
+  })
+  @IsOptional()
+  @IsString({ message: 'teamId phải là chuỗi ký tự' })
+  teamId?: string;
 }
 

@@ -1,4 +1,8 @@
-import { ExecutionContext, UnauthorizedException } from '@nestjs/common';
+import {
+  ExecutionContext,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { JwtService } from '@nestjs/jwt';
 import { ThrottlerException, ThrottlerStorageService } from '@nestjs/throttler';
@@ -278,5 +282,84 @@ describe('AuthService.getProfile — trả team, không lộ trường bí mật
     await expect(authService.getProfile('ghost')).rejects.toThrow(
       UnauthorizedException,
     );
+  });
+});
+
+describe('AuthService.register — chọn team lúc đăng ký', () => {
+  let authService: AuthService;
+  let prisma: any;
+  let mailService: any;
+
+  const dto = {
+    name: 'Sale B',
+    email: 'b@example.com',
+    password: '123456',
+  };
+
+  beforeEach(() => {
+    prisma = {
+      user: {
+        findUnique: jest.fn().mockResolvedValue(null), // email chưa dùng
+        create: jest.fn().mockImplementation(async ({ data }: any) => ({
+          id: 'u2',
+          ...data,
+        })),
+      },
+      team: {
+        findUnique: jest.fn(),
+        findMany: jest.fn(),
+      },
+    };
+    mailService = { sendWelcome: jest.fn().mockResolvedValue(undefined) };
+    authService = new AuthService(
+      prisma,
+      new JwtService({ secret: 'test-secret' }),
+      { get: jest.fn() } as any,
+      mailService,
+    );
+  });
+
+  it('gửi teamId hợp lệ -> tạo user kèm teamId (vẫn chờ duyệt)', async () => {
+    prisma.team.findUnique.mockResolvedValue({ id: 't1' });
+
+    const res: any = await authService.register({ ...dto, teamId: 't1' });
+
+    expect(prisma.team.findUnique).toHaveBeenCalledWith({
+      where: { id: 't1' },
+      select: { id: true },
+    });
+    expect(prisma.user.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ teamId: 't1', isApproved: false }),
+    });
+    expect(res.user.teamId).toBe('t1');
+  });
+
+  it('teamId không tồn tại -> NotFoundException và KHÔNG tạo user', async () => {
+    prisma.team.findUnique.mockResolvedValue(null);
+
+    await expect(
+      authService.register({ ...dto, teamId: 'ghost' }),
+    ).rejects.toThrow(NotFoundException);
+    expect(prisma.user.create).not.toHaveBeenCalled();
+  });
+
+  it('không gửi teamId (chọn "Chưa có team") -> không tra team, tạo user không gắn team', async () => {
+    await authService.register({ ...dto });
+
+    expect(prisma.team.findUnique).not.toHaveBeenCalled();
+    const { data } = prisma.user.create.mock.calls[0][0];
+    expect(data.teamId).toBeUndefined();
+  });
+
+  it('listTeamsForRegister chỉ trả id + name, sắp theo tên', async () => {
+    prisma.team.findMany.mockResolvedValue([{ id: 't1', name: 'Team A' }]);
+
+    const teams = await authService.listTeamsForRegister();
+
+    expect(prisma.team.findMany).toHaveBeenCalledWith({
+      select: { id: true, name: true },
+      orderBy: { name: 'asc' },
+    });
+    expect(teams).toEqual([{ id: 't1', name: 'Team A' }]);
   });
 });

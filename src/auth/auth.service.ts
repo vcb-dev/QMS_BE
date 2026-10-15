@@ -355,8 +355,18 @@ export class AuthService {
     return result;
   }
 
+  // Danh sách team cho ô chọn ở form đăng ký (chưa đăng nhập) — chỉ id + tên, không kèm số thành viên.
+  async listTeamsForRegister() {
+    return this.prisma.team.findMany({
+      select: { id: true, name: true },
+      orderBy: { name: 'asc' },
+    });
+  }
+
   async register(registerDto: RegisterDto) {
     const { email, password, name, role,  } = registerDto;
+    // '' (client cũ/để trống) coi như không chọn team
+    const teamId = registerDto.teamId || undefined;
 
     const existingUser = await this.prisma.user.findUnique({
       where: { email },
@@ -368,6 +378,18 @@ export class AuthService {
       );
     }
 
+    // Kiểm tra team TRƯỚC khi băm mật khẩu/tạo user — team đã bị xóa giữa lúc mở form và lúc gửi
+    // thì báo lỗi rõ ràng thay vì để FK của DB ném lỗi 500.
+    if (teamId) {
+      const team = await this.prisma.team.findUnique({
+        where: { id: teamId },
+        select: { id: true },
+      });
+      if (!team) {
+        throw new NotFoundException('Team không tồn tại');
+      }
+    }
+
     const passwordHash = await bcrypt.hash(password, 10);
 
     const user = await this.prisma.user.create({
@@ -377,7 +399,7 @@ export class AuthService {
         passwordHash,
         isApproved: false, // Chờ ADMIN phê duyệt
         role: role || Role.SALE,
-        
+        teamId,
       },
       
     });
