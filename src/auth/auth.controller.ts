@@ -23,6 +23,7 @@ import { Throttle } from '@nestjs/throttler';
 import { randomBytes } from 'crypto';
 import { APP_CONSTANTS } from '../common/constants';
 import { SkipCsrf } from './decorators/skip-csrf.decorator';
+import { Public } from './decorators/public.decorator';
 import { EmailThrottlerGuard } from './guards/email-throttler.guard';
 import { primaryFrontendUrl } from '../utils/cors-origin.util';
 
@@ -103,6 +104,14 @@ export class AuthController {
 
     this.cookieAuthService.clearAuthCookies(res);
     return { message: 'Đăng xuất thành công' };
+  }
+
+  // Form đăng ký cần danh sách team khi người dùng chưa đăng nhập — GET /teams đòi JWT nên mở riêng
+  // route này; chỉ trả id + tên team, cố ý công khai.
+  @Public()
+  @Get('teams')
+  async listTeamsForRegister() {
+    return this.authService.listTeamsForRegister();
   }
 
   @SkipCsrf()
